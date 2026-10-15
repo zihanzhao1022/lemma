@@ -1,0 +1,183 @@
+import { pdfPageSize } from '../../components/results/pdfjs';
+import { t } from '../../lib/phrases/results';
+import { PdfBlockKind, ResultPaper } from '../../types';
+import { DEFAULT_PREAMBLE } from '../tex/document';
+import { TexEngine, getTexEngine } from '../tex/engine';
+import { bibKeysOf, bibliographyStyle } from './bibtex';
+import { REFERENCES_FILE, compileBlock, compileReferences, describeIssue } from './compile';
+import { CompileFn, RebuildResult, ReferencesBuilder, rebuild } from './numbering';
+import { ResultsOp } from './ops';
+
+/** A private file's bytes; `version`, an attachment's content hash, lets the browser keep it (lib/fileCache). */
+export type ReadFile = (path: string, version?: string) => Promise<Uint8Array>;
+
+export const attachmentPath = (paperId: string, name: string): string => `results/${paperId}/files/${name}`;
+
+export const preambleOf = (paper: ResultPaper): string => paper.preamble ?? DEFAULT_PREAMBLE;
+
+/** The paper's attachments by file name, as compiles need them next to main.tex. */
+export async function loadAttachments(paper: ResultPaper, readFile: ReadFile): Promise<Record<string, Uint8Array>> {
+  const entries = await Promise.all(
+    (paper.files ?? []).map(async (name) => [name, await readFile(attachmentPath(paper.id, name), paper.fileHashes?.[name])] as const),
+  );
+  return Object.fromEntries(entries);
+}
+
+export function makeCompileFn(engine: TexEngine, preamble: string, files: Record<string, Uint8Array>): CompileFn {
+  return async (block, context) => {
+    const result = await compileBlock(
+      engine,
+      {
+        preamble,
+        source: block.source ?? '',
+        kind: block.kind,
+        appendix: context.appendix,
+        counters: context.counters,
+        labels: context.labels,
+        citations: context.citations,
+        files,
+      },
+      pdfPageSize,
+    );
+    if (result.ok && result.pdf) {
+      return { ok: true, pdf: result.pdf, width: result.width, height: result.height, counters: result.counters, labels: result.labels };
+    }
+    return { ok: false, message: result.issues.map(describeIssue).join(t('；')) || t('编译失败') };
+  };
+}
+
+/** How a paper's bibliography is typeset from its references.bib (null without one). */
+export function makeReferencesBuilder(engine: TexEngine, paper: ResultPaper, files: Record<string, Uint8Array>): ReferencesBuilder {
+  const bib = files[REFERENCES_FILE];
+  const style = bibliographyStyle(paper);
+  return {
+    bibKeys: bib ? bibKeysOf(new TextDecoder().decode(bib)) : null,
+    style,
+    compile: async (keys) => {
+      const result = await compileReferences(engine, { preamble: preambleOf(paper), keys, style, files }, pdfPageSize);
+      if (result.ok && result.pdf) return { ok: true, pdf: result.pdf, width: result.width, height: result.height, citations: result.citations };
+      return { ok: false, message: result.issues.map(describeIssue).join(t('；')) || t('编译失败') };
+    },
+  };
+}
+
+/** Recompiles what the paper's changes made out of date (bibliography first), with these attachments. */
+export async function rebuildWith(paper: ResultPaper, files: Record<string, Uint8Array>): Promise<RebuildResult> {
+  const engine = await getTexEngine();
+  return rebuild(paper, makeCompileFn(engine, preambleOf(paper), files), { references: makeReferencesBuilder(engine, paper, files) });
+}
+
+/** Recompiles the paper's out-of-date blocks with its preamble and attachments. */
+export async function rebuildPaper(paper: ResultPaper, readFile: ReadFile, files?: Record<string, Uint8Array>): Promise<RebuildResult> {
+  return rebuildWith(paper, files ?? (await loadAttachments(paper, readFile)));
+}
+
+/** The edits followed by the rebuilt outputs, as one save. */
+export function withOutputs(paperId: string, ops: ResultsOp[], rebuilt: RebuildResult): ResultsOp {
+  const all = [...ops];
+  if (rebuilt.references !== undefined) all.push({ kind: 'setReferences', paperId, references: rebuilt.references });
+  if (Object.keys(rebuilt.outputs).length > 0) {
+    all.push({ kind: 'setOutputs', paperId, outputs: rebuilt.outputs, sources: rebuilt.sources });
+  }
+  return all.length === 1 ? all[0] : { kind: 'batch', ops: all };
+}
+
+export const newBlockId = (): string => `blk-${Date.now().toString(36)}`;
+
+/**
+ * The code a new block starts with; made when the block is added. Text starts empty: the editor shows what
+ * to write as a hint instead.
+ */
+export const BLOCK_TEMPLATES: Record<PdfBlockKind, () => string> = {
+  text: () => '',
+  figure: () => String.raw`\begin{figure}[t]
+\centering
+% Upload an image in the files on the left, then click it to add \includegraphics here.
+\caption{Caption.}
+\label{fig:}
+\end{figure}`,
+  table: () => String.raw`\begin{table}[t]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Method & A & B \\
+\midrule
+Baseline & 0.0 & 0.0 \\
+Ours & 0.0 & 0.0 \\
+\bottomrule
+\end{tabular}
+\caption{Caption.}
+\label{tab:}
+\end{table}`,
+};
+
+/** Attachments the compile can use: style files, bibliography files and figures. */
+export const ATTACHMENT_TYPES = ['.sty', '.cls', '.tex', '.bib', '.bst', '.cfg', '.def', '.clo', '.pdf', '.png', '.jpg', '.jpeg'];
+export const ATTACHMENT_LIMIT = 20 * 1024 * 1024;
+export const IMAGE_TYPES = ['.pdf', '.png', '.jpg', '.jpeg'];
+
+/** Short content hash of an attachment (first 16 hex digits of SHA-256). */
+export async function hashBytes(data: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data.slice()));
+  return [...digest.slice(0, 8)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The name an uploaded file is stored under, after the folders it came in (figs/plot.pdf, as a dropped
+ * folder had it): letters, digits, dot, dash and underscore, which TeX and URLs both handle. A file name that
+ * has to change (e.g. "实验结果.png") also gets a short hash of the content, so two such files never replace
+ * each other, while the same file uploaded again keeps its name.
+ */
+export async function attachmentName(name: string, data: Uint8Array, folders: string[] = []): Promise<string> {
+  const base = name.split(/[\\/]/).pop()!.trim();
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const extension = dot > 0 ? base.slice(dot) : '';
+  const cleanStem = stem.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '');
+  const cleanExtension = extension.replace(/[^A-Za-z0-9.]/g, '');
+  const file = cleanStem === stem && cleanExtension === extension ? base : `${cleanStem || 'file'}-${(await hashBytes(data)).slice(0, 8)}${cleanExtension}`;
+  const path = folders.map((folder) => folder.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '') || 'folder');
+  return [...path, file].join('/');
+}
+
+/** putFile operations for newly added attachments, with their content hashes. */
+export async function putFiles(paperId: string, added: Record<string, Uint8Array>): Promise<{ ops: ResultsOp[]; hashes: Record<string, string> }> {
+  const hashes: Record<string, string> = {};
+  for (const [name, data] of Object.entries(added)) hashes[name] = await hashBytes(data);
+  return { ops: Object.entries(hashes).map(([name, hash]): ResultsOp => ({ kind: 'putFile', paperId, name, hash })), hashes };
+}
+
+export const extensionOf = (name: string): string => {
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? '' : name.slice(dot).toLowerCase();
+};
+
+/**
+ * Raster images narrower than this look soft at a figure's full width on high-density screens (about 760 CSS
+ * pixels, twice that in device pixels), let alone enlarged. A PDF figure stays sharp at any size.
+ */
+export const SHARP_WIDTH = 1500;
+
+/** A PNG's or JPG's width in pixels; null for other files or when the browser cannot read it. */
+export async function pixelWidth(name: string, data: Uint8Array): Promise<number | null> {
+  if (!['.png', '.jpg', '.jpeg'].includes(extensionOf(name))) return null;
+  try {
+    const bitmap = await createImageBitmap(new Blob([data.slice()]));
+    const { width } = bitmap;
+    bitmap.close();
+    return width;
+  } catch {
+    return null;
+  }
+}
+
+/** Why an attachment cannot be used, or null when it can. */
+export function attachmentProblem(file: { name: string; size: number }): string | null {
+  const extension = extensionOf(file.name);
+  if (!ATTACHMENT_TYPES.includes(extension)) {
+    const types = ATTACHMENT_TYPES.join(' ');
+    return extension ? t('不支持 {extension} 文件，可以上传 {types}', { extension, types }) : t('不支持 没有扩展名的 文件，可以上传 {types}', { types });
+  }
+  if (file.size > ATTACHMENT_LIMIT) return t('文件超过 20 MB');
+  return null;
+}

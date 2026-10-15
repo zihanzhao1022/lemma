@@ -1,0 +1,326 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMessage } from '../../lib/i18n';
+import { FileText, Loader2, Play, RotateCcw, Trash2, Upload, X } from 'lucide-react';
+import PdfView from '../../components/results/PdfView';
+import { pdfPageSize } from '../../components/results/pdfjs';
+import { useT } from '../../lib/phrases/results';
+import { ResultPaper } from '../../types';
+import { describeSaveError } from '../backend';
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '../components/Modal';
+import { getTexEngine } from '../tex/engine';
+import {
+  ATTACHMENT_TYPES,
+  ReadFile,
+  attachmentName,
+  attachmentPath,
+  attachmentProblem,
+  loadAttachments,
+  preambleOf,
+  putFiles,
+  rebuildWith,
+  withOutputs,
+} from './actions';
+import { ResultsSave } from './BlockEditor';
+import CodeEditor from './CodeEditor';
+import { sharedColors, withoutColors } from './colorDefinitions';
+import { BlockCompileResult, compileBlock, describeIssue } from './compile';
+import { filesKeptVersionsUse } from './convert';
+import { describeFailure } from './numbering';
+import { ResultsOp, resultsCommitMessage } from './ops';
+
+const SAMPLE = String.raw`\section*{Preview}
+The quick brown fox jumps over the lazy dog, and $\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$.
+\begin{table}[h]
+\centering
+\begin{tabular}{lc}
+\hline
+Method & Score \\
+\hline
+Sample & 1.0 \\
+\hline
+\end{tabular}
+\caption{A sample table.}
+\end{table}`;
+
+interface Props {
+  paper: ResultPaper;
+  readFile: ReadFile;
+  onSave: ResultsSave;
+  onClose: () => void;
+}
+
+/** A paper's preamble and attachments. Saving recompiles every block with them. */
+const PaperSettings: React.FC<Props> = ({ paper, readFile, onSave, onClose }) => {
+  const t = useT();
+  const original = preambleOf(paper);
+  const [preamble, setPreamble] = useState(original);
+  const [stored, setStored] = useState<Record<string, Uint8Array> | null>(null);
+  const [added, setAdded] = useState<Record<string, Uint8Array>>({});
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [test, setTest] = useState<BlockCompileResult | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useMessage();
+  /** "Move to the preamble" was used: saving also removes the moved color definitions from the blocks. */
+  const [movedColors, setMovedColors] = useState(false);
+  const upload = React.useRef<HTMLInputElement>(null);
+  const busy = React.useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadAttachments(paper, readFile)
+      .then((loaded) => {
+        if (!cancelled) setStored(loaded);
+      })
+      .catch(() => {
+        if (!cancelled) setProblem(() => t('读取论文附件失败，请关闭后重试'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paper, readFile]);
+
+  const files = useMemo(() => {
+    if (!stored) return null;
+    const all = { ...stored, ...added };
+    removed.forEach((name) => delete all[name]);
+    return all;
+  }, [stored, added, removed]);
+  const names = [...new Set([...(paper.files ?? []), ...Object.keys(added)])];
+  const dirty = preamble !== original || Object.keys(added).length > 0 || removed.length > 0 || movedColors;
+  const colors = useMemo(() => sharedColors(paper.blocks, preamble), [paper.blocks, preamble]);
+  const toAdd = colors.colors.filter((color) => !color.inPreamble);
+
+  const moveColors = () => {
+    if (toAdd.length > 0) setPreamble((current) => `${current.replace(/\s+$/, '')}\n${toAdd.map((color) => color.text).join('\n')}`);
+    setMovedColors(true);
+  };
+
+  const close = useCallback(() => {
+    if (saving) return;
+    if (dirty && !window.confirm(t('放弃未保存的修改？'))) return;
+    onClose();
+  }, [saving, dirty, onClose]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (event: KeyboardEvent) => {
+      // CodeMirror handles Escape itself when it closes a completion list or the search panel.
+      if (event.key === 'Escape' && !event.defaultPrevented) close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [close]);
+
+  const runTest = async () => {
+    if (!files) return;
+    setTesting(true);
+    setProblem(null);
+    try {
+      const engine = await getTexEngine();
+      setTest(await compileBlock(engine, { preamble, source: SAMPLE, kind: 'text', counters: {}, labels: {}, files }, pdfPageSize));
+    } catch (error) {
+      setProblem(() => error instanceof Error ? error.message : t('TeX 引擎出错，请重试'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const addFiles = async (list: FileList | null) => {
+    if (!list) return;
+    const next: Record<string, Uint8Array> = {};
+    for (const file of Array.from(list)) {
+      const reason = attachmentProblem(file);
+      if (reason) {
+        setProblem(() => t('{name}：{reason}', { name: file.name, reason }));
+        continue;
+      }
+      const data = new Uint8Array(await file.arrayBuffer());
+      next[await attachmentName(file.name, data)] = data;
+    }
+    setAdded((current) => ({ ...current, ...next }));
+    setRemoved((current) => current.filter((name) => !(name in next)));
+  };
+
+  const save = async () => {
+    if (!files || busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    setProblem(null);
+    try {
+      const kept = names.filter((name) => !removed.includes(name));
+      const gone = removed.filter((name) => (paper.files ?? []).includes(name));
+      // The recompile below would not notice a file that only a figure's or table's kept version uses.
+      const needed = filesKeptVersionsUse(paper.blocks, gone);
+      if (needed.length > 0) {
+        setProblem(() => t('第 {n} 个块存下的另一个版本还要用 {name}，不能移除', needed[0]));
+        return;
+      }
+      // A file uploaded here and then removed again is not uploaded at all.
+      const uploaded = Object.fromEntries(Object.entries(added).filter(([name]) => !removed.includes(name)));
+      const uploads = await putFiles(paper.id, uploaded);
+      const fileHashes = { ...paper.fileHashes, ...uploads.hashes };
+      gone.forEach((name) => delete fileHashes[name]);
+      // Definitions the preamble now has, written the same way, leave the blocks that repeated them.
+      const leaving = new Set(movedColors ? sharedColors(paper.blocks, preamble).colors.filter((color) => color.inPreamble).map((color) => color.name) : []);
+      const cleaned = paper.blocks.flatMap((block) => {
+        const source = block.source === undefined ? undefined : withoutColors(block.source, leaving);
+        return source === undefined || source === block.source ? [] : [{ ...block, source }];
+      });
+      const blocks = paper.blocks.map((block) => cleaned.find((item) => item.id === block.id) ?? block);
+      const draft: ResultPaper = { ...paper, preamble, files: kept, fileHashes, blocks };
+      const rebuilt = await rebuildWith(draft, files);
+      const failed = rebuilt.failed;
+      if (failed) {
+        setProblem(() => describeFailure(paper.blocks, failed, 'change'));
+        return;
+      }
+      const writes = [
+        ...Object.entries(uploaded).map(([name, data]) => ({ path: attachmentPath(paper.id, name), data })),
+        ...rebuilt.writes,
+      ];
+      const deletes = [...gone.map((name) => attachmentPath(paper.id, name)), ...rebuilt.deletes];
+      // Attachments change one by one, so files added or removed elsewhere meanwhile are kept.
+      const ops: ResultsOp[] = [
+        { kind: 'patchPaper', id: paper.id, fields: { preamble } },
+        ...cleaned.map((block): ResultsOp => ({ kind: 'putBlock', paperId: paper.id, block })),
+        ...uploads.ops,
+        ...gone.map((name): ResultsOp => ({ kind: 'removeFile', paperId: paper.id, name })),
+      ];
+      await onSave(
+        withOutputs(paper.id, ops, rebuilt),
+        writes,
+        deletes,
+        resultsCommitMessage('update preamble of', paper.title),
+        `content: update result "${paper.title}"`,
+      );
+      onClose();
+    } catch (error) {
+      setProblem(() => describeSaveError(error));
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label={t('导言区与附件')} className="fixed inset-0 z-[100] flex flex-col bg-white">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 border-b border-gray-200">
+        <span className="font-semibold text-gray-900">{t('导言区与附件')}</span>
+        <span className="text-sm text-gray-500 truncate max-w-[16rem]">{paper.title}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <button type="button" disabled={saving} onClick={close} className={BUTTON_SECONDARY}>
+            {t('取消')}
+          </button>
+          <button type="button" disabled={saving || !files} onClick={() => void save()} className={BUTTON_PRIMARY}>
+            {saving ? t('保存并重新编译…') : t('保存')}
+          </button>
+          <button type="button" onClick={close} aria-label={t('关闭')} className="p-1 text-gray-400 hover:text-gray-700">
+            <X size={18} />
+          </button>
+        </div>
+      </header>
+      {problem && (
+        <p role="alert" className="px-4 py-2 text-sm text-red-700 border-b border-gray-100">
+          {problem}
+        </p>
+      )}
+      <div className="flex-1 min-h-0 grid lg:grid-cols-2">
+        <section className="min-h-[40vh] lg:min-h-0 flex flex-col border-r border-gray-200">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50 text-xs text-gray-600">
+            <span>{t('导言区：从 \\documentclass 到 \\begin{document} 之前，可以直接粘贴论文的')}</span>
+            <button type="button" onClick={() => setPreamble(original)} className="inline-flex items-center gap-1 hover:text-gray-900" title={t('恢复为保存前的内容')}>
+              <RotateCcw size={12} />
+              {t('还原')}
+            </button>
+          </div>
+          {colors.colors.length > 0 && (movedColors && toAdd.length === 0 ? (
+            <p className="px-3 py-2 border-b border-amber-100 bg-amber-50 text-xs text-amber-800">
+              {t('已移到导言区：保存时会从 {n} 个块里删掉这些颜色定义，并重新编译所有块。', { n: colors.blocks.length })}
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-amber-100 bg-amber-50 text-xs text-amber-800">
+              <span>{t('{n} 个块里重复定义了这些颜色：{names}', { n: colors.blocks.length, names: colors.colors.map((color) => color.name).join(', ') })}</span>
+              <button type="button" onClick={moveColors} className="rounded border border-amber-300 bg-white px-2 py-0.5 font-medium hover:bg-amber-100">
+                {t('移到导言区')}
+              </button>
+            </div>
+          ))}
+          <CodeEditor value={preamble} onChange={setPreamble} onRun={() => void runTest()} onSave={() => void save()} className="flex-1" />
+        </section>
+        <section className="min-h-0 overflow-auto bg-gray-50 p-4 space-y-4">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-900">{t('附件')}</h3>
+              <button
+                type="button"
+                onClick={() => upload.current?.click()}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-purple-200 bg-white text-xs text-purple-700 hover:bg-purple-50"
+              >
+                <Upload size={12} />
+                {t('上传')}
+              </button>
+              <input
+                ref={upload}
+                type="file"
+                multiple
+                accept={ATTACHMENT_TYPES.join(',')}
+                className="hidden"
+                onChange={(event) => {
+                  void addFiles(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+            </div>
+            <p className="mb-2 text-xs text-gray-500">
+              {t('会议模板的 .sty/.cls、导言区 \\input 的 .tex、图片（PDF/PNG/JPG）。编译时和 main.tex 放在同一目录，不超过 20 MB。')}
+            </p>
+            {!stored && <p className="text-xs text-gray-400">{t('正在读取附件…')}</p>}
+            <ul className="space-y-1">
+              {names.map((name) => {
+                const isRemoved = removed.includes(name);
+                return (
+                  <li key={name} className="flex items-center gap-2 text-sm">
+                    <FileText size={14} className="text-gray-400" />
+                    <span className={isRemoved ? 'line-through text-gray-400' : 'text-gray-800'}>{name}</span>
+                    {name in added && <span className="text-xs text-emerald-600">{t('新上传')}</span>}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRemoved((current) => (isRemoved ? current.filter((item) => item !== name) : [...current, name]))
+                      }
+                      className="ml-auto text-xs text-gray-500 hover:text-red-600"
+                    >
+                      {isRemoved ? t('恢复') : <Trash2 size={13} />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div>
+            <button type="button" disabled={testing || !files} onClick={() => void runTest()} className={BUTTON_SECONDARY}>
+              {testing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {t('测试编译')}
+            </button>
+            <p className="mt-1 text-xs text-gray-500">{t('用一段示例文字和表格检查导言区能否编译。保存时这篇论文的所有块都会重新编译。')}</p>
+          </div>
+          {test && test.issues.length > 0 && (
+            <ul className="space-y-1 text-sm text-red-700">
+              {test.issues.map((issue, position) => (
+                <li key={`${position}-${issue.message}`}>{describeIssue(issue)}</li>
+              ))}
+            </ul>
+          )}
+          {test?.ok && test.pdf && <PdfView data={test.pdf} width={test.width} height={test.height} className="shadow-sm" />}
+        </section>
+      </div>
+    </div>
+  );
+};
+
+export default PaperSettings;

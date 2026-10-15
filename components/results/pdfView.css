@@ -1,0 +1,141 @@
+/* Transparent, selectable text over the rendered page (the text layer rules of pdf.js's viewer CSS). */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  forced-color-adjust: none;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer ::selection {
+  background: rgba(147, 51, 234, 0.25);
+}
+
+.textLayer br::selection {
+  background: transparent;
+}
+
+/* PDF links use viewport pixels, independent of the canvas's device-pixel ratio. */
+.resultsPdfLinks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.resultsPdfLink {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.resultsPdfLink:hover {
+  background: rgba(147, 51, 234, 0.1);
+  box-shadow: inset 0 -1px rgb(126, 34, 206);
+}
+
+.resultsPdfLink:focus-visible {
+  outline: 2px solid rgb(126, 34, 206);
+  outline-offset: -1px;
+  background: rgba(147, 51, 234, 0.14);
+}
+
+@media (forced-colors: active) {
+  .resultsPdfLink:hover,
+  .resultsPdfLink:focus-visible {
+    outline: 2px solid LinkText;
+    outline-offset: -1px;
+  }
+}
+
+.resultsPdfDestinations {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.resultsPdfDestination {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 1.3em;
+  scroll-margin-top: 6rem;
+}
+
+.resultsPdfDestination:focus {
+  outline: none;
+  background: rgba(147, 51, 234, 0.1);
+  box-shadow: inset 3px 0 rgb(126, 34, 206);
+}
+
+@media (forced-colors: active) {
+  .resultsPdfDestination:focus {
+    outline: 1px solid Highlight;
+  }
+}
+
+/* A figure on the page opens enlarged when clicked (FigureZoom). */
+.resultsZoomable .resultsPdfPage,
+.resultsZoomable .resultsPdfPage .textLayer span {
+  cursor: zoom-in;
+}
+
+/* A picture drawn by a text block (a figure environment in its text) opens enlarged as well. */
+.resultsZoomTarget {
+  z-index: 1;
+  cursor: zoom-in;
+  border-radius: 2px;
+}
+
+.resultsZoomTarget:focus-visible {
+  outline: 2px solid rgb(126, 34, 206);
+  outline-offset: 2px;
+}
+
+.resultsFigureZoom {
+  cursor: zoom-out;
+  animation: resultsFigureZoomIn 120ms ease-out;
+}
+
+@keyframes resultsFigureZoomIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resultsFigureZoom {
+    animation: none;
+  }
+}
