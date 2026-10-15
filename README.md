@@ -49,7 +49,7 @@ npm run preview # 预览构建结果
 
 ## 部署
 
-静态站点，任何静态托管都可以。Cloudflare Pages 的设置：
+静态站点，任何静态托管都可以。展示页放在 Cloudflare Pages，项目名 `lemmatex`，地址 https://lemmatex.pages.dev 。设置：
 
 - Build command：`npm run build`
 - Build output directory：`dist`
