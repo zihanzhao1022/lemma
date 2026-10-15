@@ -1,0 +1,9 @@
+{
+  // The showcase page: the built site (dist/) served as static files by the Cloudflare Worker "lemmatex".
+  // Cloudflare builds it on every push to main: `npm run build`, then `npx wrangler deploy`.
+  "name": "lemmatex",
+  "compatibility_date": "2026-06-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}

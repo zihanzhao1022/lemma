@@ -53,11 +53,13 @@ npm run preview # 预览构建结果
 
 ## 部署
 
-静态站点，任何静态托管都可以。展示页放在 Cloudflare Pages，项目名 `lemmatex`，地址 https://lemmatex.pages.dev 。设置：
+静态站点，任何静态托管都可以。展示页是 Cloudflare 上的 Worker `lemmatex`（只放静态文件），连着这个仓库，每次推送到 main 自动构建和发布：
 
-- Build command：`npm run build`
-- Build output directory：`dist`
+- 构建命令：`npm run build`
+- 部署命令：`npx wrangler deploy`，按 `wrangler.jsonc` 把 `dist/` 发布出去（Worker 名必须和这里的 `name` 一致）
 - Node 版本：读取 `.node-version`（22）
+
+地址是 `lemmatex.<账号的子域>.workers.dev`，在 Cloudflare 控制台 lemmatex 的 Domains 里能看到，也能在那里绑定自己的域名。本地检查配置：`npm run build && npx wrangler deploy --dry-run`（不会发布）。
 
 ## 来历
 
