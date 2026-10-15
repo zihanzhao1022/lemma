@@ -1,5 +1,5 @@
 {
-  "version": "a1371b57207e357d",
+  "version": "e009811c5dfe201b",
   "preload": {
     "10/swiftlatexpdftex.fmt": "swiftlatexpdftex.fmt",
     "11/pdftex.map": "pdftex.map"
@@ -213,7 +213,13 @@
     "32/cmr5.pfb": "cmr5.pfb",
     "32/cmr7.pfb": "cmr7.pfb",
     "3/ptmrc8t": "ptmrc8t.tfm",
-    "33/ptmrc8t.vf": "ptmrc8t.vf"
+    "33/ptmrc8t.vf": "ptmrc8t.vf",
+    "26/beamericonbook.pdf": "beamericonbook.pdf",
+    "26/beamericonbook.20.pdf": "beamericonbook.20.pdf",
+    "26/beamericonarticle.pdf": "beamericonarticle.pdf",
+    "26/beamericonarticle.20.pdf": "beamericonarticle.20.pdf",
+    "26/beamericononline.pdf": "beamericononline.pdf",
+    "26/beamericononline.20.pdf": "beamericononline.20.pdf"
   },
   "missing": [
     "26/prdefault.cfg",

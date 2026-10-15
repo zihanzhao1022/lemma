@@ -253,7 +253,8 @@ class WorkerEngine implements TexEngine {
       this.retire(reply.log ?? '');
       return { ok: false, status: -254, log: reply.log ?? '', reason: reply.reason };
     }
-    const pdf = reply.result === 'ok' && reply.pdf ? new Uint8Array(reply.pdf) : undefined;
+    // A run that shipped no page ("No pages of output.") leaves an empty file: that is no PDF.
+    const pdf = reply.result === 'ok' && reply.pdf && reply.pdf.byteLength > 0 ? new Uint8Array(reply.pdf) : undefined;
     const aux = await this.request({ cmd: 'readfile', url: 'main.aux' }, 'readfile');
     const written: Record<string, string> = {};
     for (const name of read) {

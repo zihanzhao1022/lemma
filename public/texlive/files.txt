@@ -209,6 +209,12 @@
 32/cmr7.pfb	cmr7.pfb
 3/ptmrc8t	ptmrc8t.tfm
 33/ptmrc8t.vf	ptmrc8t.vf
+26/beamericonbook.pdf	beamericonbook.pdf
+26/beamericonbook.20.pdf	beamericonbook.20.pdf
+26/beamericonarticle.pdf	beamericonarticle.pdf
+26/beamericonarticle.20.pdf	beamericonarticle.20.pdf
+26/beamericononline.pdf	beamericononline.pdf
+26/beamericononline.20.pdf	beamericononline.20.pdf
 26/prdefault.cfg	-
 33/ptmr8r.vf	-
 33/ptmb8r.vf	-

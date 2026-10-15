@@ -289,7 +289,55 @@ export interface ResultPaper extends Hideable {
   blocks: ResultBlock[];
   /** Set once the paper has references.bib and its blocks cite entries of it; shown after the blocks. */
   references?: ResultReferences;
+  /** The paper's slides for talks and group meetings; private only. */
+  slides?: SlideDeck;
 }
+
+/**
+ * A paper's slides: either drawn in Lemma on 16:9 pages (`visual`), or written as a Beamer document
+ * (`beamer`), whose \lemmablock{label} puts a block of the paper on a frame.
+ */
+export interface SlideDeck {
+  kind: 'visual' | 'beamer';
+  slides: Slide[];
+  /** A Beamer deck's LaTeX source, from \documentclass to \end{document}. */
+  beamer?: string;
+}
+
+export interface Slide {
+  id: string;
+  elements: SlideElement[];
+  /** What the speaker says on this slide; goes to the notes of an exported .pptx. */
+  notes?: string;
+}
+
+/** Where an element sits on a slide, in slide units: the page is SLIDE_WIDTH × SLIDE_HEIGHT (1600 × 900). */
+export interface SlideBox {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Text: lines starting with "- " are bullets. `size` is in slide units, like the box. */
+export interface SlideText extends SlideBox {
+  type: 'text';
+  text: string;
+  size: number;
+  bold?: boolean;
+  align?: 'left' | 'center' | 'right';
+  /** A title is set in the paper's serif. */
+  role?: 'title' | 'body';
+}
+
+/** A block of the paper (a table, a figure, a paragraph) as compiled, kept up to date with the block. */
+export interface SlideBlock extends SlideBox {
+  type: 'block';
+  blockId: string;
+}
+
+export type SlideElement = SlideText | SlideBlock;
 
 export const BUILTIN_PAGES = ['about', 'experiences', 'publications', 'projects', 'talks', 'awards', 'cv', 'results'] as const;
 export type BuiltinPage = (typeof BUILTIN_PAGES)[number];

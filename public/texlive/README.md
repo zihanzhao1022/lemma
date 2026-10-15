@@ -56,6 +56,8 @@ Worker 发给页面：
 
 原因：graphicx 对每个 `\includegraphics{名字}` 都会先找 `名字.pdf`，再找 `名字.png` 等，不拦截的话附件的名字就会被发出去。网站自带的文件仍然先检查，它们来自同一个网站，不经过第三方。
 
+所以 TeX Live 自己的图片也只能随网站自带：Beamer 的默认主题一加载就要 `beamericonbook.pdf` 等 6 个图标，`files.txt` 里列着它们。少了它们，pgf 会退而去找同名的 `beamericonbook.tex`，把它当图片读，编译就会中止（"unknown type of image"）。
+
 TeX 找的其他文件名，比如 `\usepackage{xxx}` 的 `xxx.sty`，只有在工作目录里没有、网站也没有自带时才会发出。
 
 ## 修改自带的文件

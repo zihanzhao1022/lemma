@@ -9,7 +9,10 @@ A platform for managing experiment results and writing the paper in one place, m
 - **论文页**：用 LaTeX 写的文字、图和表格分块编译成清楚的网页，按章节排好；图可以放大，图和表格能互相切换，两份都保留。
 - **写作模式**：整篇论文作为一个 main.tex 编辑，右边是整篇 PDF；双击 PDF 里的文字会跳到对应的 LaTeX 代码。
 - **论文列表**：文件夹（可嵌套、可拖拽）、彩色标签、归档、搜索。
-- **协作和展示**：分享给合作者、页边批注、演示模式（一块一屏）。
+- **幻灯片**：每篇论文一套，第一次选做法：
+  - 可视化幻灯片：用论文里编译好的图和表格先生成一套，再拖拽排版、加文字和演讲备注；论文里的块改了，幻灯片上的也跟着变。可以导出 PDF（块保持矢量）和 PowerPoint（文字可编辑，块是 300 dpi 图片）。
+  - Beamer：用 LaTeX 写，`\lemmablock{tab:main}` 把论文里编译好的块放到一页上（按块的 `\label` 或块 id），右边实时编译。导出 PDF 就是编译结果，导出 PowerPoint 是每页一张图。
+- **协作和展示**：分享给合作者、页边批注、演示模式（一块一屏，或者放幻灯片）。
 
 LaTeX 在浏览器里编译（SwiftLaTeX 的 pdfTeX，见 `public/texlive/`），不需要编译服务器。
 
@@ -38,6 +41,7 @@ npm run preview # 预览构建结果
 | --- | --- |
 | `app/` | Lemma 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
 | `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码 |
+| `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、演示、导出 PDF 和 PowerPoint |
 | `app/example/` | 内置的虚构示例论文（预先编译好的 PDF） |
 | `components/results/` | 论文页：分块显示、目录、批注、PDF 显示 |
 | `editor/results/` | 块编辑器、表格可视化编辑器、编译和保存 |

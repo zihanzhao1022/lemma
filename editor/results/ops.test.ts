@@ -83,6 +83,17 @@ describe('applyResultsOp', () => {
     expect(updated.files).toEqual(['style.sty']);
   });
 
+  it('sets and drops the slides, leaving the rest of the paper', () => {
+    const deck = { kind: 'beamer' as const, slides: [], beamer: '\\documentclass{beamer}' };
+    const [withSlides] = applyResultsOp([paper('p1')], { kind: 'patchPaper', id: 'p1', fields: { slides: deck } });
+    expect(withSlides.slides).toEqual(deck);
+    const [dropped] = applyResultsOp([withSlides], { kind: 'patchPaper', id: 'p1', fields: { slides: null } });
+    expect(dropped).not.toHaveProperty('slides');
+    expect(dropped.files).toEqual(['style.sty']);
+    const [kept] = applyResultsOp([withSlides], { kind: 'patchPaper', id: 'p1', fields: { preamble: '\\documentclass{report}' } });
+    expect(kept.slides).toEqual(deck);
+  });
+
   it('adds, replaces and removes attachments one at a time', () => {
     let papers = applyResultsOp([paper('p1')], { kind: 'putFile', paperId: 'p1', name: 'fig.pdf', hash: 'h1' });
     expect(papers[0].files).toEqual(['style.sty', 'fig.pdf']);

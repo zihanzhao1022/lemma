@@ -1,4 +1,4 @@
-import { ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences } from '../../types';
+import { ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck } from '../../types';
 import { ContentOp, applyListOp } from '../ops';
 
 /** What the paper form edits. Blocks, preamble, attachments and visibility change through their own operations. */
@@ -15,7 +15,8 @@ export type ResultsOp =
   | { kind: 'approveEdits'; id: string }
   /** Added by the worker to a collaborator's save: their edit to a published paper waits for the owner. */
   | { kind: 'noteEdit'; paperId: string; login: string }
-  | { kind: 'patchPaper'; id: string; fields: Partial<Pick<ResultPaper, 'preamble'>> }
+  /** The preamble, or the slides (null drops the deck). */
+  | { kind: 'patchPaper'; id: string; fields: { preamble?: string; slides?: SlideDeck | null } }
   /** Adds an attachment, or records the new content hash of a replaced one. */
   | { kind: 'putFile'; paperId: string; name: string; hash: string }
   | { kind: 'removeFile'; paperId: string; name: string }
@@ -80,7 +81,13 @@ export function applyResultsOp(papers: ResultPaper[], op: ResultsOp): ResultPape
         return { ...paper, pendingReview: [...logins, op.login] };
       });
     case 'patchPaper':
-      return updatePaper(papers, op.id, (paper) => ({ ...paper, ...op.fields }));
+      return updatePaper(papers, op.id, (paper) => {
+        const { slides, ...fields } = op.fields;
+        const next: ResultPaper = { ...paper, ...fields };
+        if (slides === null) delete next.slides;
+        else if (slides !== undefined) next.slides = slides;
+        return next;
+      });
     case 'putFile':
       return updatePaper(papers, op.paperId, (paper) => ({
         ...paper,

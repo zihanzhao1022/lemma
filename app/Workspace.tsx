@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Eye, FileCode2, LayoutList, Pencil, Presentation as PresentIcon, Share2 } from 'lucide-react';
+import { Eye, FileCode2, LayoutList, MonitorPlay, Pencil, Presentation as PresentIcon, Share2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { ContentContext } from '../components/ContentContext';
 import { EditModeContext, EditModeValue } from '../components/EditMode';
@@ -14,23 +14,29 @@ import { UploadPlan, planUpload } from '../editor/results/uploads';
 import { describeSaveError } from '../editor/backend';
 import { findPaper } from '../lib/results';
 import { useT } from '../lib/phrases/app';
-import { EditRequest, ResultPaper } from '../types';
+import { EditRequest, ResultPaper, SlideDeck } from '../types';
 import { collaboratorSession, ownerSession } from './accounts';
 import { PaperList, useAccount } from './AccountContext';
 import { Reach } from './Dashboard';
 import Presentation from './Presentation';
 import ShareDialog from './ShareDialog';
+import { deckOf } from './slides/latest';
 
 const BlockEditor = lazy(() => import('../editor/results/BlockEditor'));
 const PaperSettings = lazy(() => import('../editor/results/PaperSettings'));
 const ReferencesEditor = lazy(() => import('../editor/results/ReferencesEditor'));
 const UploadDialog = lazy(() => import('../editor/results/UploadDialog'));
 const WritingMode = lazy(() => import('./writing/WritingMode'));
+const SlidesMode = lazy(() => import('./slides/SlidesMode'));
+const Present = lazy(() => import('./slides/Present'));
 
 const noop = () => {};
 
 const TOOL =
   'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-40';
+
+/** What is being presented: the paper block by block, or its slides (a Beamer deck once compiled). */
+type Presenting = null | 'blocks' | { deck: SlideDeck; start: number; beamerPdf?: Uint8Array };
 
 /**
  * A paper opened by its owner or by someone it is shared with: the results page with its editors, sharing and
@@ -50,13 +56,15 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const [upload, setUpload] = useState<{ paperId: string; plan: UploadPlan } | null>(null);
   // The owner looks at the page as readers see it, or edits it.
   const [editing, setEditing] = useState(true);
-  const [presenting, setPresenting] = useState(false);
+  // The paper block by block, or its slides from one of them.
+  const [presenting, setPresenting] = useState<Presenting>(null);
   const [sharingOpen, setSharingOpen] = useState(false);
   const [saving, setSaving] = useState(0);
   // The page's blocks, or the whole paper as one LaTeX document with its PDF; the writing view stays mounted
   // once opened, so switching back and forth keeps unsaved work.
-  const [mode, setMode] = useState<'blocks' | 'write'>('blocks');
-  const [wrote, setWrote] = useState(false);
+  const [mode, setMode] = useState<'blocks' | 'write' | 'slides'>('blocks');
+  // The writing and slide views stay mounted once opened, so switching back and forth keeps their state.
+  const [opened, setOpened] = useState<{ write?: boolean; slides?: boolean }>({});
   const bar = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
   const contentRef = useRef(content);
@@ -157,21 +165,50 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
 
   // The writing view fills the window under the paper's bar; the page itself stops scrolling meanwhile.
   useLayoutEffect(() => {
-    if (mode !== 'write') return undefined;
+    if (mode === 'blocks') return undefined;
     window.scrollTo(0, 0);
     const measure = () => setTop(Math.round(bar.current?.getBoundingClientRect().bottom ?? 0));
     measure();
     window.addEventListener('resize', measure);
+    // Focusing a field can still scroll the page under the view; it follows the bar.
+    window.addEventListener('scroll', measure, { passive: true });
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure);
       document.body.style.overflow = overflow;
     };
   }, [mode]);
   useEffect(() => {
-    if (mode === 'write') setWrote(true);
+    if (mode !== 'blocks') setOpened((current) => (current[mode] ? current : { ...current, [mode]: true }));
   }, [mode]);
+
+  const present = () => {
+    const deck = paper ? deckOf(paper) : null;
+    if (!deck || !paper) {
+      setPresenting('blocks');
+      return;
+    }
+    if (deck.kind === 'visual') {
+      setPresenting({ deck, start: 0 });
+      return;
+    }
+    // A Beamer deck shows once compiled (at once when the slide view already compiled it); one that does not
+    // compile closes again and says so.
+    const showing = (current: Presenting): current is Exclude<Presenting, null | 'blocks'> => current !== null && current !== 'blocks' && current.deck === deck;
+    setPresenting({ deck, start: 0 });
+    import('./slides/beamer')
+      .then(({ compileBeamer }) => compileBeamer(paper, deck.beamer ?? '', access.readFile))
+      .then(({ pdf }) => {
+        if (!pdf) throw new Error('no PDF');
+        setPresenting((current) => (showing(current) ? { ...current, beamerPdf: pdf } : current));
+      })
+      .catch(() => {
+        setPresenting((current) => (showing(current) ? null : current));
+        setToast({ message: () => t('幻灯片还没编译成功，先修好代码里的问题') });
+      });
+  };
 
   const closeDialog = useCallback(() => setRequest(null), []);
   const target: ResultPaper | undefined =
@@ -203,6 +240,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                     [
                       ['blocks', <LayoutList key="icon" size={14} />, t('分块')],
                       ['write', <FileCode2 key="icon" size={14} />, t('写作')],
+                      ['slides', <MonitorPlay key="icon" size={14} />, t('幻灯片')],
                     ] as const
                   ).map(([value, icon, label]) => (
                     <button
@@ -230,10 +268,13 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                   {editing ? t('看读者视角') : t('回到编辑')}
                 </button>
               )}
-              <button type="button" onClick={() => setPresenting(true)} className={TOOL}>
-                <PresentIcon size={16} />
-                {t('演示')}
-              </button>
+              {/* The slide view has its own, for the deck as it is on screen. */}
+              {mode !== 'slides' && (
+                <button type="button" onClick={present} className={TOOL}>
+                  <PresentIcon size={16} />
+                  {t('演示')}
+                </button>
+              )}
               {owner && (
                 <button type="button" onClick={() => setSharingOpen(true)} className="inline-flex items-center gap-1.5 rounded-md bg-violet-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-800">
                   <Share2 size={16} />
@@ -243,9 +284,24 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
               {!owner && !canEdit && <span className="text-sm text-gray-400">{t('只读')}</span>}
             </div>
             <ResultPage inApp backTo="/" backLabel={t('我的论文')} />
-            {owner && wrote && (
+            {owner && opened.write && (
               <Suspense fallback={null}>
-                <WritingMode paper={paper} readFile={access.readFile} onSave={counted} top={top} visible={mode === 'write'} />
+                {/* One per paper: switching papers must never carry one paper's text or slides into another. */}
+                <WritingMode key={paper.id} paper={paper} readFile={access.readFile} onSave={counted} top={top} visible={mode === 'write'} />
+              </Suspense>
+            )}
+            {owner && opened.slides && (
+              <Suspense fallback={null}>
+                <SlidesMode
+                  key={paper.id}
+                  paper={paper}
+                  readFile={access.readFile}
+                  onSave={counted}
+                  top={top}
+                  visible={mode === 'slides'}
+                  active={presenting === null}
+                  onPresent={(deck, start, beamerPdf) => setPresenting({ deck, start, beamerPdf })}
+                />
               </Suspense>
             )}
             {request?.kind === 'block' && target && (
@@ -291,7 +347,12 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
             {sharingOpen && owner && (
               <ShareDialog paper={paper} owner={account.account} saveContentOp={saveContentOp} saveResults={counted} onClose={() => setSharingOpen(false)} />
             )}
-            {presenting && <Presentation paper={paper} readFile={access.readFile} onClose={() => setPresenting(false)} />}
+            {presenting === 'blocks' && <Presentation paper={paper} readFile={access.readFile} onClose={() => setPresenting(null)} />}
+            {presenting && presenting !== 'blocks' && (
+              <Suspense fallback={null}>
+                <Present paper={paper} deck={presenting.deck} readFile={access.readFile} start={presenting.start} beamerPdf={presenting.beamerPdf} onClose={() => setPresenting(null)} />
+              </Suspense>
+            )}
           </PresenceContext.Provider>
         </ResultsAccessContext.Provider>
       </EditModeContext.Provider>
