@@ -98,6 +98,34 @@ describe('decks from a paper', () => {
     const without = withoutMissing(deck, { ...paper, blocks: paper.blocks.filter((block) => block.id !== 'blk-f') });
     expect(without.slides[1].elements.map((element) => element.type)).toEqual(['text']);
   });
+
+  it("follow the paper's logic, each method with experiments moved under it opening a part", () => {
+    const out = (name: string) => ({ pdf: `results/res-b/${name}.pdf`, width: 400, height: 300 });
+    const logical: ResultPaper = {
+      id: 'res-b',
+      slug: 'b',
+      title: 'Made-up',
+      authors: [],
+      blocks: [
+        { id: 'meth', kind: 'text', source: '\\section{Method}', output: out('meth') },
+        { id: 'm1', kind: 'text', source: '\\subsection{Made-up gate}', output: out('m1') },
+        { id: 'm2', kind: 'text', source: '\\subsection{Made-up cache}', output: out('m2') },
+        { id: 'exps', kind: 'text', source: '\\section{Experiments}', output: out('exps') },
+        { id: 'e1', kind: 'text', source: '\\subsection{Cache results}', output: out('e1') },
+        { id: 't1', kind: 'table', source: '\\begin{table}\\caption{Cache.}\\end{table}', output: out('t1') },
+        { id: 'e2', kind: 'text', source: '\\subsection{Gate results}', output: out('e2') },
+        { id: 'f1', kind: 'figure', source: '\\begin{figure}\\caption{Gate.}\\end{figure}', output: out('f1') },
+      ],
+      logic: { e1: 'm2', e2: 'm1' },
+    };
+    const deck = visualDeck(logical, label, () => undefined, make);
+    expect(deck.slides.slice(1).map((slide) => (slide.elements[0] as SlideText).text)).toEqual(['Made-up gate', 'Figure  Gate', 'Made-up cache', 'Table  Cache']);
+    const beamer = beamerDeck(logical, () => undefined).beamer ?? '';
+    const at = (text: string) => beamer.indexOf(text);
+    expect([at('\\section{Made-up gate}'), at('\\lemmablock{f1}'), at('\\section{Made-up cache}'), at('\\lemmablock{t1}')].every((place, index, all) => place > (all[index - 1] ?? 0))).toBe(true);
+    // Without moves, the paper's order and no parts.
+    expect(visualDeck({ ...logical, logic: undefined }, label, () => undefined, make).slides.slice(1).map((slide) => (slide.elements[0] as SlideText).text)).toEqual(['Table  Cache', 'Figure  Gate']);
+  });
 });
 
 describe('titles', () => {

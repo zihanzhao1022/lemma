@@ -94,6 +94,17 @@ describe('applyResultsOp', () => {
     expect(kept.slides).toEqual(deck);
   });
 
+  it('sets the logic, and drops it when nothing is moved any more', () => {
+    const [moved] = applyResultsOp([paper('p1')], { kind: 'patchPaper', id: 'p1', fields: { logic: { e1: 'm1' } } });
+    expect(moved.logic).toEqual({ e1: 'm1' });
+    const [kept] = applyResultsOp([moved], { kind: 'patchPaper', id: 'p1', fields: { preamble: '\\documentclass{report}' } });
+    expect(kept.logic).toEqual({ e1: 'm1' });
+    for (const logic of [{}, null]) {
+      const [dropped] = applyResultsOp([moved], { kind: 'patchPaper', id: 'p1', fields: { logic } });
+      expect(dropped).not.toHaveProperty('logic');
+    }
+  });
+
   it('adds, replaces and removes attachments one at a time', () => {
     let papers = applyResultsOp([paper('p1')], { kind: 'putFile', paperId: 'p1', name: 'fig.pdf', hash: 'h1' });
     expect(papers[0].files).toEqual(['style.sty', 'fig.pdf']);

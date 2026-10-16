@@ -291,6 +291,12 @@ export interface ResultPaper extends Hideable {
   references?: ResultReferences;
   /** The paper's slides for talks and group meetings; private only. */
   slides?: SlideDeck;
+  /**
+   * How the paper's parts belong together beyond the order its sections put them in: each block moved under
+   * another one (an experiment under the method it tests), by block ID → the ID of the block it belongs to.
+   * Blocks not listed stay where the paper's headings put them (app/logic/tree.ts). Private only.
+   */
+  logic?: Record<string, string>;
 }
 
 /**

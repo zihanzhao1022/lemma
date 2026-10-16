@@ -15,8 +15,8 @@ export type ResultsOp =
   | { kind: 'approveEdits'; id: string }
   /** Added by the worker to a collaborator's save: their edit to a published paper waits for the owner. */
   | { kind: 'noteEdit'; paperId: string; login: string }
-  /** The preamble, or the slides (null drops the deck). */
-  | { kind: 'patchPaper'; id: string; fields: { preamble?: string; slides?: SlideDeck | null } }
+  /** The preamble, the slides (null drops the deck), or the paper's logic (null: as its headings have it). */
+  | { kind: 'patchPaper'; id: string; fields: { preamble?: string; slides?: SlideDeck | null; logic?: Record<string, string> | null } }
   /** Adds an attachment, or records the new content hash of a replaced one. */
   | { kind: 'putFile'; paperId: string; name: string; hash: string }
   | { kind: 'removeFile'; paperId: string; name: string }
@@ -82,10 +82,12 @@ export function applyResultsOp(papers: ResultPaper[], op: ResultsOp): ResultPape
       });
     case 'patchPaper':
       return updatePaper(papers, op.id, (paper) => {
-        const { slides, ...fields } = op.fields;
+        const { slides, logic, ...fields } = op.fields;
         const next: ResultPaper = { ...paper, ...fields };
         if (slides === null) delete next.slides;
         else if (slides !== undefined) next.slides = slides;
+        if (logic === null || (logic && Object.keys(logic).length === 0)) delete next.logic;
+        else if (logic !== undefined) next.logic = logic;
         return next;
       });
     case 'putFile':

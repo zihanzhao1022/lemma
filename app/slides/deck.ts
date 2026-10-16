@@ -5,6 +5,7 @@
  */
 import { stripComments } from '../../editor/tex/document';
 import { ResultBlock, ResultPaper, Slide, SlideBlock, SlideBox, SlideDeck, SlideElement, SlideText } from '../../types';
+import { LogicTree, headingTitles, logicTree } from '../logic/tree';
 
 /** The page, in slide units (16:9). An exported .pptx is 13.333 × 7.5 in, a PDF 960 × 540 pt. */
 export const SLIDE_WIDTH = 1600;
@@ -71,13 +72,42 @@ export const plain = (latex: string): string =>
 /** "表 1" / "图 2" for a figure or table, in the interface's language (given by the caller). */
 export type Labeller = (kind: 'figure' | 'table', number: string | undefined) => string;
 
-/** The figures and tables a deck can show, with their labels and captions. */
+/** The figures and tables a deck can show, with their labels and captions, in the order of the paper's logic. */
 export function results(paper: ResultPaper, label: Labeller, number: (blocks: ResultBlock[], index: number) => string | undefined): { block: ResultBlock; label: string; caption: string }[] {
-  return paper.blocks.flatMap((block, index) =>
-    (block.kind === 'figure' || block.kind === 'table') && block.output && !block.hidden
-      ? [{ block, label: label(block.kind, number(paper.blocks, index)), caption: captionOf(block.source) }]
-      : [],
-  );
+  const index = new Map(paper.blocks.map((block, at) => [block.id, at]));
+  return logicTree(paper).order.flatMap((id) => {
+    const at = index.get(id) ?? -1;
+    const block = paper.blocks[at];
+    return (block.kind === 'figure' || block.kind === 'table') && block.output && !block.hidden
+      ? [{ block, label: label(block.kind, number(paper.blocks, at)), caption: captionOf(block.source) }]
+      : [];
+  });
+}
+
+/**
+ * The part of a talk a block is in: the outermost block above it that other blocks were moved under (a method
+ * with its experiments), when it has a heading to name the part by.
+ */
+export function partOf(tree: LogicTree, titles: Record<string, string>, id: string): string | null {
+  let part: string | null = null;
+  for (let at = tree.nodes[id]?.parent ?? null; at !== null; at = tree.nodes[at].parent) {
+    if (titles[at] && tree.nodes[at].children.some((child) => tree.nodes[child].moved)) part = at;
+  }
+  return part;
+}
+
+/** Each figure and table with the part it opens, if it is the first of one: its title. */
+function partsOpened(paper: ResultPaper, blocks: ResultBlock[]): Record<string, string> {
+  const tree = logicTree(paper);
+  const titles = headingTitles(paper, false);
+  const opened: Record<string, string> = {};
+  let part: string | null = null;
+  for (const block of blocks) {
+    const next = partOf(tree, titles, block.id);
+    if (next !== null && next !== part) opened[block.id] = titles[next];
+    part = next;
+  }
+  return opened;
 }
 
 /** At most `length` characters, cut at a word where there is one, with an ellipsis; a trailing period goes. */
@@ -101,11 +131,17 @@ export function visualDeck(paper: ResultPaper, label: Labeller, number: (blocks:
       { ...bodyText([authorLine(paper.authors), paper.venue ?? ''].filter(Boolean).join('\n'), make('el'), { x: 160, y: 500, w: 1280, h: 140 }), size: 32, align: 'center' },
     ],
   };
-  // The block carries its whole caption; the title gives the gist on one line.
-  const slides = results(paper, label, number).map(({ block, label: name, caption }): Slide => ({
-    id: make('slide'),
-    elements: [titleText(caption ? `${name}  ${shorten(caption, 40)}` : name, make('el')), blockElement(block, make('el'))],
-  }));
+  // The block carries its whole caption; the title gives the gist on one line. A method with its experiments
+  // moved under it opens with a slide of its own.
+  const shown = results(paper, label, number);
+  const parts = partsOpened(
+    paper,
+    shown.map(({ block }) => block),
+  );
+  const slides = shown.flatMap(({ block, label: name, caption }): Slide[] => [
+    ...(parts[block.id] ? [{ id: make('slide'), elements: [{ ...titleText(parts[block.id], make('el'), { x: 160, y: 330, w: 1280, h: 240 }), size: 64, align: 'center' as const }] }] : []),
+    { id: make('slide'), elements: [titleText(caption ? `${name}  ${shorten(caption, 40)}` : name, make('el')), blockElement(block, make('el'))] },
+  ]);
   return { kind: 'visual', slides: [opening, ...slides] };
 }
 
@@ -218,12 +254,18 @@ const latinLabel: Labeller = (kind, number) => `${kind === 'figure' ? 'Figure' :
 
 /** A Beamer deck to start from: a title frame, then a frame for each figure and table. */
 export function beamerDeck(paper: ResultPaper, number: (blocks: ResultBlock[], index: number) => string | undefined): SlideDeck {
-  const frames = results(paper, latinLabel, number).map(
-    ({ block, label: name, caption }) => `\\begin{frame}{${escapeLatex(caption && SETTABLE.test(caption) ? `${name}: ${shorten(caption, 40)}` : name)}}
+  const shown = results(paper, latinLabel, number);
+  const parts = partsOpened(
+    paper,
+    shown.map(({ block }) => block),
+  );
+  const frames = shown.map(({ block, label: name, caption }) => {
+    const part = parts[block.id] && SETTABLE.test(parts[block.id]) ? escapeLatex(parts[block.id]) : null;
+    return `${part ? `\\section{${part}}\n\\begin{frame}\n  \\centering\\Large ${part}\n\\end{frame}\n\n` : ''}\\begin{frame}{${escapeLatex(caption && SETTABLE.test(caption) ? `${name}: ${shorten(caption, 40)}` : name)}}
   \\centering
   \\lemmablock{${refFor(block)}}
-\\end{frame}`,
-  );
+\\end{frame}`;
+  });
   const beamer = [
     '\\documentclass[aspectratio=169]{beamer}',
     '\\usetheme{default}',

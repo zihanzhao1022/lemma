@@ -11,6 +11,7 @@ import { ResultPaper, SlideDeck } from '../../types';
 import Menu, { MenuItem } from '../Menu';
 import { compileBeamer } from './beamer';
 import { beamerDeck, visualDeck } from './deck';
+import { withLatestLogic } from '../logic/latest';
 import { changedDeck, deckOf, savedDeck } from './latest';
 
 const SlidesEditor = lazy(() => import('./SlidesEditor'));
@@ -225,7 +226,9 @@ const SlidesMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible, ac
                   key={kind}
                   type="button"
                   onClick={() => {
-                    change(kind === 'visual' ? visualDeck(paper, label, blockNumber) : beamerDeck(paper, blockNumber));
+                    // The deck follows the paper's logic as last changed, saved or not.
+                    const logical = withLatestLogic(paper);
+                    change(kind === 'visual' ? visualDeck(logical, label, blockNumber) : beamerDeck(logical, blockNumber));
                     setCurrent(0);
                   }}
                   className="galley-press rounded-2xl border border-black/[0.06] bg-white p-6 text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-shadow duration-150 hover:shadow-[0_12px_32px_-16px_rgba(0,0,0,0.25)]"
