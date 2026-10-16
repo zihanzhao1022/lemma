@@ -144,7 +144,8 @@ const FileTree: React.FC<Props> = ({ names, added, removed, onInsert, onUpload, 
       <p className="border-t border-gray-200 px-3 py-2 text-xs text-gray-400">
         {t('点图片插入 \\includegraphics，点 .tex 插入 \\input；把文件或文件夹拖进来就能上传，PDF 图最清楚')}
       </p>
-      <input ref={filesInput} type="file" multiple accept={ATTACHMENT_TYPES.join(',')} className="hidden" onChange={(event) => { pick(event.target.files); event.target.value = ''; }} />
+      {/* A .zip is opened into the files it holds (editor/results/uploads.ts). */}
+      <input ref={filesInput} type="file" multiple accept={[...ATTACHMENT_TYPES, '.zip'].join(',')} className="hidden" onChange={(event) => { pick(event.target.files); event.target.value = ''; }} />
       <input ref={folderInput} type="file" className="hidden" onChange={(event) => { pick(event.target.files); event.target.value = ''; }} />
     </aside>
   );

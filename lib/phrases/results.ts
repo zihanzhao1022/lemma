@@ -375,4 +375,7 @@ export const { t, useT, table } = phrases({
     ja: '一度にアップロードできるのは {max} 個までなので、残りの {n} 個を除きます：',
     en: 'At most {max} files upload at once, so the other {n} are left out:',
   },
+  // Opening a .zip, and importing a paper from one.
+  '导入完成，{n} 个块都编译好了': { ja: '取り込みが終わり、{n} 個のブロックをすべてコンパイルしました', en: 'Imported; all {n} blocks compiled' },
+  '已解压：{names}': { ja: '展開しました：{names}', en: 'Opened: {names}' },
 });

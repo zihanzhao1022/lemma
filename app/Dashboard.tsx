@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -27,6 +27,7 @@ import { ResultPaper } from '../types';
 import { Account, accountOf } from './accounts';
 import { useAccount } from './AccountContext';
 import Avatar from './Avatar';
+import ImportDialog from './ImportDialog';
 import { newPaper, sharing } from './library';
 import { TAG_LOOK, ago } from './look';
 import Menu, { MenuItem, MenuLabel } from './Menu';
@@ -278,6 +279,9 @@ const Dashboard: React.FC = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<Order>({ by: 'touched', up: false });
   const [creating, setCreating] = useState(false);
+  // A .zip picked to start a paper from, and the field that picks it.
+  const [importing, setImporting] = useState<File | null>(null);
+  const zipInput = useRef<HTMLInputElement>(null);
   const [closed, setClosed] = useState(() => loadClosed(account.login));
   const [editing, setEditing] = useState<Editing>(null);
   // The folder a drag would drop into (null: out of every folder), while one is over the list.
@@ -628,7 +632,18 @@ const Dashboard: React.FC = () => {
   return (
     <div className="grid gap-8 py-8 md:grid-cols-[14.5rem_minmax(0,1fr)] md:gap-10">
       <aside className="rounded-2xl bg-[#f5f5f7] p-3 md:sticky md:top-[4.25rem] md:max-h-[calc(100svh-5.25rem)] md:self-start md:overflow-y-auto">
-        <Sidebar organizer={organizer} organize={organize} view={view} onView={show} counts={counts} sharing={features.sharing} onNew={() => setCreating(true)} />
+        <Sidebar organizer={organizer} organize={organize} view={view} onView={show} counts={counts} sharing={features.sharing} onNew={() => setCreating(true)} onImport={() => zipInput.current?.click()} />
+        <input
+          ref={zipInput}
+          type="file"
+          accept=".zip,application/zip"
+          className="hidden"
+          onChange={(event) => {
+            const picked = event.target.files?.[0];
+            event.target.value = '';
+            if (picked) setImporting(picked);
+          }}
+        />
         {repo && <p className="mt-6 break-words px-2 pb-1 text-xs leading-relaxed text-gray-400">{t('存放在 GitHub 仓库 {repo}', { repo })}</p>}
       </aside>
 
@@ -733,6 +748,7 @@ const Dashboard: React.FC = () => {
         )}
       </section>
       {creating && <NewPaperDialog folder={base} onClose={() => setCreating(false)} />}
+      {importing && <ImportDialog file={importing} folder={base} onClose={() => setImporting(null)} />}
     </div>
   );
 };

@@ -193,6 +193,25 @@ describe('rebuild', () => {
     expect(Object.keys(result.outputs)).toEqual(['t1']);
   });
 
+  it('goes on past blocks that fail when asked to, naming the first', async () => {
+    const { compile, calls } = fakeCompiler();
+    const result = await rebuild(
+      paper([
+        { id: 'a', kind: 'table', source: '\\label{tab:a}' },
+        { id: 'bad', kind: 'text', source: 'FAIL' },
+        { id: 'worse', kind: 'text', source: 'FAIL again' },
+        { id: 'b', kind: 'table', source: '\\label{tab:b}' },
+      ]),
+      compile,
+      { keepGoing: true },
+    );
+    expect(Object.keys(result.outputs)).toEqual(['a', 'b']);
+    expect(result.failed).toEqual({ blockId: 'bad', message: 'Undefined control sequence.' });
+    expect(result.outputs.b.counters).toEqual({ table: 2 });
+    // A block that failed is not tried again in the passes after.
+    expect(calls.filter((id) => id === 'bad')).toHaveLength(1);
+  });
+
   it('leaves empty blocks alone', async () => {
     const compile = vi.fn<CompileFn>();
     const result = await rebuild(paper([{ id: 'e', kind: 'text', source: '  ' }]), compile);

@@ -44,6 +44,7 @@ const UploadDialog: React.FC<Props> = ({ title, plan, onConfirm, onClose }) => {
         {names.length > 0 ? (
           <div className="space-y-1">
             <p>{t('{n} 个文件会上传到这篇论文的附件，文件夹保留原样：', { n: names.length })}</p>
+            {plan.archives.length > 0 && <p className="text-gray-500">{t('已解压：{names}', { names: plan.archives.join(t('、')) })}</p>}
             <List names={names} />
           </div>
         ) : (

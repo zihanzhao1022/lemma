@@ -1,5 +1,6 @@
 import type { PickedFile } from '../../components/results/droppedFiles';
 import { ATTACHMENT_LIMIT, ATTACHMENT_TYPES, attachmentName, extensionOf } from './actions';
+import { expandZips } from './zip';
 
 /** The most files one upload takes. */
 export const MAX_UPLOAD = 200;
@@ -12,13 +13,16 @@ export interface UploadPlan {
   replaced: string[];
   /** Files left out, by why: a type compiles cannot use, over ATTACHMENT_LIMIT, or past MAX_UPLOAD. */
   skipped: { type: string[]; size: string[]; count: string[] };
+  /** The .zip files opened: what was in them is among `files`, in the folder each .zip was in. */
+  archives: string[];
 }
 
-/** Reads the files an upload takes and names them like the attachments they become. */
+/** Reads the files an upload takes (a .zip opened) and names them like the attachments they become. */
 export async function planUpload(picked: PickedFile[], existing: string[]): Promise<UploadPlan> {
   const files: Record<string, Uint8Array> = {};
-  const skipped: UploadPlan['skipped'] = { type: [], size: [], count: [] };
-  for (const { path, file } of picked) {
+  const opened = await expandZips(picked);
+  const skipped: UploadPlan['skipped'] = { type: [...opened.skipped.type], size: [...opened.skipped.size], count: [] };
+  for (const { path, file } of opened.picked) {
     const parts = path.split('/');
     const name = parts[parts.length - 1];
     if (!ATTACHMENT_TYPES.includes(extensionOf(name))) skipped.type.push(path);
@@ -29,5 +33,5 @@ export async function planUpload(picked: PickedFile[], existing: string[]): Prom
       files[await attachmentName(name, data, parts.slice(0, -1))] = data;
     }
   }
-  return { files, replaced: Object.keys(files).filter((name) => existing.includes(name)), skipped };
+  return { files, replaced: Object.keys(files).filter((name) => existing.includes(name)), skipped, archives: opened.archives };
 }

@@ -61,10 +61,25 @@ export function makeReferencesBuilder(engine: TexEngine, paper: ResultPaper, fil
   };
 }
 
-/** Recompiles what the paper's changes made out of date (bibliography first), with these attachments. */
-export async function rebuildWith(paper: ResultPaper, files: Record<string, Uint8Array>): Promise<RebuildResult> {
+/**
+ * Recompiles what the paper's changes made out of date (bibliography first), with these attachments.
+ * `keepGoing` goes on past blocks that fail; `onCompile` hears each block as its compile starts.
+ */
+export async function rebuildWith(
+  paper: ResultPaper,
+  files: Record<string, Uint8Array>,
+  { keepGoing = false, onCompile }: { keepGoing?: boolean; onCompile?: (blockId: string) => void } = {},
+): Promise<RebuildResult> {
   const engine = await getTexEngine();
-  return rebuild(paper, makeCompileFn(engine, preambleOf(paper), files), { references: makeReferencesBuilder(engine, paper, files) });
+  const compile = makeCompileFn(engine, preambleOf(paper), files);
+  return rebuild(
+    paper,
+    (block, context) => {
+      onCompile?.(block.id);
+      return compile(block, context);
+    },
+    { references: makeReferencesBuilder(engine, paper, files), keepGoing },
+  );
 }
 
 /** Recompiles the paper's out-of-date blocks with its preamble and attachments. */

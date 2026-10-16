@@ -456,6 +456,62 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   );
 
   /**
+   * A paper read from a LaTeX project (editor/results/project.ts): saved first as it is, with its attachments
+   * in the same commit, then compiled block by block, going on past blocks that fail, and its PDFs saved. The
+   * returned promise ends once the paper is in the repository; `onCompile` hears each block as it compiles.
+   */
+  const importPaper = useCallback(
+    (paper: ResultPaper, files: Record<string, Uint8Array>, onCompile?: (done: number, total: number) => void): Promise<void> => {
+      if (!backend || loadState.state !== 'private') return Promise.reject(unavailable());
+      busy.current.add(paper.id);
+      const saved = enqueue(async () => {
+        const uploads = await putFiles(paper.id, files);
+        settle(
+          await backend.save(
+            { kind: 'batch', ops: [{ kind: 'putPaper', paper }, ...uploads.ops] },
+            Object.entries(files).map(([name, data]) => ({ path: attachmentPath(paper.id, name), data })),
+            [],
+            resultsCommitMessage('import paper', paper.title),
+            `content: update result "${paper.title}"`,
+          ),
+        );
+      });
+      saved
+        .then(
+          () =>
+            enqueue(async () => {
+              const stored = latest.current.find((item) => item.id === paper.id);
+              if (!stored) return;
+              const total = stored.blocks.filter((block) => block.source?.trim()).length;
+              let done = 0;
+              const rebuilt = await rebuildWith(stored, files, { keepGoing: true, onCompile: () => onCompile?.(Math.min((done += 1), total), total) });
+              if (Object.keys(rebuilt.outputs).length > 0 || rebuilt.references !== undefined) {
+                settle(
+                  await backend.save(
+                    withOutputs(paper.id, [], rebuilt),
+                    rebuilt.writes,
+                    rebuilt.deletes,
+                    resultsCommitMessage('compile', paper.title),
+                    `content: update result "${paper.title}"`,
+                  ),
+                );
+              }
+              const failed = rebuilt.failed;
+              callbacks.current.onToast({
+                message: () => (failed ? describeFailure(stored.blocks, failed) : t('导入完成，{n} 个块都编译好了', { n: total })),
+              });
+            }),
+          // The caller says why the paper could not be saved.
+          () => undefined,
+        )
+        .catch((error: unknown) => callbacks.current.onToast({ message: () => describeSaveError(error) }))
+        .finally(() => busy.current.delete(paper.id));
+      return saved;
+    },
+    [backend, loadState.state, unavailable, enqueue, settle],
+  );
+
+  /**
    * Whether this paper's blocks are still being renumbered and saved after a drag, a switch or an upload. The
    * block and preamble dialogs rebuild from the page, which may not have the new blocks, numbers or files
    * yet, so they must not open until then.
@@ -476,5 +532,5 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [collaborator, loadState, backend, roles, siteBehind, syncSite, approveEdits, siteAccess, saveSiteViewers],
   );
 
-  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, reload, isRenumbering };
+  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, importPaper, reload, isRenumbering };
 }

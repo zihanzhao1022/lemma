@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Archive, ChevronDown, ChevronRight, FileText, Folder, FolderPlus, Inbox, MoreHorizontal, Plus, Users } from 'lucide-react';
+import { Archive, ChevronDown, ChevronRight, FileArchive, FileText, Folder, FolderPlus, Inbox, MoreHorizontal, Plus, Users } from 'lucide-react';
 import { useT } from '../lib/phrases/app';
 import { TAG_LOOK } from './look';
 import Menu, { MenuItem, MenuLabel } from './Menu';
@@ -16,6 +16,8 @@ interface Props {
   /** Whether papers can be shared with the account (the "shared with me" list). */
   sharing: boolean;
   onNew: () => void;
+  /** Starts a paper from a .zip of a LaTeX project. */
+  onImport: () => void;
 }
 
 const same = (a: View, b: View): boolean => a.kind === b.kind && ('id' in a ? a.id : '') === ('id' in b ? b.id : '');
@@ -87,7 +89,7 @@ const NameField: React.FC<{ initial?: string; placeholder: string; depth?: numbe
 type Editing = { kind: 'new-folder'; parent: string | null } | { kind: 'rename-folder'; id: string } | { kind: 'new-tag' } | { kind: 'rename-tag'; id: string } | null;
 
 /** The left column of the list of papers: kinds of papers, the account's folders and its tags. */
-const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, sharing, onNew }) => {
+const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, sharing, onNew, onImport }) => {
   const t = useT();
   const [editing, setEditing] = useState<Editing>(null);
   const [closed, setClosed] = useState<Set<string>>(new Set());
@@ -237,9 +239,13 @@ const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, s
 
   return (
     <nav aria-label={t('论文分类')} className="space-y-0.5">
-      <button type="button" onClick={onNew} className="galley-press mb-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-violet-800">
+      <button type="button" onClick={onNew} className="galley-press flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-violet-800">
         <Plus size={16} />
         {t('新建论文')}
+      </button>
+      <button type="button" onClick={onImport} className="mb-4 mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm text-gray-600 transition-colors duration-150 hover:bg-black/[0.05] hover:text-gray-900">
+        <FileArchive size={15} />
+        {t('从压缩包导入')}
       </button>
       {kinds.map((kind) => (
         <Row

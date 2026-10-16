@@ -166,7 +166,16 @@ export function describeFailure(blocks: ResultBlock[], failed: { blockId: string
 export async function rebuild(
   paper: ResultPaper,
   compile: CompileFn,
-  { maxPasses = 3, references: builder }: { maxPasses?: number; references?: ReferencesBuilder } = {},
+  {
+    maxPasses = 3,
+    references: builder,
+    keepGoing = false,
+  }: {
+    maxPasses?: number;
+    references?: ReferencesBuilder;
+    /** Compiles every block it can, past those that fail (an imported paper); `failed` names the first. */
+    keepGoing?: boolean;
+  } = {},
 ): Promise<RebuildResult> {
   const blocks = [...paper.blocks];
   const outputs: Record<string, ResultBlockOutput> = {};
@@ -176,6 +185,8 @@ export async function rebuild(
   if (paper.references) original.add(paper.references.pdf);
   const deletes = new Set<string>();
   let references: ResultReferences | null | undefined;
+  let firstFailure: RebuildResult['failed'];
+  const failedBlocks = new Set<string>();
   const result = (failed?: RebuildResult['failed']): RebuildResult => ({
     outputs,
     sources,
@@ -200,12 +211,17 @@ export async function rebuild(
       const hash = referencesHash(paper, keys, builder.style);
       if (paper.references?.inputHash !== hash) {
         const compiled = await builder.compile(keys);
-        if (!compiled.ok) return result({ blockId: 'references', message: compiled.message });
-        const pdf = referencesPath(paper.id, hash);
-        if (paper.references && paper.references.pdf !== pdf) deletes.add(paper.references.pdf);
-        writes.set(pdf, compiled.pdf);
-        references = { pdf, width: compiled.width, height: compiled.height, inputHash: hash, citations: compiled.citations };
-        citations = compiled.citations;
+        if (!compiled.ok) {
+          if (!keepGoing) return result({ blockId: 'references', message: compiled.message });
+          firstFailure = { blockId: 'references', message: compiled.message };
+          citations = {};
+        } else {
+          const pdf = referencesPath(paper.id, hash);
+          if (paper.references && paper.references.pdf !== pdf) deletes.add(paper.references.pdf);
+          writes.set(pdf, compiled.pdf);
+          references = { pdf, width: compiled.width, height: compiled.height, inputHash: hash, citations: compiled.citations };
+          citations = compiled.citations;
+        }
       }
     }
   }
@@ -214,12 +230,17 @@ export async function rebuild(
     let changed = false;
     for (let index = 0; index < blocks.length; index += 1) {
       const block = blocks[index];
-      if (!block.source?.trim()) continue;
+      if (!block.source?.trim() || failedBlocks.has(block.id)) continue;
       const context = blockContext(blocks, index, citations);
       const hash = inputHash(paper, block, context);
       if (block.output?.inputHash === hash) continue;
       const compiled = await compile(block, context);
-      if (!compiled.ok) return result({ blockId: block.id, message: compiled.message });
+      if (!compiled.ok) {
+        if (!keepGoing) return result({ blockId: block.id, message: compiled.message });
+        failedBlocks.add(block.id);
+        firstFailure ??= { blockId: block.id, message: compiled.message };
+        continue;
+      }
       const pdf = outputPath(paper.id, block.id, hash);
       const previous = block.output?.pdf;
       if (previous && previous !== pdf) {
@@ -243,7 +264,7 @@ export async function rebuild(
     }
     if (!changed) break;
   }
-  return result();
+  return result(firstFailure);
 }
 
 /** Blocks whose PDF no longer matches their inputs (a first-pass view, without recompiling anything). */
