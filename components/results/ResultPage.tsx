@@ -236,6 +236,27 @@ function placeOf(blockId: string | undefined, blocks: ResultBlock[], t: Translat
   return index < 0 ? t('这篇论文') : t('第 {n} 块（{kind}）', { n: index + 1, kind: t(KIND_LABEL[blocks[index].kind]) });
 }
 
+/**
+ * A block as the page shows it to whoever edits it, its tools above it, without comments or the buttons that
+ * insert blocks: for the paper's other views of its blocks, such as its logic. `tools` go first in the row.
+ */
+export const BlockWithTools: React.FC<{ paperId: string; block: ResultBlock; tools?: React.ReactNode }> = ({ paperId, block, tools }) => {
+  const t = useT();
+  return (
+    <div className={`relative${block.hidden ? ' opacity-50' : ''}`}>
+      <div className="mb-1 flex flex-wrap items-center justify-end gap-2 text-xs text-gray-400">
+        {tools}
+        {t(KIND_LABEL[block.kind])}
+        {block.hidden && <HiddenBadge />}
+        {block.source && <CopyButton text={() => exportTex(block.source ?? '')} label={t('复制 LaTeX')} title={t('复制 LaTeX 代码（开头注明需要的宏包）')} />}
+        <ConvertButton paperId={paperId} block={block} />
+        <EditButton request={{ kind: 'block', paperId, blockId: block.id }} label={t(EDIT_LABEL[block.kind])} />
+      </div>
+      <BlockView paperId={paperId} block={block} />
+    </div>
+  );
+};
+
 /** Scrolls to a block of this page, or to the top for none. */
 function goTo(blockId: string | undefined): void {
   if (!blockId) {

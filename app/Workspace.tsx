@@ -219,11 +219,6 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
 
   const closeDialog = useCallback(() => setRequest(null), []);
 
-  /** The block view, scrolled to a block once it shows again. */
-  const openBlock = useCallback((blockId: string) => {
-    setMode('blocks');
-    window.setTimeout(() => document.querySelector(`[data-result-block-id="${CSS.escape(blockId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-  }, []);
   const presentFrom = useCallback((start: string | null) => setPresenting({ blocks: start, along: 'logic' }), []);
   const target: ResultPaper | undefined =
     request && request.kind !== 'edit' && 'paperId' in request ? content.results.find((item) => item.id === request.paperId) : undefined;
@@ -321,16 +316,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
             )}
             {owner && opened.logic && (
               <Suspense fallback={null}>
-                <LogicMode
-                  key={paper.id}
-                  paper={paper}
-                  readFile={access.readFile}
-                  onSave={counted}
-                  top={top}
-                  visible={mode === 'logic'}
-                  onPresent={presentFrom}
-                  onOpenBlock={openBlock}
-                />
+                <LogicMode key={paper.id} paper={paper} onSave={counted} top={top} visible={mode === 'logic'} onPresent={presentFrom} />
               </Suspense>
             )}
             {request?.kind === 'block' && target && (

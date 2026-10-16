@@ -25,7 +25,7 @@ const MAP: Spacing = { w: 16, h: 9, across: 4, down: 13, between: 10 };
 const MAP_WIDTH = 340;
 
 /** The whole tree in a corner, the block on screen and the way down to it marked; a box goes to its block. */
-const MiniMap: React.FC<{ tree: LogicTree; current: string; labels: Record<string, NodeLabel>; onGo: (id: string) => void }> = ({ tree, current, labels, onGo }) => {
+export const MiniMap: React.FC<{ tree: LogicTree; current: string; labels: Record<string, NodeLabel>; onGo: (id: string) => void }> = ({ tree, current, labels, onGo }) => {
   const t = useT();
   const drawn = useMemo(() => layoutTree(tree, new Set(), MAP), [tree]);
   const path = useMemo(() => new Set(ancestorsOf(tree, current)), [tree, current]);

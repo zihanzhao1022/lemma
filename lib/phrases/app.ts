@@ -397,21 +397,11 @@ export const { t, useT, table } = phrases({
   逻辑结构: { ja: '論理構成', en: 'Logic' },
   摘要: { ja: '概要', en: 'Abstract' },
   '（空白）': { ja: '（空白）', en: '(empty)' },
-  放到这一块下面: { ja: 'このブロックの下に入れる', en: 'Put under this block' },
-  '展开下面的 {n} 块': { ja: '下の {n} ブロックを表示', en: 'Show the {n} blocks under it' },
-  收起下面的块: { ja: '下のブロックをたたむ', en: 'Fold the blocks under it' },
-  从选中的块演示: { ja: '選んだブロックから発表', en: 'Present from this block' },
   '这篇论文还没有块。先在「分块」里添加文字、图或表格。': {
     ja: 'この論文にはまだブロックがありません。まず「ブロック」でテキスト、図、表を追加してください。',
     en: 'This paper has no blocks yet. Add text, figures or tables under Blocks first.',
   },
   '连同下面 {n} 块': { ja: '下の {n} ブロックごと', en: 'with the {n} blocks under it' },
-  原始大小: { ja: '実寸', en: 'Actual size' },
-  显示全部: { ja: '全体を表示', en: 'Show everything' },
-  '这一块还没有编译好的结果。': { ja: 'このブロックにはまだコンパイル結果がありません。', en: 'This block has not been compiled yet.' },
-  归在哪一块下面: { ja: 'どのブロックの下に置くか', en: 'Belongs under' },
-  从这里演示: { ja: 'ここから発表', en: 'Present from here' },
-  在分块里打开: { ja: 'ブロック表示で開く', en: 'Open in Blocks' },
   地图: { ja: 'マップ', en: 'Map' },
   '地图（M）': { ja: 'マップ（M）', en: 'Map (M)' },
   位置: { ja: '現在地', en: 'Where you are' },
@@ -447,24 +437,34 @@ export const { t, useT, table } = phrases({
   '{name} 不是 UTF-8 编码，不能在这里编辑': { ja: '{name} は UTF-8 ではないため、ここでは編集できません', en: '{name} is not in UTF-8, so it cannot be edited here' },
 
   // The logic built by hand
-  '拖到右边的画布上，放进逻辑树': { ja: '右のキャンバスにドラッグして論理構成に入れる', en: 'Drag onto the canvas on the right to put it in the logic' },
   在树里: { ja: 'ツリー内', en: 'In the tree' },
-  '把左边的块拖到画布上；拖到一个块上，它就归到那一块下面；拖回左边就从树里拿掉。中键或空白处拖动画布，滚轮缩放。': {
-    ja: '左のブロックをキャンバスにドラッグします。ブロックの上に置くとその下に入り、左に戻すとツリーから外れます。中ボタンか空いている所をドラッグするとキャンバスが動き、ホイールで拡大縮小します。',
-    en: 'Drag blocks from the left onto the canvas; dropped on a block, one goes under it; dragged back to the left, it leaves the tree. Drag with the middle button or on empty space to move around; the wheel zooms.',
-  },
   清空逻辑树: { ja: '論理構成を空にする', en: 'Clear the logic' },
   '清空这棵逻辑树？论文本身不受影响。': { ja: 'この論理構成を空にしますか？論文そのものは変わりません。', en: 'Clear this logic? The paper itself does not change.' },
   清空: { ja: '空にする', en: 'Clear' },
   论文的块: { ja: '論文のブロック', en: 'The paper’s blocks' },
   '{n} / {m} 在树里': { ja: '{n} / {m} がツリー内', en: '{n} of {m} in the tree' },
   '放开，从树里拿掉': { ja: '放すとツリーから外れます', en: 'Drop to take it out of the tree' },
-  '从左边把块拖到这里，开始搭逻辑树': { ja: '左からブロックをここへドラッグして、論理構成を作り始めます', en: 'Drag blocks here from the left to start the logic' },
-  '先放方法，再把实验拖到对应的方法上，它们就挂在那个方法下面。': {
-    ja: 'まず手法を置き、実験を対応する手法の上にドラッグすると、その手法の下に入ります。',
-    en: 'Put the methods in first, then drag each experiment onto the method it tests to put it under that method.',
+
+  // The logic read and built like the block view
+  '拖到中间的块上，放进逻辑；拖到下面的虚线框，新建一个分支': {
+    ja: '中央のブロックの上にドラッグすると論理構成に入り、下の点線の枠にドラッグすると新しい枝になります',
+    en: 'Drag onto a block in the middle to put it in the logic, or onto the dashed box to start a branch',
   },
-  '在「{name}」下面': { ja: '「{name}」の下', en: 'Under “{name}”' },
-  最上层: { ja: '最上位', en: 'At the top' },
-  从树里拿掉: { ja: 'ツリーから外す', en: 'Take out of the tree' },
+  '拖到另一块上，挂到它下面；拖回左边，从树里拿掉': { ja: '別のブロックの上にドラッグするとその下に入り、左に戻すとツリーから外れます', en: 'Drag onto another block to put it under that one; back to the left to take it out of the tree' },
+  拖动这一块: { ja: 'このブロックをドラッグ', en: 'Drag this block' },
+  只看这一支: { ja: 'この枝だけ見る', en: 'Show only this branch' },
+  '从树里拿掉，下面的块上移一层': { ja: 'ツリーから外します。下のブロックは 1 段上がります', en: 'Take it out of the tree; the blocks under it move up a level' },
+  拿出树: { ja: 'ツリーから外す', en: 'Take out' },
+  '放到「{name}」下面': { ja: '「{name}」の下に入れる', en: 'Put under “{name}”' },
+  '拖动块左边的把手：拖到另一块上就挂到它下面，拖到虚线框新建一个分支，拖回左边就从树里拿掉。': {
+    ja: 'ブロック左の取っ手をドラッグします。別のブロックの上に置くとその下に入り、点線の枠に置くと新しい枝になり、左に戻すとツリーから外れます。',
+    en: 'Drag a block by the handle on its left: onto another block to put it under that one, onto the dashed box to start a branch, back to the left to take it out of the tree.',
+  },
+  '分支 {i} / {n}': { ja: '枝 {i} / {n}', en: 'Branch {i} of {n}' },
+  还没有分支: { ja: 'まだ枝がありません', en: 'No branches yet' },
+  '把左边的方法拖到下面的虚线框里，它就是一个分支；再把实验拖到这个方法上，就挂在它下面。': {
+    ja: '左の手法を下の点線の枠にドラッグすると、それが 1 つの枝になります。実験をその手法の上にドラッグすると、その下に入ります。',
+    en: 'Drag a method from the left into the dashed box below to make it a branch; then drag each experiment onto that method to put it under it.',
+  },
+  '拖到这里，新建一个分支': { ja: 'ここにドラッグして新しい枝を作る', en: 'Drop here to start a branch' },
 });
