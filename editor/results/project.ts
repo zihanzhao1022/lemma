@@ -4,10 +4,10 @@
  * in), its \title and \author become the paper's, and its other files become attachments, the .bib files also
  * as the references.bib Lemma typesets.
  */
-import { ResultBlockKind } from '../../types';
-import { attachmentName } from './actions';
+import { ResultBlockKind, ResultPaper } from '../../types';
+import { MAX_UPLOAD, attachmentName, attachmentPath } from './actions';
 import { REFERENCES_FILE } from './compile';
-import { MAX_UPLOAD } from './uploads';
+import type { ResultsOp } from './ops';
 
 const decode = (data: Uint8Array): string => new TextDecoder().decode(data);
 
@@ -239,6 +239,8 @@ export interface ProjectPaper {
   renamed: { from: string; to: string }[];
   /** Files past MAX_UPLOAD. */
   overflow: string[];
+  /** The .tex files taken into the text (the main one, those it inputs), by their path next to the main .tex. */
+  taken: string[];
 }
 
 const replaceEvery = (text: string, from: string, to: string): string => text.split(from).join(to);
@@ -284,5 +286,27 @@ export async function projectPaper(files: Record<string, Uint8Array>, main: stri
   }
   // Lemma typesets the bibliography from references.bib: the project's .bib files, one after another.
   if (bibs.length > 0) attachments[REFERENCES_FILE] = new TextEncoder().encode(bibs.map((path) => decode(files[path]).replace(/\s+$/, '')).join('\n\n') + '\n');
-  return { main, title, authors, preamble, blocks, attachments, renamed, overflow };
+  const taken = [...inlined].map((path) => (path.startsWith(base) ? path.slice(base.length) : path));
+  return { main, title, authors, preamble, blocks, attachments, renamed, overflow, taken };
+}
+
+/**
+ * What putting a project into a paper that exists changes, in one commit: the title and authors when they
+ * change, the preamble, the blocks (the old ones go, with their PDFs), and attachments named like the parts now
+ * in the text (`remove`). The paper keeps its address and its other attachments; its logic goes with its blocks.
+ */
+export function replaceContent(previous: ResultPaper, next: ResultPaper, remove: string[]): { ops: ResultsOp[]; deletes: string[] } {
+  const ops: ResultsOp[] = [];
+  if (next.title !== previous.title || next.authors.join('\n') !== previous.authors.join('\n')) {
+    ops.push({ kind: 'putPaper', paper: { ...previous, title: next.title, authors: next.authors } });
+  }
+  ops.push({ kind: 'patchPaper', id: previous.id, fields: { preamble: next.preamble ?? '', logic: null } });
+  for (const block of previous.blocks) ops.push({ kind: 'deleteBlock', paperId: previous.id, blockId: block.id });
+  for (const block of next.blocks) ops.push({ kind: 'putBlock', paperId: previous.id, block });
+  for (const name of remove) ops.push({ kind: 'removeFile', paperId: previous.id, name });
+  const deletes = [
+    ...previous.blocks.flatMap((block) => [block.output?.pdf, block.alternate?.output?.pdf].filter((path): path is string => !!path)),
+    ...remove.map((name) => attachmentPath(previous.id, name)),
+  ];
+  return { ops, deletes };
 }

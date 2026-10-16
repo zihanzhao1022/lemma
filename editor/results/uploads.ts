@@ -1,9 +1,18 @@
 import type { PickedFile } from '../../components/results/droppedFiles';
-import { ATTACHMENT_LIMIT, ATTACHMENT_TYPES, attachmentName, extensionOf } from './actions';
+import { ATTACHMENT_LIMIT, ATTACHMENT_TYPES, MAX_UPLOAD, attachmentName, extensionOf } from './actions';
+import { mainCandidates } from './project';
 import { expandZips } from './zip';
 
-/** The most files one upload takes. */
-export const MAX_UPLOAD = 200;
+export { MAX_UPLOAD };
+
+/** A .zip among the files that holds a LaTeX project (a .tex with \documentclass and \begin{document}). */
+export interface DroppedProject {
+  archive: string;
+  /** What the .zip holds that a paper can use, by its path in the .zip. */
+  files: Record<string, Uint8Array>;
+  /** Paths in the .zip left out: types a paper cannot use, or too large. */
+  skipped: string[];
+}
 
 /** What uploading picked files would do to a paper's attachments. */
 export interface UploadPlan {
@@ -15,6 +24,8 @@ export interface UploadPlan {
   skipped: { type: string[]; size: string[]; count: string[] };
   /** The .zip files opened: what was in them is among `files`, in the folder each .zip was in. */
   archives: string[];
+  /** The first .zip that is a LaTeX project, which can become the paper itself rather than its attachments. */
+  project?: DroppedProject;
 }
 
 /** Reads the files an upload takes (a .zip opened) and names them like the attachments they become. */
@@ -33,5 +44,12 @@ export async function planUpload(picked: PickedFile[], existing: string[]): Prom
       files[await attachmentName(name, data, parts.slice(0, -1))] = data;
     }
   }
-  return { files, replaced: Object.keys(files).filter((name) => existing.includes(name)), skipped, archives: opened.archives };
+  const project = opened.zips.find((zip) => mainCandidates(zip.files).length > 0);
+  return {
+    files,
+    replaced: Object.keys(files).filter((name) => existing.includes(name)),
+    skipped,
+    archives: opened.archives,
+    ...(project ? { project: { archive: project.archive, files: project.files, skipped: [...project.skipped.type, ...project.skipped.size] } } : {}),
+  };
 }

@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { blocksOfBody, commentAt, mainCandidates, metadataOf, plainText, projectPaper, splitDocument } from './project';
+import { ResultPaper } from '../../types';
+import { blocksOfBody, commentAt, mainCandidates, metadataOf, plainText, projectPaper, replaceContent, splitDocument } from './project';
 import { expandZips, unzip, wrapperOf } from './zip';
 
 const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
@@ -97,6 +98,35 @@ describe('a LaTeX project as a paper', () => {
     const paper = await projectPaper(project(), 'main.tex');
     expect(Object.keys(paper!.attachments).sort()).toEqual(['figures/plot.pdf', 'macros.tex', 'notes/other.tex', 'references.bib', 'refs.bib']);
     expect(decode(paper!.attachments['references.bib'])).toContain('@article{doe2020');
+  });
+
+  it('names the .tex files taken into the text', async () => {
+    const paper = await projectPaper(project(), 'main.tex');
+    expect(paper!.taken.sort()).toEqual(['main.tex', 'sections/intro.tex']);
+  });
+
+  it('goes into a paper that exists in place of its content, keeping its address and other attachments', () => {
+    const previous: ResultPaper = {
+      id: 'res-a',
+      slug: 'a',
+      title: 'Untitled',
+      authors: ['**Ada Example**'],
+      preamble: '\\documentclass{article}',
+      files: ['main.tex', 'other.sty'],
+      logic: { b2: 'b1' },
+      blocks: [
+        { id: 'b1', kind: 'text', source: 'Old.', output: { pdf: 'results/res-a/b1.pdf', width: 1, height: 1 } },
+        { id: 'b2', kind: 'table', source: 'Old.', alternate: { kind: 'figure', source: 'x', output: { pdf: 'results/res-a/b2-alt.pdf', width: 1, height: 1 } } },
+      ],
+    };
+    const next: ResultPaper = { ...previous, title: 'A Made-up Study', authors: ['**Ada Example**', 'Bo Sample'], preamble: '\\documentclass{article}\n\\usepackage{x}', blocks: [{ id: 'n1', kind: 'text', source: 'New.' }] };
+    const { ops, deletes } = replaceContent(previous, next, ['main.tex']);
+    expect(ops.map((op) => op.kind)).toEqual(['putPaper', 'patchPaper', 'deleteBlock', 'deleteBlock', 'putBlock', 'removeFile']);
+    expect(ops[0]).toMatchObject({ paper: { id: 'res-a', slug: 'a', title: 'A Made-up Study' } });
+    expect(ops[1]).toEqual({ kind: 'patchPaper', id: 'res-a', fields: { preamble: next.preamble, logic: null } });
+    expect(deletes).toEqual(['results/res-a/b1.pdf', 'results/res-a/b2-alt.pdf', 'results/res-a/files/main.tex']);
+    // The same title and authors change nothing there.
+    expect(replaceContent(previous, { ...next, title: previous.title, authors: previous.authors }, []).ops[0].kind).toBe('patchPaper');
   });
 
   it('renames files TeX and the repository cannot hold as they are, and the code that names them', async () => {

@@ -14,6 +14,7 @@ import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper } from '../../types';
 import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, parseMarks, placeOf } from './document';
+import { SHADOWED, attachedKey, attachedName, editableText, isLatex } from './files';
 import PdfPages, { PdfClick, PdfPagesHandle } from './PdfPages';
 import SourceEditor, { SourceEditorHandle, SourceFile } from './SourceEditor';
 
@@ -39,14 +40,33 @@ interface Compiled {
 const decode = (data: Uint8Array): string => new TextDecoder().decode(data);
 const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
 
-/** The writing view's files, as the paper has them. */
+/** The writing view's files, as the paper has them: its text, preamble and bibliography, and the attachments written as text. */
 function textsOf(paper: ResultPaper, files: Record<string, Uint8Array>): Texts {
-  return { [MAIN]: bodyOf(paper.blocks), [PREAMBLE]: preambleOf(paper), ...(files[REFERENCES_FILE] ? { [REFERENCES_FILE]: decode(files[REFERENCES_FILE]) } : {}) };
+  const texts: Texts = { [MAIN]: bodyOf(paper.blocks), [PREAMBLE]: preambleOf(paper), ...(files[REFERENCES_FILE] ? { [REFERENCES_FILE]: decode(files[REFERENCES_FILE]) } : {}) };
+  for (const [name, data] of Object.entries(files)) {
+    if (name === REFERENCES_FILE) continue;
+    const text = editableText(name, data);
+    if (text !== null) texts[attachedKey(name)] = text;
+  }
+  return texts;
 }
 
-/** Whether two sets of texts hold the same paper: the same blocks with the same code, preamble and bibliography. */
-const sameTexts = (a: Texts, b: Texts): boolean =>
-  JSON.stringify(blocksOf(a[MAIN] ?? '')) === JSON.stringify(blocksOf(b[MAIN] ?? '')) && a[PREAMBLE] === b[PREAMBLE] && a[REFERENCES_FILE] === b[REFERENCES_FILE];
+/** Whether a file of the writing view differs between two sets of texts; main.tex by its blocks' code. */
+const changedIn = (a: Texts, b: Texts, name: string): boolean =>
+  name === MAIN ? JSON.stringify(blocksOf(a[MAIN] ?? '')) !== JSON.stringify(blocksOf(b[MAIN] ?? '')) : a[name] !== b[name];
+
+/** Whether two sets of texts hold the same paper: the same blocks with the same code, preamble, bibliography and attachments. */
+const sameTexts = (a: Texts, b: Texts): boolean => [...new Set([...Object.keys(a), ...Object.keys(b), MAIN])].every((name) => !changedIn(a, b, name));
+
+/** The attachments whose text changed since `saved`, as the bytes to store; references.bib among them. */
+function changedFiles(current: Texts, saved: Texts): Record<string, Uint8Array> {
+  const changed: Record<string, Uint8Array> = {};
+  for (const [key, text] of Object.entries(current)) {
+    const name = key === REFERENCES_FILE ? key : attachedName(key);
+    if (name !== null && text !== saved[key]) changed[name] = encode(text);
+  }
+  return changed;
+}
 
 const references = (aux?: string): string => JSON.stringify([parseAuxLabels(aux ?? ''), parseAuxCitations(aux ?? '')]);
 
@@ -137,7 +157,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         const style = bibliographyStyle({ ...paper, preamble });
         const cites = bib !== undefined && keys.length > 0;
         const doc = fullDocument(preamble, body, cites ? { style, file: REFERENCES_FILE } : null);
-        const inputs: Record<string, string | Uint8Array> = { ...files, ...(bib !== undefined ? { [REFERENCES_FILE]: encode(bib) } : {}) };
+        // The attachments as they are being edited.
+        const inputs: Record<string, string | Uint8Array> = { ...files, ...(bib !== undefined ? { [REFERENCES_FILE]: encode(bib) } : {}), ...changedFiles(snapshot, saved.current ?? {}) };
         const state = carried.current;
         const bibKey = JSON.stringify([keys, bib, style]);
         const bibtex = cites && (bibKey !== state.bibKey || state.bbl === undefined);
@@ -154,6 +175,9 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         if (out.pdf && out.aux !== undefined && references(out.aux) !== references(state.aux)) out = await pass(out.aux, bbl, false);
         carried.current = { aux: out.aux, bbl, bibKey: cites ? bibKey : '' };
         const issues = parseErrors(out.log).map((issue): Issue => {
+          // An error in an attachment the editor has open goes to its line there.
+          const attached = issue.file ? attachedKey(issue.file.replace(/^\.\//, '')) : '';
+          if (issue.file && issue.line !== undefined && snapshot[attached] !== undefined) return { message: issue.message, file: attached, line: issue.line };
           if (issue.file || issue.line === undefined) return { message: issue.file ? `${issue.file}: ${issue.message}` : issue.message };
           if (issue.line >= doc.bodyStart && issue.line < doc.bodyStart + doc.bodyLines) return { message: issue.message, file: MAIN, line: issue.line - doc.bodyStart + 1 };
           if (issue.line >= doc.preambleStart && issue.line < doc.preambleStart + doc.preambleLines) {
@@ -188,6 +212,11 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     return () => window.clearTimeout(timer);
   }, [visible, texts, attachments, compile]);
 
+  // An attachment open in the editor that the paper no longer has (removed, or taken into the text) gives way to main.tex.
+  useEffect(() => {
+    if (texts && texts[active] === undefined) setActive(MAIN);
+  }, [texts, active]);
+
   const dirty = texts !== null && saved.current !== null && !sameTexts(texts, saved.current);
 
   const save = useCallback(async () => {
@@ -205,15 +234,14 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       for (const block of changes.deleted) ops.push({ kind: 'deleteBlock', paperId: paper.id, blockId: block.id });
       if (changes.order) ops.push({ kind: 'reorderBlocks', paperId: paper.id, ids: changes.order });
       const writes: FileWrite[] = [];
-      let used = files;
-      const bib = current[REFERENCES_FILE];
-      if (bib !== undefined && bib !== saved.current[REFERENCES_FILE]) {
-        const data = encode(bib);
-        const uploads = await putFiles(paper.id, { [REFERENCES_FILE]: data });
+      // The bibliography and the attachments edited here, stored again; the blocks that use them compile anew.
+      const edited = changedFiles(current, saved.current);
+      if (Object.keys(edited).length > 0) {
+        const uploads = await putFiles(paper.id, edited);
         ops.push(...uploads.ops);
-        writes.push({ path: attachmentPath(paper.id, REFERENCES_FILE), data });
-        used = { ...files, [REFERENCES_FILE]: data };
+        writes.push(...Object.entries(edited).map(([name, data]) => ({ path: attachmentPath(paper.id, name), data })));
       }
+      const used = { ...files, ...edited };
       const draft = ops.reduce<ResultPaper[]>((papers, op) => applyResultsOp(papers, op), [paper])[0];
       // The page's blocks are compiled one by one, as the page shows them.
       const rebuilt = await rebuildWith(draft, used);
@@ -239,6 +267,10 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
             { name: MAIN, text: texts[MAIN] ?? '', blocks: true },
             { name: PREAMBLE, text: texts[PREAMBLE] ?? '' },
             ...(texts[REFERENCES_FILE] !== undefined ? [{ name: REFERENCES_FILE, text: texts[REFERENCES_FILE], latex: false }] : []),
+            ...Object.entries(texts).flatMap(([key, text]) => {
+              const name = attachedName(key);
+              return name === null ? [] : [{ name: key, text, latex: isLatex(name) }];
+            }),
           ]
         : [],
     // The editor reads them only when `version` changes.
@@ -277,7 +309,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     >
       {icon}
       <span className="truncate">{label}</span>
-      {name === MAIN && dirty && <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" title={t('有未保存的修改')} />}
+      {texts && saved.current && changedIn(texts, saved.current, name) && <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" title={t('有未保存的修改')} />}
     </button>
   );
 
@@ -294,12 +326,24 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         {Object.keys(attachments ?? {})
           .filter((name) => name !== REFERENCES_FILE)
           .sort()
-          .map((name) => (
-            <p key={name} className="flex items-center gap-2 px-2 py-1 text-gray-400" title={name}>
-              <ImageIcon size={15} className="shrink-0" />
-              <span className="truncate">{name}</span>
-            </p>
-          ))}
+          .map((name) => {
+            // A main.tex among the attachments never reaches the compiles: the paper's own text is main.tex there.
+            if (SHADOWED.includes(name)) {
+              return (
+                <p key={name} className="flex items-center gap-2 px-2 py-1 text-gray-400" title={t('编译时用的是论文自己的 {name}，这个附件用不到，可以在「导言区与附件」里删掉', { name })}>
+                  <FileText size={15} className="shrink-0" />
+                  <span className="truncate line-through">{name}</span>
+                </p>
+              );
+            }
+            if (texts?.[attachedKey(name)] !== undefined) return fileRow(attachedKey(name), <FileCode2 size={15} className="shrink-0 text-gray-400" />, name);
+            return (
+              <p key={name} className="flex items-center gap-2 px-2 py-1 text-gray-500" title={t('{name}：图片和 PDF 只能在「导言区与附件」里替换或删除', { name })}>
+                <ImageIcon size={15} className="shrink-0 text-gray-400" />
+                <span className="truncate">{name}</span>
+              </p>
+            );
+          })}
         <p className="mt-5 px-2 pb-1 text-xs font-medium text-gray-500">{t('大纲')}</p>
         {headings.length === 0 && <p className="px-2 text-xs text-gray-400">{t('写下 \\section，这里就会列出章节')}</p>}
         {headings.map((heading) => (
@@ -322,7 +366,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
 
       <section className="flex min-w-0 flex-1 flex-col border-r border-black/[0.06]">
         <div className="flex h-11 shrink-0 items-center gap-1 border-b border-black/[0.06] px-3">
-          <span className="mr-2 min-w-0 truncate text-sm font-medium text-gray-800">{active}</span>
+          <span className="mr-2 min-w-0 truncate text-sm font-medium text-gray-800">{attachedName(active) ?? active}</span>
           {active === MAIN && (
             <>
               <button type="button" onClick={() => editor.current?.splitBlock() || setProblem(() => t('把光标放在一个块中间的某一行，再从那里分块'))} className={bar} title={t('从光标所在的行开始一个新块')}>

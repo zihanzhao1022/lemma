@@ -14,6 +14,7 @@ import { createCollaboratorResults, createResults, createUserLookup } from './co
 import { switchedOp } from './convert';
 import { describeFailure } from './numbering';
 import { ResultsOp, applyResultsOp, fromContentOp, resultsCommitMessage } from './ops';
+import { replaceContent } from './project';
 import { WorkerError } from './workerBackend';
 
 /** A notice for the editor's toast; its words follow the language switch. */
@@ -459,19 +460,27 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
    * A paper read from a LaTeX project (editor/results/project.ts): saved first as it is, with its attachments
    * in the same commit, then compiled block by block, going on past blocks that fail, and its PDFs saved. The
    * returned promise ends once the paper is in the repository; `onCompile` hears each block as it compiles.
+   * With `into`, the project goes into a paper that exists, in place of its content (replaceContent), and the
+   * paper's other attachments stay for the compiles.
    */
   const importPaper = useCallback(
-    (paper: ResultPaper, files: Record<string, Uint8Array>, onCompile?: (done: number, total: number) => void): Promise<void> => {
+    (
+      paper: ResultPaper,
+      files: Record<string, Uint8Array>,
+      onCompile?: (done: number, total: number) => void,
+      into?: { previous: ResultPaper; remove: string[] },
+    ): Promise<void> => {
       if (!backend || loadState.state !== 'private') return Promise.reject(unavailable());
       busy.current.add(paper.id);
       const saved = enqueue(async () => {
         const uploads = await putFiles(paper.id, files);
+        const replaced = into ? replaceContent(into.previous, paper, into.remove) : null;
         settle(
           await backend.save(
-            { kind: 'batch', ops: [{ kind: 'putPaper', paper }, ...uploads.ops] },
+            { kind: 'batch', ops: [...(replaced ? replaced.ops : [{ kind: 'putPaper' as const, paper }]), ...uploads.ops] },
             Object.entries(files).map(([name, data]) => ({ path: attachmentPath(paper.id, name), data })),
-            [],
-            resultsCommitMessage('import paper', paper.title),
+            replaced?.deletes ?? [],
+            resultsCommitMessage(into ? 'import project into' : 'import paper', paper.title),
             `content: update result "${paper.title}"`,
           ),
         );
@@ -484,7 +493,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
               if (!stored) return;
               const total = stored.blocks.filter((block) => block.source?.trim()).length;
               let done = 0;
-              const rebuilt = await rebuildWith(stored, files, { keepGoing: true, onCompile: () => onCompile?.(Math.min((done += 1), total), total) });
+              const inputs = into ? { ...(await loadAttachments(stored, backend.readFile)), ...files } : files;
+              const rebuilt = await rebuildWith(stored, inputs, { keepGoing: true, onCompile: () => onCompile?.(Math.min((done += 1), total), total) });
               if (Object.keys(rebuilt.outputs).length > 0 || rebuilt.references !== undefined) {
                 settle(
                   await backend.save(

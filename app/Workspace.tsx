@@ -18,6 +18,7 @@ import { EditRequest, ResultPaper, SlideDeck } from '../types';
 import { collaboratorSession, ownerSession } from './accounts';
 import { PaperList, useAccount } from './AccountContext';
 import { Reach } from './Dashboard';
+import ImportDialog from './ImportDialog';
 import Presentation from './Presentation';
 import ShareDialog from './ShareDialog';
 import { withLatestLogic } from './logic/latest';
@@ -56,6 +57,8 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const presence = usePresence(session, account.features.comments);
   const [request, setRequest] = useState<EditRequest | null>(null);
   const [upload, setUpload] = useState<{ paperId: string; plan: UploadPlan } | null>(null);
+  // A .zip of a LaTeX project dropped on the paper: it can become the paper itself, or only its attachments.
+  const [importing, setImporting] = useState<{ paperId: string; plan: UploadPlan } | null>(null);
   // The owner looks at the page as readers see it, or edits it.
   const [editing, setEditing] = useState(true);
   // The paper block by block, or its slides from one of them.
@@ -141,7 +144,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
       const item = contentRef.current.results.find((candidate) => candidate.id === paperId);
       if (!item || busy(paperId)) return;
       planUpload(picked, item.files ?? []).then(
-        (plan) => setUpload({ paperId, plan }),
+        (plan) => (plan.project ? setImporting({ paperId, plan }) : setUpload({ paperId, plan })),
         (error: unknown) => setToast({ message: () => describeSaveError(error) }),
       );
     },
@@ -366,6 +369,17 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                   onClose={() => setUpload(null)}
                 />
               </Suspense>
+            )}
+            {importing?.plan.project && owner && (
+              <ImportDialog
+                source={{ project: importing.plan.project }}
+                into={content.results.find((item) => item.id === importing.paperId) ?? paper}
+                onAttach={() => {
+                  setUpload(importing);
+                  setImporting(null);
+                }}
+                onClose={() => setImporting(null)}
+              />
             )}
             {sharingOpen && owner && (
               <ShareDialog paper={paper} owner={account.account} saveContentOp={saveContentOp} saveResults={counted} onClose={() => setSharingOpen(false)} />

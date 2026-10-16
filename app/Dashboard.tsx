@@ -748,7 +748,7 @@ const Dashboard: React.FC = () => {
         )}
       </section>
       {creating && <NewPaperDialog folder={base} onClose={() => setCreating(false)} />}
-      {importing && <ImportDialog file={importing} folder={base} onClose={() => setImporting(null)} />}
+      {importing && <ImportDialog source={{ file: importing }} folder={base} onClose={() => setImporting(null)} />}
     </div>
   );
 };

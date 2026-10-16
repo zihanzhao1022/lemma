@@ -433,4 +433,31 @@ export const { t, useT, table } = phrases({
   '右边：{name}': { ja: '右：{name}', en: 'Right: {name}' },
   '还有 {n} 块': { ja: 'ほか {n} ブロック', en: '+{n} more' },
   '← → 换分支　↑ ↓ 上下层　空格 下一块　M 地图': { ja: '← → 枝を移る　↑ ↓ 階層を移る　Space 次へ　M マップ', en: '← → other branches   ↑ ↓ levels   Space next   M map' },
+
+  // A LaTeX project dropped on a paper, and attachments in the writing view
+  '把 {name} 导入这篇论文': { ja: '{name} をこの論文に取り込む', en: 'Import {name} into this paper' },
+  只放进附件: { ja: '添付ファイルにだけ入れる', en: 'Only add as attachments' },
+  替换并导入: { ja: '置き換えて取り込む', en: 'Replace and import' },
+  '这是一个 LaTeX 项目：导入后，它的正文和导言区就是这篇论文的，各块会编译出来；其他文件放进附件。': {
+    ja: 'これは LaTeX プロジェクトです。取り込むと、本文とプリアンブルがこの論文のものになり、各ブロックがコンパイルされます。ほかのファイルは添付ファイルに入ります。',
+    en: 'This is a LaTeX project: once imported, its text and preamble become this paper’s and its blocks are compiled; the other files go into the attachments.',
+  },
+  '这篇论文现有的 {n} 个块和导言区会换成压缩包里的；同名的附件会被覆盖，其他附件保留。': {
+    ja: 'この論文の今の {n} ブロックとプリアンブルは ZIP の内容に置き換わります。同じ名前の添付ファイルは上書きされ、ほかの添付ファイルは残ります。',
+    en: 'The paper’s {n} blocks and its preamble are replaced by the project’s; attachments with the same names are overwritten, the others stay.',
+  },
+  标题和作者也用项目里的: { ja: 'タイトルと著者もプロジェクトのものにする', en: 'Take the title and authors from the project too' },
+  '附件里的这些文件已经并入正文，会从附件里删掉：': { ja: '次の添付ファイルは本文に取り込まれたので、添付ファイルから削除します：', en: 'These attachments are now part of the text and are removed from the attachments:' },
+  '各块会在后台依次编译，可能要一两分钟；编译不了的块会提示你修改。': {
+    ja: '各ブロックはバックグラウンドで順にコンパイルされます（1〜2 分かかることがあります）。コンパイルできないブロックがあればお知らせします。',
+    en: 'The blocks compile one after another in the background, which can take a minute or two; a block that does not compile is pointed out.',
+  },
+  '编译时用的是论文自己的 {name}，这个附件用不到，可以在「导言区与附件」里删掉': {
+    ja: 'コンパイルでは論文自身の {name} が使われるため、この添付ファイルは使われません。「プリアンブルと添付ファイル」で削除できます',
+    en: 'Compiles use the paper’s own {name}, so this attachment is never read; you can delete it under Preamble & attachments',
+  },
+  '{name}：图片和 PDF 只能在「导言区与附件」里替换或删除': {
+    ja: '{name}：画像と PDF は「プリアンブルと添付ファイル」で差し替え・削除できます',
+    en: '{name}: images and PDFs can be replaced or deleted under Preamble & attachments',
+  },
 });

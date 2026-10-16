@@ -49,11 +49,14 @@ export async function unzip(data: Uint8Array | Blob): Promise<Unzipped> {
 
 /**
  * Picked or dropped files with each .zip among them replaced by what is in it, in the folder the .zip was in.
- * `archives` names the .zip files opened.
+ * `archives` names the .zip files opened, and `zips` gives what each held by its own paths.
  */
-export async function expandZips(picked: PickedFile[]): Promise<{ picked: PickedFile[]; archives: string[]; skipped: Unzipped['skipped'] }> {
+export async function expandZips(
+  picked: PickedFile[],
+): Promise<{ picked: PickedFile[]; archives: string[]; skipped: Unzipped['skipped']; zips: (Unzipped & { archive: string })[] }> {
   const out: PickedFile[] = [];
   const archives: string[] = [];
+  const zips: (Unzipped & { archive: string })[] = [];
   const skipped: Unzipped['skipped'] = { type: [], size: [] };
   for (const item of picked) {
     if (!isZip(item.path)) {
@@ -63,11 +66,12 @@ export async function expandZips(picked: PickedFile[]): Promise<{ picked: Picked
     archives.push(item.path);
     const folder = item.path.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/') + 1) : '';
     const unzipped = await unzip(item.file);
+    zips.push({ archive: item.path, ...unzipped });
     for (const [path, data] of Object.entries(unzipped.files)) {
       out.push({ path: `${folder}${path}`, file: new File([data.slice()], path.split('/').pop() ?? path) });
     }
     skipped.type.push(...unzipped.skipped.type.map((path) => `${item.path}: ${path}`));
     skipped.size.push(...unzipped.skipped.size.map((path) => `${item.path}: ${path}`));
   }
-  return { picked: out, archives, skipped };
+  return { picked: out, archives, skipped, zips };
 }

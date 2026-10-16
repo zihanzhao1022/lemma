@@ -129,6 +129,8 @@ Ours & 0.0 & 0.0 \\
 /** Attachments the compile can use: style files, bibliography files and figures. */
 export const ATTACHMENT_TYPES = ['.sty', '.cls', '.tex', '.bib', '.bst', '.cfg', '.def', '.clo', '.pdf', '.png', '.jpg', '.jpeg'];
 export const ATTACHMENT_LIMIT = 20 * 1024 * 1024;
+/** The most files one upload (or a project read from a .zip) takes. */
+export const MAX_UPLOAD = 200;
 export const IMAGE_TYPES = ['.pdf', '.png', '.jpg', '.jpeg'];
 
 /** Short content hash of an attachment (first 16 hex digits of SHA-256). */

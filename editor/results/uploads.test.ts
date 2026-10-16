@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
 import { ATTACHMENT_LIMIT } from './actions';
 import { MAX_UPLOAD, planUpload } from './uploads';
@@ -14,6 +15,23 @@ describe('planUpload', () => {
     expect(plan.files['figs/a.pdf']).toHaveLength(10);
     expect(plan.replaced).toEqual(['figs/a.pdf', 'refs.bib']);
     expect(plan.skipped).toEqual({ type: ['figs/notes.svg', 'run.py'], size: ['big.pdf'], count: [] });
+  });
+
+  it('notes a .zip that is a LaTeX project, which can become the paper itself', async () => {
+    const zip = new JSZip();
+    zip.file('paper/main.tex', '\\documentclass{article}\n\\begin{document}\nMade up.\n\\end{document}\n');
+    zip.file('paper/figs/a.pdf', 'pdf');
+    zip.file('paper/run.py', 'print()');
+    const project = await planUpload([{ path: 'paper.zip', file: new File([(await zip.generateAsync({ type: 'uint8array' })).slice()], 'paper.zip') }], []);
+    expect(project.project?.archive).toBe('paper.zip');
+    expect(Object.keys(project.project?.files ?? {}).sort()).toEqual(['figs/a.pdf', 'main.tex']);
+    expect(project.project?.skipped).toEqual(['run.py']);
+    // The plain upload stays possible: the same files as attachments.
+    expect(Object.keys(project.files).sort()).toEqual(['figs/a.pdf', 'main.tex']);
+    const figures = new JSZip();
+    figures.file('a.pdf', 'pdf');
+    const plain = await planUpload([{ path: 'figs.zip', file: new File([(await figures.generateAsync({ type: 'uint8array' })).slice()], 'figs.zip') }], []);
+    expect(plain.project).toBeUndefined();
   });
 
   it(`takes at most ${MAX_UPLOAD} files at once`, async () => {
