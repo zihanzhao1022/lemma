@@ -372,4 +372,6 @@ export const { t, useT, table } = phrases({
     en: '{name} can now read and write all your repositories. We suggest changing it on GitHub to Only select repositories, with just the one for your papers ticked.',
   },
   '去 GitHub 修改': { ja: 'GitHub で変更する', en: 'Change it on GitHub' },
+  '已经在 GitHub 上建好了？': { ja: 'もう GitHub で作成しましたか？', en: 'Created it on GitHub already?' },
+  '把 {name} 装到仓库上': { ja: '{name} をリポジトリにインストール', en: 'Install {name} on it' },
 });

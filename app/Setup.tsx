@@ -151,6 +151,12 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
         connect(lemma[0].repo);
         return;
       }
+      // Lemma was installed on a single empty repository and nothing else: that one is meant.
+      const startable = found.filter((item) => item.status === 'empty' || item.status === 'fresh');
+      if (!everything && lemma.length === 0 && startable.length === 1 && found.length === 1) {
+        await start(startable[0]);
+        return;
+      }
       // Halfway through: created on GitHub, perhaps, but Lemma not installed on it yet.
       if (wanted && !created) {
         setStage({ kind: 'confirm', name: wanted, missing: true });
@@ -353,6 +359,19 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
             </button>
             <span className="text-sm text-gray-500">{t('会在 GitHub 上打开一个填好的新建页面，你在那里确认。')}</span>
           </div>
+          <p className="mt-5 text-sm text-gray-600">
+            {t('已经在 GitHub 上建好了？')}{' '}
+            <button
+              type="button"
+              onClick={() => {
+                if (validName) setNewRepoName(name);
+                startInstall('#/setup');
+              }}
+              className="font-medium text-violet-700 hover:underline"
+            >
+              {t('把 {name} 装到仓库上', { name: NAME })}
+            </button>
+          </p>
         </Step>
       </form>
 
