@@ -99,7 +99,7 @@ describe('decks from a paper', () => {
     expect(without.slides[1].elements.map((element) => element.type)).toEqual(['text']);
   });
 
-  it("follow the paper's logic, each method with experiments moved under it opening a part", () => {
+  it("follow the paper's logic, each method with text under it opening a part", () => {
     const out = (name: string) => ({ pdf: `results/res-b/${name}.pdf`, width: 400, height: 300 });
     const logical: ResultPaper = {
       id: 'res-b',
@@ -115,16 +115,21 @@ describe('decks from a paper', () => {
         { id: 't1', kind: 'table', source: '\\begin{table}\\caption{Cache.}\\end{table}', output: out('t1') },
         { id: 'e2', kind: 'text', source: '\\subsection{Gate results}', output: out('e2') },
         { id: 'f1', kind: 'figure', source: '\\begin{figure}\\caption{Gate.}\\end{figure}', output: out('f1') },
+        { id: 'f2', kind: 'figure', source: '\\begin{figure}\\caption{Elsewhere.}\\end{figure}', output: out('f2') },
       ],
-      logic: { e1: 'm2', e2: 'm1' },
+      logic: { m1: '', e2: 'm1', f1: 'e2', m2: '', e1: 'm2', t1: 'e1' },
     };
-    const deck = visualDeck(logical, label, () => undefined, make);
-    expect(deck.slides.slice(1).map((slide) => (slide.elements[0] as SlideText).text)).toEqual(['Made-up gate', 'Figure  Gate', 'Made-up cache', 'Table  Cache']);
-    const beamer = beamerDeck(logical, () => undefined).beamer ?? '';
+    const titles = (paper: ResultPaper) => visualDeck(paper, label, () => undefined, make).slides.slice(1).map((slide) => (slide.elements[0] as SlideText).text);
+    // An experiment with only its table under it opens no part; what the tree leaves out comes last.
+    expect(titles(logical)).toEqual(['Made-up gate', 'Figure  Gate', 'Made-up cache', 'Table  Cache', 'Figure  Elsewhere']);
+    // A section over the methods opens first, once.
+    const nested = { ...logical, logic: { ...logical.logic, meth: '', m1: 'meth', m2: 'meth' } };
+    expect(titles(nested)).toEqual(['Method', 'Made-up gate', 'Figure  Gate', 'Made-up cache', 'Table  Cache', 'Figure  Elsewhere']);
+    const beamer = beamerDeck(nested, () => undefined).beamer ?? '';
     const at = (text: string) => beamer.indexOf(text);
-    expect([at('\\section{Made-up gate}'), at('\\lemmablock{f1}'), at('\\section{Made-up cache}'), at('\\lemmablock{t1}')].every((place, index, all) => place > (all[index - 1] ?? 0))).toBe(true);
-    // Without moves, the paper's order and no parts.
-    expect(visualDeck({ ...logical, logic: undefined }, label, () => undefined, make).slides.slice(1).map((slide) => (slide.elements[0] as SlideText).text)).toEqual(['Table  Cache', 'Figure  Gate']);
+    expect([at('\\section{Method}'), at('\\subsection{Made-up gate}'), at('\\lemmablock{f1}'), at('\\subsection{Made-up cache}'), at('\\lemmablock{t1}')].every((place, index, all) => place > (all[index - 1] ?? 0))).toBe(true);
+    // Without a logic, the paper's order and no parts.
+    expect(titles({ ...logical, logic: undefined })).toEqual(['Table  Cache', 'Figure  Gate', 'Figure  Elsewhere']);
   });
 });
 

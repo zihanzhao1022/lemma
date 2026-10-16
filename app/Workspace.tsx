@@ -38,8 +38,11 @@ const noop = () => {};
 const TOOL =
   'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-40';
 
-/** What is being presented: the paper block by block along its logic (from a block), or its slides (a Beamer deck once compiled). */
-type Presenting = null | { blocks: string | null } | { deck: SlideDeck; start: number; beamerPdf?: Uint8Array };
+/**
+ * What is being presented: the paper block by block (along its sections, or along the logic its author built, from
+ * a block), or its slides (a Beamer deck once compiled).
+ */
+type Presenting = null | { blocks: string | null; along: 'paper' | 'logic' } | { deck: SlideDeck; start: number; beamerPdf?: Uint8Array };
 
 /**
  * A paper opened by its owner or by someone it is shared with: the results page with its editors, sharing and
@@ -191,7 +194,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const present = () => {
     const deck = paper ? deckOf(paper) : null;
     if (!deck || !paper) {
-      setPresenting({ blocks: null });
+      setPresenting({ blocks: null, along: 'paper' });
       return;
     }
     if (deck.kind === 'visual') {
@@ -221,7 +224,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     setMode('blocks');
     window.setTimeout(() => document.querySelector(`[data-result-block-id="${CSS.escape(blockId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
   }, []);
-  const presentFrom = useCallback((start: string | null) => setPresenting({ blocks: start }), []);
+  const presentFrom = useCallback((start: string | null) => setPresenting({ blocks: start, along: 'logic' }), []);
   const target: ResultPaper | undefined =
     request && request.kind !== 'edit' && 'paperId' in request ? content.results.find((item) => item.id === request.paperId) : undefined;
   const canEdit = owner || (paper ? canEditShared(access, paper.id) : false);
@@ -385,7 +388,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
               <ShareDialog paper={paper} owner={account.account} saveContentOp={saveContentOp} saveResults={counted} onClose={() => setSharingOpen(false)} />
             )}
             {presenting && 'blocks' in presenting && (
-              <Presentation paper={withLatestLogic(paper)} readFile={access.readFile} start={presenting.blocks} onClose={() => setPresenting(null)} />
+              <Presentation paper={withLatestLogic(paper)} readFile={access.readFile} start={presenting.blocks} along={presenting.along} onClose={() => setPresenting(null)} />
             )}
             {presenting && 'deck' in presenting && (
               <Suspense fallback={null}>

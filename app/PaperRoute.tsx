@@ -77,7 +77,7 @@ const PublicPaper: React.FC<{ owner: string; slug: string }> = ({ owner, slug })
             </button>
           </div>
           <ResultPage inApp backTo="/" backLabel={account ? t('我的论文') : t('首页')} />
-          {presenting && <Presentation paper={view} readFile={access.readFile} onClose={() => setPresenting(false)} />}
+          {presenting && <Presentation paper={view} readFile={access.readFile} along="paper" onClose={() => setPresenting(false)} />}
         </ResultsAccessContext.Provider>
       </EditModeContext.Provider>
     </ContentContext.Provider>

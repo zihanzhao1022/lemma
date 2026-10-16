@@ -2,28 +2,33 @@ import { sectionsOf } from '../../lib/sections';
 import { BlockSection, ResultBlock, ResultPaper } from '../../types';
 
 /**
- * A paper's logic: its blocks as a tree. The headings give the tree the paper has (a subsection under its
- * section, a table under the part it is in); moving a block under another one (an experiment under the method
- * it tests) gives the tree the work has. Blocks under the same block keep the paper's order.
+ * Trees of a paper's blocks. The paper's own (paperTree) follows its headings: a subsection under its section, a
+ * table under the part it is in. Its logic (logicTree) is the tree its author builds by hand, block by block: an
+ * experiment under the method it tests, a follow-up under the experiment before it. Blocks under the same block
+ * keep the paper's order.
  */
 export interface LogicNode {
   id: string;
-  /** The block it belongs to; null at the top. */
+  /** The block it is under; null at the top. */
   parent: string | null;
   children: string[];
   depth: number;
-  /** Put under its parent by a move rather than by the paper's headings. */
-  moved: boolean;
 }
 
 export interface LogicTree {
   nodes: Record<string, LogicNode>;
   roots: string[];
-  /** Every block, each one before the blocks under it: the order a talk goes through them. */
+  /** Every block of the tree, each one before the blocks under it: the order a talk goes through them. */
   order: string[];
 }
 
-type Logic = Record<string, string>;
+/**
+ * The paper's logic as stored (ResultPaper.logic): each block placed in the tree, by ID → the block it is under,
+ * or TOP. A block that others are under is in the tree too, at the top unless placed itself.
+ */
+export type Logic = Record<string, string>;
+export const TOP = '';
+
 type Parents = Record<string, string | null>;
 
 /** How deep a heading opens a part: sections (and the appendix) at the top; \paragraph opens none. */
@@ -66,35 +71,10 @@ export function paperParents(paper: Pick<ResultPaper, 'blocks' | 'preamble'>): P
   return parents;
 }
 
-/** The blocks' parents once `logic` moves some: a move to a block that is gone, or under itself, counts for nothing. */
-function movedParents(blocks: ResultBlock[], base: Parents, logic: Logic | undefined): Parents {
-  const parents = { ...base };
-  if (!logic) return parents;
-  const ids = new Set(blocks.map((block) => block.id));
-  for (const block of blocks) {
-    const target = logic[block.id];
-    if (!target || !ids.has(target)) continue;
-    let under = false;
-    const seen = new Set<string>();
-    for (let at: string | null = target; at && !seen.has(at); at = parents[at] ?? null) {
-      if (at === block.id) {
-        under = true;
-        break;
-      }
-      seen.add(at);
-    }
-    if (!under) parents[block.id] = target;
-  }
-  return parents;
-}
-
-/** The tree of `ids` (in the paper's order) under `parents`; `base` tells which parents were moves. */
-export function buildTree(ids: string[], parents: Parents, base?: Parents): LogicTree {
+/** The tree of `ids` (in the paper's order) under `parents`. */
+export function buildTree(ids: string[], parents: Parents): LogicTree {
   const nodes: Record<string, LogicNode> = {};
-  for (const id of ids) {
-    const parent = parents[id] ?? null;
-    nodes[id] = { id, parent, children: [], depth: 0, moved: base !== undefined && parent !== (base[id] ?? null) };
-  }
+  for (const id of ids) nodes[id] = { id, parent: parents[id] ?? null, children: [], depth: 0 };
   const roots: string[] = [];
   for (const id of ids) {
     const parent = nodes[id].parent;
@@ -113,7 +93,7 @@ export function buildTree(ids: string[], parents: Parents, base?: Parents): Logi
     for (const child of nodes[id].children) visit(child, depth + 1);
   };
   roots.forEach((id) => visit(id, 0));
-  // A loop of parents (which moves never make) would be out of reach: its blocks go to the top instead.
+  // A loop of parents (which placing never makes) would be out of reach: its blocks go to the top instead.
   for (const id of ids) {
     if (seen.has(id)) continue;
     const parent = nodes[id].parent;
@@ -125,44 +105,69 @@ export function buildTree(ids: string[], parents: Parents, base?: Parents): Logi
   return { nodes, roots, order };
 }
 
-/** The paper's logic: its blocks where its headings put them, except those `logic` moves under another block. */
-export function logicTree(paper: Pick<ResultPaper, 'blocks' | 'preamble' | 'logic'>): LogicTree {
-  const base = paperParents(paper);
-  return buildTree(
+/** The paper's own tree, as its headings have it. */
+export const paperTree = (paper: Pick<ResultPaper, 'blocks' | 'preamble'>): LogicTree =>
+  buildTree(
     paper.blocks.map((block) => block.id),
-    movedParents(paper.blocks, base, paper.logic),
-    base,
+    paperParents(paper),
   );
+
+/** The blocks in the paper's logic: those placed in it, and those placed blocks are under. */
+export function placedIn(blocks: ResultBlock[], logic: Logic | undefined): Set<string> {
+  const ids = new Set(blocks.map((block) => block.id));
+  const found = new Set<string>();
+  for (const [id, parent] of Object.entries(logic ?? {})) {
+    if (!ids.has(id)) continue;
+    found.add(id);
+    if (parent !== TOP && ids.has(parent)) found.add(parent);
+  }
+  return found;
+}
+
+/** The paper's logic as a tree: only the blocks placed in it; one under a block that is gone is at the top. */
+export function logicTree(paper: Pick<ResultPaper, 'blocks' | 'logic'>): LogicTree {
+  const logic = paper.logic ?? {};
+  const inTree = placedIn(paper.blocks, logic);
+  const ids = paper.blocks.map((block) => block.id).filter((id) => inTree.has(id));
+  const parents: Parents = {};
+  for (const id of ids) {
+    const parent = logic[id];
+    parents[id] = parent !== undefined && parent !== id && inTree.has(parent) ? parent : null;
+  }
+  return buildTree(ids, parents);
 }
 
 /** Whether block `id` can go under `target`: not under itself, nor under a block that is under it. */
 export function canMove(tree: LogicTree, id: string, target: string): boolean {
-  if (!tree.nodes[id] || !tree.nodes[target]) return false;
+  if (!tree.nodes[target] || id === target) return false;
   for (let at: string | null = target; at !== null; at = tree.nodes[at].parent) {
     if (at === id) return false;
   }
   return true;
 }
 
-/**
- * `logic` with block `id` under `target`, or back where the paper's headings put it (null). Only moves that
- * differ from the headings are kept, and none of blocks that are gone.
- */
-export function withMove(paper: Pick<ResultPaper, 'blocks' | 'preamble'>, logic: Logic, id: string, target: string | null): Logic {
-  const next = cleanLogic(paper.blocks, logic);
-  delete next[id];
-  if (target !== null && target !== paperParents(paper)[id]) next[id] = target;
-  return next;
-}
-
-/** `logic` without moves of blocks that are gone, or to them. */
+/** `logic` without blocks that are gone; a block under one that is gone goes to the top. */
 export function cleanLogic(blocks: ResultBlock[], logic: Logic | undefined): Logic {
   const ids = new Set(blocks.map((block) => block.id));
   const kept: Logic = {};
-  for (const [id, target] of Object.entries(logic ?? {})) {
-    if (ids.has(id) && ids.has(target) && id !== target) kept[id] = target;
+  for (const [id, parent] of Object.entries(logic ?? {})) {
+    if (ids.has(id)) kept[id] = parent !== TOP && parent !== id && ids.has(parent) ? parent : TOP;
   }
   return kept;
+}
+
+/** `logic` with block `id` under `target`, or at the top (null); placed in the tree if it was not. */
+export function withPlacement(blocks: ResultBlock[], logic: Logic, id: string, target: string | null): Logic {
+  return { ...cleanLogic(blocks, logic), [id]: target ?? TOP };
+}
+
+/** `logic` without block `id`: the blocks that were under it go up to where it was. */
+export function withoutBlock(blocks: ResultBlock[], logic: Logic, id: string): Logic {
+  const next = cleanLogic(blocks, logic);
+  const up = next[id] ?? TOP;
+  delete next[id];
+  for (const [child, parent] of Object.entries(next)) if (parent === id) next[child] = up;
+  return next;
 }
 
 /**
@@ -177,9 +182,7 @@ export function pruned(tree: LogicTree, keep: (id: string) => boolean, extra: st
     while (at !== null && !keep(at)) at = tree.nodes[at].parent;
     parents[id] = at;
   }
-  const result = buildTree([...ids, ...extra], parents);
-  for (const id of ids) result.nodes[id].moved = tree.nodes[id].moved;
-  return result;
+  return buildTree([...ids, ...extra], parents);
 }
 
 /** Where to go from a block: its parent, its first child, the blocks beside it on its level, and the talk's order. */

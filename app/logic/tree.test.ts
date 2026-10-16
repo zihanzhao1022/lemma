@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ResultBlock, ResultPaper } from '../../types';
 import { nodeLabels, wordsOf } from './labels';
 import { layoutTree } from './layout';
-import { ancestorsOf, buildTree, canMove, cleanLogic, logicTree, movesFrom, paperParents, pruned, subtreeOf, withMove } from './tree';
+import { ancestorsOf, buildTree, canMove, cleanLogic, logicTree, movesFrom, paperParents, paperTree, placedIn, pruned, subtreeOf, withPlacement, withoutBlock } from './tree';
 
 const text = (id: string, source: string): ResultBlock => ({ id, kind: 'text', source });
 
@@ -26,10 +26,10 @@ const paper = (logic?: Record<string, string>): Pick<ResultPaper, 'blocks' | 'pr
   ...(logic ? { logic } : {}),
 });
 
-/** The slide's logical organization: each experiment under the method it tests, the fourth after the third. */
-const LOGIC = { e1: 'm1', e2: 'm1', e3: 'm2', e4: 'e3' };
+/** The slide's logical organization, built by hand: the methodology on top, each experiment under its method. */
+const LOGIC = { meth: '', m1: 'meth', m2: 'meth', e1: 'm1', t1: 'e1', e2: 'm1', e3: 'm2', e4: 'e3' };
 
-describe('a paper as a tree', () => {
+describe("a paper's own tree", () => {
   it('puts each block where its headings do: subsections under sections, the rest under the heading above it', () => {
     expect(paperParents(paper())).toEqual({
       abs: null,
@@ -46,63 +46,73 @@ describe('a paper as a tree', () => {
       more: 'e4',
       concl: null,
     });
+    expect(paperTree(paper()).order).toHaveLength(13);
   });
 
   it('keeps a heading open across blocks, and starts over at the appendix', () => {
     const blocks = [text('a', '\\section{A}\nx\n\\subsection{A.1}'), text('b', 'more of A.1'), text('c', '\\subsection{A.2}'), text('app', '\\appendix\n\\section{More}'), text('d', 'extra')];
     expect(paperParents({ blocks })).toEqual({ a: null, b: 'a', c: 'a', app: null, d: 'app' });
   });
+});
 
-  it('moves experiments under their methods, with what is under them, the others keeping the paper order', () => {
+describe('a logic built by hand', () => {
+  it('holds only the blocks put in it, in the paper order under each block', () => {
+    expect(logicTree(paper()).order).toEqual([]);
     const tree = logicTree(paper(LOGIC));
+    expect(tree.roots).toEqual(['meth']);
+    expect(tree.nodes.meth.children).toEqual(['m1', 'm2']);
     expect(tree.nodes.m1.children).toEqual(['e1', 'e2']);
-    expect(tree.nodes.m2.children).toEqual(['e3']);
     expect(tree.nodes.e3.children).toEqual(['e4']);
-    expect(tree.nodes.exps.children).toEqual([]);
-    expect(tree.nodes.e1.moved && !tree.nodes.t1.moved && !tree.nodes.m1.moved).toBe(true);
-    expect(tree.order).toEqual(['abs', 'meth', 'm1', 'e1', 't1', 'e2', 'm2', 'e3', 'e4', 'more', 'm3', 'exps', 'concl']);
-    expect([tree.nodes.e4.depth, tree.nodes.more.depth]).toEqual([3, 4]);
-    expect(ancestorsOf(tree, 'more')).toEqual(['meth', 'm2', 'e3', 'e4']);
+    expect(tree.order).toEqual(['meth', 'm1', 'e1', 't1', 'e2', 'm2', 'e3', 'e4']);
+    expect(tree.nodes.m3).toBeUndefined();
+    expect([tree.nodes.e4.depth, tree.nodes.t1.depth]).toEqual([3, 3]);
+    expect(ancestorsOf(tree, 'e4')).toEqual(['meth', 'm2', 'e3']);
     expect([...subtreeOf(tree, 'm1')]).toEqual(['m1', 'e1', 't1', 'e2']);
   });
 
-  it('never puts a block under itself or a block under it, nor under a block that is gone', () => {
-    const tree = logicTree(paper(LOGIC));
-    expect(canMove(tree, 'm1', 't1')).toBe(false);
-    expect(canMove(tree, 'm1', 'm1')).toBe(false);
-    expect(canMove(tree, 'e2', 'e1')).toBe(true);
-    // Moves that would make a loop, or name a block that is gone, count for nothing.
-    const looped = logicTree(paper({ m1: 'e1', e1: 'm1', e2: 'gone' }));
-    expect(looped.nodes.m1.parent).toBe('e1');
-    expect(looped.nodes.e1.parent).toBe('exps');
-    expect(looped.nodes.e2.parent).toBe('exps');
-    expect(looped.order).toHaveLength(13);
+  it('counts a block others are under as in it, at the top (how the first version stored moves)', () => {
+    const tree = logicTree(paper({ e1: 'm1', e2: 'm1', e3: 'm2', e4: 'e3' }));
+    expect(tree.roots).toEqual(['m1', 'm2']);
+    expect(placedIn(paper().blocks, { e1: 'm1', gone: 'm1', e2: 'gone' })).toEqual(new Set(['e1', 'm1', 'e2']));
   });
 
-  it('keeps only the moves that differ from the headings', () => {
-    const moved = withMove(paper(), {}, 'e1', 'm1');
-    expect(moved).toEqual({ e1: 'm1' });
-    expect(withMove(paper(), moved, 'e1', 'exps')).toEqual({});
-    expect(withMove(paper(), moved, 'e1', null)).toEqual({});
-    expect(cleanLogic(paper().blocks, { e1: 'm1', gone: 'm1', e2: 'gone', e3: 'e3' })).toEqual({ e1: 'm1' });
+  it('places blocks, at the top or under another, and never under themselves', () => {
+    let logic = withPlacement(paper().blocks, {}, 'm1', null);
+    logic = withPlacement(paper().blocks, logic, 'e1', 'm1');
+    logic = withPlacement(paper().blocks, logic, 'e2', 'e1');
+    expect(logic).toEqual({ m1: '', e1: 'm1', e2: 'e1' });
+    const tree = logicTree(paper(logic));
+    expect(canMove(tree, 'm1', 'e2')).toBe(false);
+    expect(canMove(tree, 'e2', 'm1')).toBe(true);
+    expect(canMove(tree, 'e4', 'e2')).toBe(true);
+    expect(canMove(tree, 'e4', 'e4')).toBe(false);
+    // Moves that would make a loop, or name a block that is gone, are at the top.
+    const looped = logicTree(paper({ m1: 'e1', e1: 'm1', e2: 'gone' }));
+    expect(looped.order.sort()).toEqual(['e1', 'e2', 'm1']);
+    expect(looped.nodes.e2.parent).toBeNull();
+  });
+
+  it('takes a block out, the blocks under it going up to where it was', () => {
+    expect(withoutBlock(paper().blocks, LOGIC, 'm1')).toEqual({ meth: '', m2: 'meth', e1: 'meth', t1: 'e1', e2: 'meth', e3: 'm2', e4: 'e3' });
+    expect(withoutBlock(paper().blocks, { e1: 'm1', e2: 'm1' }, 'm1')).toEqual({ e1: '', e2: '' });
+    expect(cleanLogic(paper().blocks, { e1: 'm1', gone: 'm1', e2: 'gone', e3: 'e3' })).toEqual({ e1: 'm1', e2: '', e3: '' });
   });
 
   it('goes up, down, across branches and through in order', () => {
     const tree = logicTree(paper(LOGIC));
     expect(movesFrom(tree, 'e2')).toEqual({ up: 'm1', down: null, left: 'e1', right: 'e3', previous: 't1', next: 'm2' });
     expect(movesFrom(tree, 'm1')).toMatchObject({ up: 'meth', down: 'e1', left: null, right: 'm2' });
-    expect(movesFrom(tree, 'abs')).toMatchObject({ up: null, left: null, right: 'meth', previous: null });
+    expect(movesFrom(tree, 'meth')).toMatchObject({ up: null, left: null, right: null, previous: null });
   });
 
   it('leaves out what a reader does not see, lifting what was under it', () => {
     const tree = pruned(logicTree(paper(LOGIC)), (id) => id !== 'm2', ['references']);
-    expect(tree.nodes.meth.children).toEqual(['m1', 'e3', 'm3']);
-    expect(tree.nodes.e3.moved).toBe(true);
+    expect(tree.nodes.meth.children).toEqual(['m1', 'e3']);
     expect(tree.roots[tree.roots.length - 1]).toBe('references');
     expect(tree.order).not.toContain('m2');
   });
 
-  it('turns a loop of parents, which moves never make, into blocks at the top', () => {
+  it('turns a loop of parents, which placing never makes, into blocks at the top', () => {
     const tree = buildTree(['a', 'b'], { a: 'b', b: 'a' });
     expect(tree.order.sort()).toEqual(['a', 'b']);
   });

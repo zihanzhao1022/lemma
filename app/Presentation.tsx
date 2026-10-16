@@ -5,7 +5,7 @@ import { useT } from '../lib/phrases/app';
 import { ResultBlockOutput, ResultPaper } from '../types';
 import { LabelWords, NodeLabel, nodeLabels } from './logic/labels';
 import { Spacing, layoutTree, link } from './logic/layout';
-import { LogicTree, ancestorsOf, logicTree, movesFrom, pruned } from './logic/tree';
+import { LogicTree, ancestorsOf, logicTree, movesFrom, paperTree, pruned } from './logic/tree';
 
 interface Props {
   /** The paper with the logic to follow (as last changed, saved or not). */
@@ -13,6 +13,8 @@ interface Props {
   readFile: (path: string, version?: string) => Promise<Uint8Array>;
   /** The block to start from; the first one when absent, or the next one shown when it is not. */
   start?: string | null;
+  /** The tree to go along: the paper's own (its sections), or the logic its author built. */
+  along: 'paper' | 'logic';
   onClose: () => void;
 }
 
@@ -44,7 +46,7 @@ const MiniMap: React.FC<{ tree: LogicTree; current: string; labels: Record<strin
                 key={id}
                 d={link(drawn.at[parent], drawn.at[id], MAP)}
                 fill="none"
-                stroke={lit ? '#7c3aed' : tree.nodes[id].moved ? '#c4b5fd' : '#d4d4d8'}
+                stroke={lit ? '#7c3aed' : '#d4d4d8'}
                 strokeWidth={lit ? 1.6 : 1}
               />
             );
@@ -73,11 +75,12 @@ const MiniMap: React.FC<{ tree: LogicTree; current: string; labels: Record<strin
 };
 
 /**
- * The paper one block at a time, as large as the screen allows, for a group meeting, along its logic: left and
- * right go to the blocks beside it on its level (another branch), down to the blocks under it, up to the block
- * it belongs to; the space bar goes through all of them in order. A map in the corner shows where one is.
+ * The paper one block at a time, as large as the screen allows, for a group meeting, along a tree of its blocks
+ * (its sections, or the logic its author built): left and right go to the blocks beside it on its level (another
+ * branch), down to the blocks under it, up to the block it belongs to; the space bar goes through all of them in
+ * order. A map in the corner shows where one is.
  */
-const Presentation: React.FC<Props> = ({ paper, readFile, start, onClose }) => {
+const Presentation: React.FC<Props> = ({ paper, readFile, start, along, onClose }) => {
   const t = useT();
   const outputs = useMemo(() => {
     const found: Record<string, ResultBlockOutput> = {};
@@ -85,8 +88,9 @@ const Presentation: React.FC<Props> = ({ paper, readFile, start, onClose }) => {
     if (paper.references) found[REFERENCES] = paper.references;
     return found;
   }, [paper]);
-  const whole = useMemo(() => logicTree(paper), [paper]);
-  const tree = useMemo(() => pruned(whole, (id) => id in outputs, paper.references ? [REFERENCES] : []), [whole, outputs, paper.references]);
+  const whole = useMemo(() => (along === 'logic' ? logicTree(paper) : paperTree(paper)), [paper, along]);
+  // The bibliography closes the paper; the logic holds only the blocks put in it.
+  const tree = useMemo(() => pruned(whole, (id) => id in outputs, paper.references && along === 'paper' ? [REFERENCES] : []), [whole, outputs, paper.references, along]);
   const words = useMemo<LabelWords>(
     () => ({ figure: (n) => (n ? t('图 {n}', { n }) : t('图')), table: (n) => (n ? t('表 {n}', { n }) : t('表格')), abstract: t('摘要'), empty: t('（空白）') }),
     [t],

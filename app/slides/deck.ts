@@ -5,7 +5,7 @@
  */
 import { stripComments } from '../../editor/tex/document';
 import { ResultBlock, ResultPaper, Slide, SlideBlock, SlideBox, SlideDeck, SlideElement, SlideText } from '../../types';
-import { LogicTree, headingTitles, logicTree } from '../logic/tree';
+import { ancestorsOf, headingTitles, logicTree } from '../logic/tree';
 
 /** The page, in slide units (16:9). An exported .pptx is 13.333 × 7.5 in, a PDF 960 × 540 pt. */
 export const SLIDE_WIDTH = 1600;
@@ -72,10 +72,14 @@ export const plain = (latex: string): string =>
 /** "表 1" / "图 2" for a figure or table, in the interface's language (given by the caller). */
 export type Labeller = (kind: 'figure' | 'table', number: string | undefined) => string;
 
-/** The figures and tables a deck can show, with their labels and captions, in the order of the paper's logic. */
+/**
+ * The figures and tables a deck can show, with their labels and captions: those in the paper's logic first, in
+ * the order a talk goes through it, then the others as the paper has them.
+ */
 export function results(paper: ResultPaper, label: Labeller, number: (blocks: ResultBlock[], index: number) => string | undefined): { block: ResultBlock; label: string; caption: string }[] {
   const index = new Map(paper.blocks.map((block, at) => [block.id, at]));
-  return logicTree(paper).order.flatMap((id) => {
+  const tree = logicTree(paper);
+  return [...tree.order, ...paper.blocks.map((block) => block.id).filter((id) => !tree.nodes[id])].flatMap((id) => {
     const at = index.get(id) ?? -1;
     const block = paper.blocks[at];
     return (block.kind === 'figure' || block.kind === 'table') && block.output && !block.hidden
@@ -85,29 +89,28 @@ export function results(paper: ResultPaper, label: Labeller, number: (blocks: Re
 }
 
 /**
- * The part of a talk a block is in: the outermost block above it that other blocks were moved under (a method
- * with its experiments), when it has a heading to name the part by.
+ * The parts of a talk, from the paper's logic: each block with text blocks under it (a method with its
+ * experiments, a section with its methods) and a heading to name it by. Outermost first, as the deck opens them.
  */
-export function partOf(tree: LogicTree, titles: Record<string, string>, id: string): string | null {
-  let part: string | null = null;
-  for (let at = tree.nodes[id]?.parent ?? null; at !== null; at = tree.nodes[at].parent) {
-    if (titles[at] && tree.nodes[at].children.some((child) => tree.nodes[child].moved)) part = at;
-  }
-  return part;
-}
-
-/** Each figure and table with the part it opens, if it is the first of one: its title. */
-function partsOpened(paper: ResultPaper, blocks: ResultBlock[]): Record<string, string> {
+export function partsAbove(paper: ResultPaper, id: string): string[] {
   const tree = logicTree(paper);
   const titles = headingTitles(paper, false);
-  const opened: Record<string, string> = {};
-  let part: string | null = null;
+  const kinds = new Map(paper.blocks.map((block) => [block.id, block.kind]));
+  return ancestorsOf(tree, id).filter((at) => titles[at] && tree.nodes[at].children.some((child) => kinds.get(child) === 'text'));
+}
+
+/** Each figure and table with the parts it is the first of: their titles, outermost first, and how deep each is. */
+function partsOpened(paper: ResultPaper, blocks: ResultBlock[]): Record<string, { title: string; depth: number }[]> {
+  const titles = headingTitles(paper, false);
+  const opened = new Set<string>();
+  const found: Record<string, { title: string; depth: number }[]> = {};
   for (const block of blocks) {
-    const next = partOf(tree, titles, block.id);
-    if (next !== null && next !== part) opened[block.id] = titles[next];
-    part = next;
+    const parts = partsAbove(paper, block.id);
+    const fresh = parts.filter((part) => !opened.has(part));
+    fresh.forEach((part) => opened.add(part));
+    if (fresh.length > 0) found[block.id] = fresh.map((part) => ({ title: titles[part], depth: parts.indexOf(part) }));
   }
-  return opened;
+  return found;
 }
 
 /** At most `length` characters, cut at a word where there is one, with an ellipsis; a trailing period goes. */
@@ -139,7 +142,7 @@ export function visualDeck(paper: ResultPaper, label: Labeller, number: (blocks:
     shown.map(({ block }) => block),
   );
   const slides = shown.flatMap(({ block, label: name, caption }): Slide[] => [
-    ...(parts[block.id] ? [{ id: make('slide'), elements: [{ ...titleText(parts[block.id], make('el'), { x: 160, y: 330, w: 1280, h: 240 }), size: 64, align: 'center' as const }] }] : []),
+    ...(parts[block.id] ?? []).map(({ title }): Slide => ({ id: make('slide'), elements: [{ ...titleText(title, make('el'), { x: 160, y: 330, w: 1280, h: 240 }), size: 64, align: 'center' as const }] })),
     { id: make('slide'), elements: [titleText(caption ? `${name}  ${shorten(caption, 40)}` : name, make('el')), blockElement(block, make('el'))] },
   ]);
   return { kind: 'visual', slides: [opening, ...slides] };
@@ -260,8 +263,12 @@ export function beamerDeck(paper: ResultPaper, number: (blocks: ResultBlock[], i
     shown.map(({ block }) => block),
   );
   const frames = shown.map(({ block, label: name, caption }) => {
-    const part = parts[block.id] && SETTABLE.test(parts[block.id]) ? escapeLatex(parts[block.id]) : null;
-    return `${part ? `\\section{${part}}\n\\begin{frame}\n  \\centering\\Large ${part}\n\\end{frame}\n\n` : ''}\\begin{frame}{${escapeLatex(caption && SETTABLE.test(caption) ? `${name}: ${shorten(caption, 40)}` : name)}}
+    // Each part a frame of its own, as a section (or a subsection inside one); pdfTeX here sets Latin script only.
+    const opening = (parts[block.id] ?? [])
+      .filter(({ title }) => SETTABLE.test(title))
+      .map(({ title, depth }) => `\\${depth === 0 ? 'section' : 'subsection'}{${escapeLatex(title)}}\n\\begin{frame}\n  \\centering\\Large ${escapeLatex(title)}\n\\end{frame}\n\n`)
+      .join('');
+    return `${opening}\\begin{frame}{${escapeLatex(caption && SETTABLE.test(caption) ? `${name}: ${shorten(caption, 40)}` : name)}}
   \\centering
   \\lemmablock{${refFor(block)}}
 \\end{frame}`;
