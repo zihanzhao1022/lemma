@@ -88,6 +88,17 @@ describe('position marks', () => {
     expect(doc.main).toContain('\\bibliographystyle{plainnat}\n\\bibliography{references}\n\\end{document}');
   });
 
+  it('opens with the title when the preamble gives one and the text does not set it', () => {
+    const titled = fullDocument('\\documentclass{article}\n\\title{A Made-up Study}\n\\author{Ada Example}', 'Text.', null);
+    const lines = titled.main.split('\n');
+    expect(lines[titled.bodyStart - 3]).toBe('\\begin{document}');
+    expect(lines[titled.bodyStart - 2]).toBe('\\maketitle');
+    expect(lines[titled.bodyStart - 1]).toBe('\\leavevmode\\galleytext{1}Text.');
+    // Set in the text already, or no title at all (a commented one does not count): no second one.
+    expect(fullDocument('\\title{A}', '\\maketitle\nText.', null).main.match(/\\maketitle/g)).toHaveLength(1);
+    expect(fullDocument('\\documentclass{article}\n% \\title{A}', 'Text.', null).main).not.toContain('\\maketitle');
+  });
+
   it('reads main.gpos in PDF points', () => {
     const [mark] = parseMarks('L 3 1 4736286 38427457 229.5pt\n');
     expect(mark.kind).toBe('L');

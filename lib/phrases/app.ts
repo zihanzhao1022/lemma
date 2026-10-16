@@ -456,8 +456,5 @@ export const { t, useT, table } = phrases({
     ja: 'コンパイルでは論文自身の {name} が使われるため、この添付ファイルは使われません。「プリアンブルと添付ファイル」で削除できます',
     en: 'Compiles use the paper’s own {name}, so this attachment is never read; you can delete it under Preamble & attachments',
   },
-  '{name}：图片和 PDF 只能在「导言区与附件」里替换或删除': {
-    ja: '{name}：画像と PDF は「プリアンブルと添付ファイル」で差し替え・削除できます',
-    en: '{name}: images and PDFs can be replaced or deleted under Preamble & attachments',
-  },
+  '{name} 不是 UTF-8 编码，不能在这里编辑': { ja: '{name} は UTF-8 ではないため、ここでは編集できません', en: '{name} is not in UTF-8, so it cannot be edited here' },
 });

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Crosshair, FileCode2, FileText, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Crosshair, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors } from 'lucide-react';
 import { describeSaveError } from '../../editor/backend';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
-import { ReadFile, attachmentPath, loadAttachments, newBlockId, preambleOf, putFiles, rebuildWith, withOutputs } from '../../editor/results/actions';
+import { IMAGE_TYPES, ReadFile, attachmentPath, extensionOf, loadAttachments, newBlockId, preambleOf, putFiles, rebuildWith, withOutputs } from '../../editor/results/actions';
+import { FileFolder, fileTree } from '../../editor/results/attachmentTree';
 import { bibliographyStyle } from '../../editor/results/bibtex';
 import { REFERENCES_FILE } from '../../editor/results/compile';
 import { citedKeys, describeFailure } from '../../editor/results/numbering';
@@ -70,6 +71,29 @@ function changedFiles(current: Texts, saved: Texts): Record<string, Uint8Array> 
 
 const references = (aux?: string): string => JSON.stringify([parseAuxLabels(aux ?? ''), parseAuxCitations(aux ?? '')]);
 
+/** A picture among the attachments, as large as the pane allows. */
+const ImagePreview: React.FC<{ name: string; data: Uint8Array }> = ({ name, data }) => {
+  // Made and let go in the same effect, so an address is never shown after it is revoked.
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const made = URL.createObjectURL(new Blob([data.slice()], { type: extensionOf(name) === '.png' ? 'image/png' : 'image/jpeg' }));
+    setUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [name, data]);
+  return <div className="flex h-full items-center justify-center overflow-auto p-6">{url && <img src={url} alt={name} className="max-h-full max-w-full bg-white object-contain shadow-sm" />}</div>;
+};
+
+/** 45 KB, 1.2 MB. */
+const sizeOf = (bytes: number): string => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+
+/** How many files a folder holds, its folders' included. */
+const filesIn = (folder: FileFolder): number => folder.files.length + folder.folders.reduce((sum, sub) => sum + filesIn(sub), 0);
+
+/** The folders above a file, outermost first: figs and figs/v2 for figs/v2/a.pdf. */
+const foldersOf = (path: string): string[] => path.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'));
+
+const noop = () => undefined;
+
 interface Props {
   paper: ResultPaper;
   readFile: ReadFile;
@@ -92,6 +116,10 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
   const [texts, setTexts] = useState<Texts | null>(null);
   const [version, setVersion] = useState(0);
   const [active, setActive] = useState(MAIN);
+  // A picture or PDF among the attachments, shown in place of the code until a file is opened again.
+  const [preview, setPreview] = useState<string | null>(null);
+  // The attachments' folders that are open in the file list, like Overleaf's: all closed at first.
+  const [folders, setFolders] = useState<ReadonlySet<string>>(() => new Set());
   const [compiled, setCompiled] = useState<Compiled | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [listing, setListing] = useState(false);
@@ -212,10 +240,29 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     return () => window.clearTimeout(timer);
   }, [visible, texts, attachments, compile]);
 
-  // An attachment open in the editor that the paper no longer has (removed, or taken into the text) gives way to main.tex.
+  // An attachment open in the editor or on view that the paper no longer has gives way to main.tex.
   useEffect(() => {
     if (texts && texts[active] === undefined) setActive(MAIN);
   }, [texts, active]);
+  useEffect(() => {
+    if (preview && attachments && !attachments[preview]) setPreview(null);
+  }, [preview, attachments]);
+
+  /** Opens a file of the writing view in the editor, with the folders it is in. */
+  const openFile = useCallback((name: string) => {
+    setActive(name);
+    setPreview(null);
+    const path = attachedName(name);
+    if (path?.includes('/')) setFolders((current) => (foldersOf(path).every((folder) => current.has(folder)) ? current : new Set([...current, ...foldersOf(path)])));
+  }, []);
+  const toggleFolder = (path: string) =>
+    setFolders((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const tree = useMemo(() => fileTree(Object.keys(attachments ?? {}).filter((name) => name !== REFERENCES_FILE)), [attachments]);
 
   const dirty = texts !== null && saved.current !== null && !sameTexts(texts, saved.current);
 
@@ -296,54 +343,81 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     if (!found) return;
     const lines = (textsRef.current?.[MAIN] ?? '').split('\n');
     const word = findWord(lines, found.line, found.until, click.word, click.context);
-    setActive(MAIN);
+    openFile(MAIN);
     editor.current?.reveal(MAIN, word?.line ?? found.line, word?.start, word?.end);
   };
 
-  const fileRow = (name: string, icon: React.ReactNode, label = name) => (
-    <button
-      key={name}
-      type="button"
-      onClick={() => setActive(name)}
-      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-150 ${active === name ? 'bg-white text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.08)]' : 'text-gray-700 hover:bg-black/[0.04]'}`}
-    >
+  // Each level of folders one chevron and gap further in, so a folder's files line up under its icon.
+  const indent = (depth: number) => ({ paddingLeft: `${0.5 + depth * 1.2}rem` });
+  const rowLook = (selected: boolean) =>
+    `flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left transition-colors duration-150 ${selected ? 'bg-white text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.08)]' : 'text-gray-700 hover:bg-black/[0.04]'}`;
+
+  const fileRow = (name: string, icon: React.ReactNode, label = name, depth = 0) => (
+    <button key={name} type="button" onClick={() => openFile(name)} title={attachedName(name) ?? undefined} className={rowLook(!preview && active === name)} style={indent(depth)}>
       {icon}
       <span className="truncate">{label}</span>
       {texts && saved.current && changedIn(texts, saved.current, name) && <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" title={t('有未保存的修改')} />}
     </button>
   );
 
+  /** An attachment in the list: text opens in the editor, a picture or PDF on view, the rest only listed. */
+  const attachmentRow = (name: string, depth: number): React.ReactNode => {
+    const label = name.split('/').pop() ?? name;
+    // A main.tex among the attachments never reaches the compiles: the paper's own text is main.tex there.
+    if (SHADOWED.includes(name)) {
+      return (
+        <p key={name} className="flex items-center gap-2 py-1.5 pr-2 text-gray-400" style={indent(depth)} title={t('编译时用的是论文自己的 {name}，这个附件用不到，可以在「导言区与附件」里删掉', { name })}>
+          <FileText size={15} className="shrink-0" />
+          <span className="truncate line-through">{label}</span>
+        </p>
+      );
+    }
+    if (texts?.[attachedKey(name)] !== undefined) return fileRow(attachedKey(name), <FileCode2 size={15} className="shrink-0 text-gray-400" />, label, depth);
+    if (IMAGE_TYPES.includes(extensionOf(name))) {
+      return (
+        <button key={name} type="button" onClick={() => setPreview(name)} title={name} className={rowLook(preview === name)} style={indent(depth)}>
+          <ImageIcon size={15} className="shrink-0 text-gray-400" />
+          <span className="truncate">{label}</span>
+        </button>
+      );
+    }
+    return (
+      <p key={name} className="flex items-center gap-2 py-1.5 pr-2 text-gray-400" style={indent(depth)} title={t('{name} 不是 UTF-8 编码，不能在这里编辑', { name })}>
+        <FileText size={15} className="shrink-0" />
+        <span className="truncate">{label}</span>
+      </p>
+    );
+  };
+
+  /** A folder's folders (each open or closed) and then its files. */
+  const folderRows = (folder: FileFolder, depth: number): React.ReactNode[] => [
+    ...folder.folders.flatMap((sub) => {
+      const open = folders.has(sub.path);
+      return [
+        <button key={`folder:${sub.path}`} type="button" onClick={() => toggleFolder(sub.path)} aria-expanded={open} title={sub.path} className={`${rowLook(false)} gap-1.5`} style={indent(depth)}>
+          <ChevronRight size={13} className={`shrink-0 text-gray-400 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
+          {open ? <FolderOpen size={15} className="shrink-0 text-gray-400" /> : <Folder size={15} className="shrink-0 text-gray-400" />}
+          <span className="truncate">{sub.name}</span>
+          <span className="ml-auto shrink-0 text-[11px] tabular-nums text-gray-400">{filesIn(sub)}</span>
+        </button>,
+        ...(open ? folderRows(sub, depth + 1) : []),
+      ];
+    }),
+    ...folder.files.map((name) => attachmentRow(name, depth)),
+  ];
+
   const bar = 'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1 text-[13px] text-gray-600 transition-colors duration-150 hover:bg-black/[0.05] hover:text-gray-900 disabled:opacity-40';
   const issues = compiled?.issues ?? [];
 
   return (
     <div className={`fixed inset-x-0 bottom-0 z-20 flex bg-white ${visible ? '' : 'hidden'}`} style={{ top }}>
-      <nav aria-label={t('文件和大纲')} className="hidden w-56 shrink-0 flex-col overflow-y-auto border-r border-black/[0.06] bg-[#f5f5f7] p-3 text-[13px] lg:flex">
+      {/* A plain column, not a flex one: rows of a flex column shrink once the list is longer than the window. */}
+      <nav aria-label={t('文件和大纲')} className="hidden w-56 shrink-0 overflow-y-auto border-r border-black/[0.06] bg-[#f5f5f7] p-3 text-[13px] lg:block">
         <p className="px-2 pb-1 text-xs font-medium text-gray-500">{t('文件')}</p>
         {fileRow(MAIN, <FileCode2 size={15} className="shrink-0 text-violet-600" />)}
         {fileRow(PREAMBLE, <FileCode2 size={15} className="shrink-0 text-gray-400" />, t('导言区 preamble.tex'))}
         {texts?.[REFERENCES_FILE] !== undefined && fileRow(REFERENCES_FILE, <FileText size={15} className="shrink-0 text-gray-400" />)}
-        {Object.keys(attachments ?? {})
-          .filter((name) => name !== REFERENCES_FILE)
-          .sort()
-          .map((name) => {
-            // A main.tex among the attachments never reaches the compiles: the paper's own text is main.tex there.
-            if (SHADOWED.includes(name)) {
-              return (
-                <p key={name} className="flex items-center gap-2 px-2 py-1 text-gray-400" title={t('编译时用的是论文自己的 {name}，这个附件用不到，可以在「导言区与附件」里删掉', { name })}>
-                  <FileText size={15} className="shrink-0" />
-                  <span className="truncate line-through">{name}</span>
-                </p>
-              );
-            }
-            if (texts?.[attachedKey(name)] !== undefined) return fileRow(attachedKey(name), <FileCode2 size={15} className="shrink-0 text-gray-400" />, name);
-            return (
-              <p key={name} className="flex items-center gap-2 px-2 py-1 text-gray-500" title={t('{name}：图片和 PDF 只能在「导言区与附件」里替换或删除', { name })}>
-                <ImageIcon size={15} className="shrink-0 text-gray-400" />
-                <span className="truncate">{name}</span>
-              </p>
-            );
-          })}
+        {folderRows(tree, 0)}
         <p className="mt-5 px-2 pb-1 text-xs font-medium text-gray-500">{t('大纲')}</p>
         {headings.length === 0 && <p className="px-2 text-xs text-gray-400">{t('写下 \\section，这里就会列出章节')}</p>}
         {headings.map((heading) => (
@@ -351,7 +425,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
             key={`${heading.line}`}
             type="button"
             onClick={() => {
-              setActive(MAIN);
+              openFile(MAIN);
               editor.current?.reveal(MAIN, heading.line);
               showInPdf(heading.line);
             }}
@@ -366,8 +440,9 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
 
       <section className="flex min-w-0 flex-1 flex-col border-r border-black/[0.06]">
         <div className="flex h-11 shrink-0 items-center gap-1 border-b border-black/[0.06] px-3">
-          <span className="mr-2 min-w-0 truncate text-sm font-medium text-gray-800">{attachedName(active) ?? active}</span>
-          {active === MAIN && (
+          <span className="mr-2 min-w-0 truncate text-sm font-medium text-gray-800">{preview ?? attachedName(active) ?? active}</span>
+          {preview && attachments?.[preview] && <span className="shrink-0 text-xs text-gray-400">{sizeOf(attachments[preview].length)}</span>}
+          {!preview && active === MAIN && (
             <>
               <button type="button" onClick={() => editor.current?.splitBlock() || setProblem(() => t('把光标放在一个块中间的某一行，再从那里分块'))} className={bar} title={t('从光标所在的行开始一个新块')}>
                 <Scissors size={14} />
@@ -395,7 +470,13 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
             {problem}
           </p>
         )}
-        <div className="min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1">
+          {preview && attachments?.[preview] && (
+            // Over the editor, which stays as it was underneath.
+            <div className="absolute inset-0 z-10 bg-[#e9e9ec]">
+              {extensionOf(preview) === '.pdf' ? <PdfPages key={preview} data={attachments[preview]} zoom={1} onDoubleClick={noop} /> : <ImagePreview name={preview} data={attachments[preview]} />}
+            </div>
+          )}
           {texts ? (
             <SourceEditor
               ref={editor}
@@ -449,7 +530,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
                   disabled={!issue.file}
                   onClick={() => {
                     if (!issue.file || !issue.line) return;
-                    setActive(issue.file);
+                    openFile(issue.file);
                     editor.current?.reveal(issue.file, issue.line);
                   }}
                   className="w-full px-3 py-1 text-left text-red-800 enabled:hover:bg-red-100/70"

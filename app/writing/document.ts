@@ -242,8 +242,11 @@ export function fullDocument(preamble: string, body: string, bibliography: { sty
   const own = preamble.replace(/\s+$/, '');
   const head = passOptionsLines(own);
   if (!/\\documentclass/.test(stripComments(own))) head.push('\\documentclass{article}');
-  const before = [...head, own, MARK_SUPPORT, '\\begin{document}'];
   const text = body.replace(/\s+$/, '');
+  // The page shows the paper's title itself, so the blocks leave \maketitle out; the whole paper opens with it,
+  // as the paper does, when the preamble gives a title the text does not set itself.
+  const titled = /\\title\s*(?:\[[^\]]*\]\s*)?\{/.test(stripComments(own)) && !/\\maketitle(?![A-Za-z@])/.test(stripComments(text));
+  const before = [...head, own, MARK_SUPPORT, '\\begin{document}', ...(titled ? ['\\maketitle'] : [])];
   const after = [...(bibliography ? [`\\bibliographystyle{${bibliography.style}}`, `\\bibliography{${bibliography.file.replace(/\.bib$/, '')}}`] : []), '\\end{document}', ''];
   const opening = before.join('\n');
   return {
