@@ -38,20 +38,27 @@ type Status = 'saved' | 'changed' | 'saving' | 'failed';
 
 const KIND_ICON: Record<ResultBlockKind, typeof AlignLeft> = { text: AlignLeft, figure: Image, table: Table2 };
 
-/** What is dragged: a block of the list (`card:`) or of the page (`node:`); where it lands: a block, a new branch, or back on the list. */
+/**
+ * What is dragged: a block of the list (`card:`) or of the page (`node:`). Where it lands: on a block (under it),
+ * in the room after a block (`gap:`, beside it), below the branch (into it), on the box for a new branch beside
+ * this one, or back on the list (out of the tree).
+ */
 const LIST = 'list';
 const BRANCH = 'branch';
+const INTO = 'into';
 const cardId = (id: string) => `card:${id}`;
 const nodeId = (id: string) => `node:${id}`;
-const blockOf = (dragged: string) => dragged.replace(/^(card|node):/, '');
+const gapId = (id: string) => `gap:${id}`;
+const blockOf = (dragged: string) => dragged.replace(/^(card|node|gap):/, '');
 
-/** A block under the pointer first, then the place for a new branch or the list around it. */
+/** A block under the pointer first, then the room after one, then the larger places around them. */
 const landing: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
-  const block = hits.find((hit) => String(hit.id).startsWith('node:'));
-  if (block) return [block];
-  const area = hits.find((hit) => hit.id === BRANCH || hit.id === LIST);
-  return area ? [area] : [];
+  for (const wanted of [(id: string) => id.startsWith('node:'), (id: string) => id.startsWith('gap:'), (id: string) => id === INTO || id === BRANCH, (id: string) => id === LIST]) {
+    const hit = hits.find((candidate) => wanted(String(candidate.id)));
+    if (hit) return [hit];
+  }
+  return [];
 };
 
 /**
@@ -67,9 +74,9 @@ function firstBranch(tree: LogicTree): string | null {
 /** The blocks on a level of the tree, across branches, as the tree is drawn. */
 const levelOf = (tree: LogicTree, id: string): string[] => tree.order.filter((other) => tree.nodes[other].depth === tree.nodes[id].depth);
 
-/** An area blocks are dropped on: a new branch, or the list (out of the tree). */
-const DropArea: React.FC<{ id: string; className: string; children: (over: boolean) => React.ReactNode }> = ({ id, className, children }) => {
-  const { setNodeRef, isOver } = useDroppable({ id });
+/** An area blocks are dropped on: the branch on screen, a new branch, or the list (out of the tree). */
+const DropArea: React.FC<{ id: string; className: string; disabled?: boolean; children: (over: boolean) => React.ReactNode }> = ({ id, className, disabled = false, children }) => {
+  const { setNodeRef, isOver } = useDroppable({ id, disabled });
   return (
     <div ref={setNodeRef} className={className}>
       {children(isOver)}
@@ -88,7 +95,7 @@ const ListItem: React.FC<{ block: ResultBlock; label: NodeLabel; inTree: boolean
       {...drag.attributes}
       {...drag.listeners}
       onClick={() => onPick(block.id)}
-      title={inTree ? label.title : t('拖到中间的块上，放进逻辑；拖到下面的虚线框，新建一个分支')}
+      title={inTree ? label.title : t('拖到中间的块上就挂到它下面，拖到页面底部就放进这一支')}
       className={`flex cursor-grab touch-pan-y select-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] transition-colors duration-150 active:cursor-grabbing ${
         current ? 'bg-white text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.08)]' : 'text-gray-700 hover:bg-black/[0.04]'
       } ${drag.isDragging ? 'opacity-40' : ''}`}
@@ -97,6 +104,22 @@ const ListItem: React.FC<{ block: ResultBlock; label: NodeLabel; inTree: boolean
       <Icon size={13} className={`shrink-0 ${block.kind === 'text' ? 'text-gray-400' : 'text-violet-500'}`} aria-hidden="true" />
       <span className="min-w-0 truncate">{label.title}</span>
       {inTree && <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" title={t('在树里')} />}
+    </div>
+  );
+};
+
+/** The room after a block and what is under it: a block dropped here goes beside it, under the same block. */
+const Gap: React.FC<{ after: string; parentLabel: string; disabled: boolean }> = ({ after, parentLabel, disabled }) => {
+  const t = useT();
+  const { setNodeRef, isOver } = useDroppable({ id: gapId(after), disabled });
+  return (
+    <div ref={setNodeRef} className="relative h-7">
+      {isOver && !disabled && (
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 z-20 -translate-y-1/2">
+          <div className="h-0.5 rounded bg-violet-500" />
+          <span className="absolute left-0 top-1.5 whitespace-nowrap rounded-md bg-violet-700 px-2 py-0.5 text-[11px] text-white">{t('放到「{name}」下面', { name: parentLabel })}</span>
+        </div>
+      )}
     </div>
   );
 };
@@ -168,9 +191,15 @@ const Node: React.FC<NodeProps> = (props) => {
         {target && <span className="pointer-events-none absolute -top-3 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-md bg-violet-700 px-2 py-0.5 text-[11px] text-white">{t('放到「{name}」下面', { name: labels[id]?.title ?? '' })}</span>}
       </div>
       {children.length > 0 && (
-        <div className="mt-8 space-y-8">
+        <div className="mt-7">
           {children.map((child) => (
-            <Node key={child} {...props} id={child} depth={depth + 1} />
+            <React.Fragment key={child}>
+              <Node {...props} id={child} depth={depth + 1} />
+              {/* Dropped after this block and what is under it, a block goes beside it. */}
+              <div className="ml-2 border-l-2 border-violet-100 pl-5 sm:ml-3 sm:pl-7">
+                <Gap after={child} parentLabel={labels[id]?.title ?? ''} disabled={!!blocked?.has(id)} />
+              </div>
+            </React.Fragment>
           ))}
         </div>
       )}
@@ -302,13 +331,19 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     scroller.current?.scrollTo({ top: 0 });
   }, []);
 
-  /** Puts block `id` (from the list or the page) under `target`, or at the top as a branch of its own (null). */
+  /** Puts block `id` (from the list or the page) under `target`, or at the top (null). */
   const place = (id: string, target: string | null) => {
     if (target !== null && !canMove(tree, id, target)) return;
     if (tree.nodes[id] && tree.nodes[id].parent === target) return;
     change(withPlacement(paper.blocks, logicRef.current, id, target));
-    // The first branch, or one started from the list, is the one to look at.
-    if (target === null && (tree.order.length === 0 || !tree.nodes[id])) goTo(id);
+  };
+
+  /** Makes block `id` a branch beside the one on screen (at the top when there is none yet), and shows it. */
+  const startBranch = (id: string) => {
+    const parent = shown ? tree.nodes[shown].parent : null;
+    if (parent !== null && !canMove(tree, id, parent)) return;
+    place(id, parent);
+    goTo(id);
   };
 
   /** Takes block `id` out of the tree; the blocks under it go up to where it was. */
@@ -366,7 +401,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
         <span className="shrink-0 whitespace-nowrap text-xs text-gray-400">
           {{ saved: t('已保存'), changed: t('有未保存的修改'), saving: t('保存中…'), failed: t('没有保存') }[status]}
         </span>
-        <span className="hidden min-w-0 truncate text-xs text-gray-400 xl:block">{t('拖动块左边的把手：拖到另一块上就挂到它下面，拖到虚线框新建一个分支，拖回左边就从树里拿掉。')}</span>
+        <span className="hidden min-w-0 truncate text-xs text-gray-400 xl:block">{t('拖动块左边的把手：拖到一块上就挂到它下面，拖到块与块之间就和它们同一层，拖回左边就从树里拿掉。')}</span>
         <span className="ml-auto flex items-center gap-1">
           {inTreeCount > 0 && (
             <button type="button" onClick={() => setMap((on) => !on)} aria-pressed={map} title={t('地图')} className={`${bar} ${map ? 'text-violet-700' : ''}`}>
@@ -413,7 +448,9 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
           const id = blockOf(String(active.id));
           const where = over ? String(over.id) : null;
           if (where === LIST) remove(id);
-          else if (where === BRANCH) place(id, null);
+          else if (where === BRANCH) startBranch(id);
+          else if (where === INTO && shown) place(id, shown);
+          else if (where?.startsWith('gap:')) place(id, tree.nodes[blockOf(where)]?.parent ?? null);
           else if (where?.startsWith('node:')) place(id, blockOf(where));
         }}
         onDragCancel={() => setDragging(null)}
@@ -476,28 +513,51 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                     <div className="space-y-8">
                       <Node paperId={paper.id} id={shown} tree={tree} blocks={blocks} labels={labels} blocked={blocked} dragging={dragging} depth={0} onFocus={goTo} onRemove={remove} />
                     </div>
+                    {/* Below the branch, a block goes into it: under its first block, beside the others. */}
+                    <DropArea id={INTO} className="mt-6" disabled={!!blocked?.has(shown)}>
+                      {(over) => (
+                        <div
+                          className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-sm transition-colors duration-150 ${
+                            over ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-black/[0.08] text-gray-400'
+                          }`}
+                        >
+                          <CornerDownRight size={16} />
+                          {t('拖到这里，放进「{name}」这一支', { name: title(shown) })}
+                        </div>
+                      )}
+                    </DropArea>
                   </>
                 ) : (
-                  <div className="py-10 text-center">
-                    <Network size={28} className="mx-auto text-violet-400" />
-                    <p className="mt-3 text-[15px] font-medium text-gray-800">{t('还没有分支')}</p>
-                    <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">{t('把左边的方法拖到下面的虚线框里，它就是一个分支；再把实验拖到这个方法上，就挂在它下面。')}</p>
-                  </div>
+                  // With no tree yet, the first block dropped starts it.
+                  <DropArea id={BRANCH} className="pt-6">
+                    {(over) => (
+                      <div className={`rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors duration-150 ${over ? 'border-violet-400 bg-violet-50' : 'border-black/[0.08]'}`}>
+                        <Network size={28} className="mx-auto text-violet-400" />
+                        <p className="mt-3 text-[15px] font-medium text-gray-800">{t('把左边的块拖到这里，开始第一个分支')}</p>
+                        <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">{t('先放一个方法，再把实验拖到这个方法上，就挂在它下面。')}</p>
+                      </div>
+                    )}
+                  </DropArea>
                 )}
-                {/* A block dropped here starts a branch of its own. */}
-                <DropArea
-                  id={BRANCH}
-                  className="mt-10"
-                >
-                  {(over) => (
-                    <div className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-sm transition-colors duration-150 ${over ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-black/[0.08] text-gray-400'}`}>
-                      <Plus size={16} />
-                      {t('拖到这里，新建一个分支')}
-                    </div>
-                  )}
-                </DropArea>
               </div>
             </div>
+
+            {/* While a block is dragged, a box for a branch of its own beside this one, over the top of the page. */}
+            {dragging && shown && (
+              <DropArea id={BRANCH} className="absolute inset-x-0 top-3 z-30 mx-auto w-fit max-w-[90%]">
+                {(over) => (
+                  <div
+                    className={`flex items-center gap-2 rounded-xl border-2 border-dashed px-4 py-2.5 text-sm shadow-sm transition-colors duration-150 ${
+                      over ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-violet-200 bg-white/95 text-gray-500'
+                    }`}
+                  >
+                    <Plus size={15} className="shrink-0" />
+                    {t('拖到这里，新建一个分支')}
+                    <span className="truncate text-xs text-gray-400">{t('和「{name}」同一层', { name: title(shown) })}</span>
+                  </div>
+                )}
+              </DropArea>
+            )}
 
             {/* The branches beside this one. */}
             <button type="button" onClick={() => goTo(moves?.left ?? null)} disabled={!moves?.left} aria-label={t('左边：{name}', { name: title(moves?.left) })} title={t('左边：{name}', { name: title(moves?.left) })} className={`${side} left-3`}>

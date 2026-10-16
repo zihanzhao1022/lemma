@@ -446,25 +446,23 @@ export const { t, useT, table } = phrases({
   '放开，从树里拿掉': { ja: '放すとツリーから外れます', en: 'Drop to take it out of the tree' },
 
   // The logic read and built like the block view
-  '拖到中间的块上，放进逻辑；拖到下面的虚线框，新建一个分支': {
-    ja: '中央のブロックの上にドラッグすると論理構成に入り、下の点線の枠にドラッグすると新しい枝になります',
-    en: 'Drag onto a block in the middle to put it in the logic, or onto the dashed box to start a branch',
-  },
   '拖到另一块上，挂到它下面；拖回左边，从树里拿掉': { ja: '別のブロックの上にドラッグするとその下に入り、左に戻すとツリーから外れます', en: 'Drag onto another block to put it under that one; back to the left to take it out of the tree' },
   拖动这一块: { ja: 'このブロックをドラッグ', en: 'Drag this block' },
   只看这一支: { ja: 'この枝だけ見る', en: 'Show only this branch' },
   '从树里拿掉，下面的块上移一层': { ja: 'ツリーから外します。下のブロックは 1 段上がります', en: 'Take it out of the tree; the blocks under it move up a level' },
   拿出树: { ja: 'ツリーから外す', en: 'Take out' },
   '放到「{name}」下面': { ja: '「{name}」の下に入れる', en: 'Put under “{name}”' },
-  '拖动块左边的把手：拖到另一块上就挂到它下面，拖到虚线框新建一个分支，拖回左边就从树里拿掉。': {
-    ja: 'ブロック左の取っ手をドラッグします。別のブロックの上に置くとその下に入り、点線の枠に置くと新しい枝になり、左に戻すとツリーから外れます。',
-    en: 'Drag a block by the handle on its left: onto another block to put it under that one, onto the dashed box to start a branch, back to the left to take it out of the tree.',
-  },
   '分支 {i} / {n}': { ja: '枝 {i} / {n}', en: 'Branch {i} of {n}' },
-  还没有分支: { ja: 'まだ枝がありません', en: 'No branches yet' },
-  '把左边的方法拖到下面的虚线框里，它就是一个分支；再把实验拖到这个方法上，就挂在它下面。': {
-    ja: '左の手法を下の点線の枠にドラッグすると、それが 1 つの枝になります。実験をその手法の上にドラッグすると、その下に入ります。',
-    en: 'Drag a method from the left into the dashed box below to make it a branch; then drag each experiment onto that method to put it under it.',
-  },
   '拖到这里，新建一个分支': { ja: 'ここにドラッグして新しい枝を作る', en: 'Drop here to start a branch' },
+
+  // Dropping blocks in the branch view
+  '拖到这里，放进「{name}」这一支': { ja: 'ここにドラッグすると「{name}」の枝に入ります', en: 'Drop here to put it in the “{name}” branch' },
+  '和「{name}」同一层': { ja: '「{name}」と同じ階層', en: 'beside “{name}”' },
+  '把左边的块拖到这里，开始第一个分支': { ja: '左のブロックをここにドラッグして、最初の枝を作ります', en: 'Drag a block here from the left to start the first branch' },
+  '先放一个方法，再把实验拖到这个方法上，就挂在它下面。': { ja: 'まず手法を 1 つ置き、実験をその手法の上にドラッグすると、その下に入ります。', en: 'Put a method in first, then drag each experiment onto it to put it under that method.' },
+  '拖动块左边的把手：拖到一块上就挂到它下面，拖到块与块之间就和它们同一层，拖回左边就从树里拿掉。': {
+    ja: 'ブロック左の取っ手をドラッグします。ブロックの上に置くとその下に入り、ブロックの間に置くとそれらと同じ階層になり、左に戻すとツリーから外れます。',
+    en: 'Drag a block by the handle on its left: onto a block to put it under that one, between blocks to put it beside them, back to the left to take it out of the tree.',
+  },
+  '拖到中间的块上就挂到它下面，拖到页面底部就放进这一支': { ja: '中央のブロックの上に置くとその下に入り、ページの下に置くとこの枝に入ります', en: 'Drop on a block in the middle to put it under that block, or at the bottom of the page to put it in this branch' },
 });
