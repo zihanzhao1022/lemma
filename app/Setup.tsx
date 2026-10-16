@@ -6,8 +6,8 @@ import { NAME } from './brand';
 import { Account } from './accounts';
 import Avatar from './Avatar';
 import { startInstall } from './github/auth';
-import { SUGGESTED_REPO } from './github/config';
-import { LemmaRepo, RepoStatus, initializeRepo, newRepoUrl, reachableRepos, rememberRepo, repoLabel, repoStatus, validRepoName } from './github/repo';
+import { GITHUB_APP, SUGGESTED_REPO } from './github/config';
+import { LemmaRepo, RepoStatus, initializeRepo, newRepoUrl, reachableRepos, rememberRepo, repoLabel, repoStatuses, validRepoName } from './github/repo';
 import { authorizedFetch } from './github/session';
 
 /** The name being created on GitHub, kept across the trip there and back. */
@@ -37,7 +37,8 @@ interface Found {
 
 type Stage =
   | { kind: 'looking' }
-  | { kind: 'form'; found: Found[] }
+  /** `everything`: Lemma can reach all the account's repositories, which it should not. */
+  | { kind: 'form'; found: Found[]; everything: boolean }
   /** Created on GitHub's form, in another tab; Lemma still to be installed on it. */
   | { kind: 'confirm'; name: string; missing: boolean }
   | { kind: 'starting'; repo: LemmaRepo }
@@ -133,16 +134,20 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
     setProblem(null);
     try {
       const fetchImpl = authorizedFetch();
-      const repos = await reachableRepos(account.login, fetchImpl);
-      const found = await Promise.all(repos.map(async (repo): Promise<Found> => ({ repo, status: await repoStatus(repo, fetchImpl) })));
+      const { repos, everything } = await reachableRepos(account.login, fetchImpl);
       const wanted = newRepoName();
+      // With every repository open to Lemma (perhaps hundreds), only the one just created and those named like
+      // Lemma's are looked at.
+      const likely = (repo: LemmaRepo) => repo.name.toLowerCase() === wanted?.toLowerCase() || /lemma/i.test(repo.name);
+      const found = await repoStatuses(everything ? repos.filter(likely) : repos, fetchImpl);
       const created = wanted ? found.find((item) => item.repo.name.toLowerCase() === wanted.toLowerCase()) : undefined;
-      if (created && created.status !== 'other' && created.status !== 'missing') {
+      const lemma = found.filter((item) => item.status === 'lemma');
+      // Going on by itself only when Lemma reaches no more than it should; otherwise the page says so first.
+      if (!everything && created && created.status !== 'other' && created.status !== 'missing') {
         await start(created);
         return;
       }
-      const lemma = found.filter((item) => item.status === 'lemma');
-      if (!wanted && lemma.length === 1) {
+      if (!everything && !wanted && lemma.length === 1) {
         connect(lemma[0].repo);
         return;
       }
@@ -151,7 +156,7 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
         setStage({ kind: 'confirm', name: wanted, missing: true });
         return;
       }
-      setStage({ kind: 'form', found });
+      setStage({ kind: 'form', found, everything });
     } catch {
       setProblem(() => t('没能读到你在 GitHub 上的仓库，请稍后重试'));
       setStage({ kind: 'failed' });
@@ -247,7 +252,7 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
           type="button"
           onClick={() => {
             setNewRepoName(null);
-            setStage({ kind: 'form', found: [] });
+            setStage({ kind: 'form', found: [], everything: false });
           }}
           className="mt-12 text-sm text-gray-500 hover:text-gray-800"
         >
@@ -257,13 +262,22 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
     );
   }
 
-  const usable = stage.found.filter((item) => item.status !== 'missing');
+  // Repositories holding other files are listed only when they were chosen for Lemma on purpose.
+  const usable = stage.found.filter((item) => item.status !== 'missing' && !(stage.everything && item.status === 'other'));
   return (
     <div className="mx-auto max-w-2xl py-14">
       <h1 className="galley-display text-[clamp(1.75rem,1.2rem+1.6vw,2.25rem)] text-[#1d1d1f]">{t('新建一个仓库存放论文')}</h1>
       <p className="galley-prose mt-3 text-[15px] leading-relaxed text-gray-600">
         {t('论文、编译好的 PDF 和附件都存在你 GitHub 账号下的这个仓库里，以后新建的论文也默认放在这里。{name} 只读写这一个仓库。', { name: NAME })}
       </p>
+      {stage.everything && (
+        <p role="note" className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900">
+          {t('{name} 现在能读写你所有的仓库。建议在 GitHub 上改成 Only select repositories，只勾选存论文的那个。', { name: NAME })}{' '}
+          <a href={`https://github.com/apps/${encodeURIComponent(GITHUB_APP.slug)}/installations/new`} className="font-medium underline underline-offset-2">
+            {t('去 GitHub 修改')}
+          </a>
+        </p>
+      )}
 
       <form
         className="mt-10"

@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { Toast } from '../components/EditMode';
-import { PhraseError, useMessage } from '../lib/i18n';
+import { N_, PhraseError, useMessage } from '../lib/i18n';
 import { MOCK_MODE } from '../lib/session';
-import { useT } from '../lib/phrases/app';
+import { t as translate, useT } from '../lib/phrases/app';
 import { Account, connectRepo, connectedRepo, signIn, signOut as mockSignOut, signedIn } from './accounts';
 import { AccountProvider, useAccount } from './AccountContext';
 import AppShell, { SignInDialog } from './AppShell';
@@ -29,6 +29,8 @@ const Notices: React.FC = () => {
 const callback: Callback | null = MOCK_MODE ? null : takeCallback();
 const signingIn: Promise<GitHubSession | null> | null = callback ? finishSignIn(callback) : null;
 
+const SIGN_IN_FAILED = N_('登录失败，请重新登录');
+
 const accountOf = (session: GitHubSession): Account => ({ login: session.login, id: session.id, name: session.name, avatarUrl: session.avatarUrl });
 
 /** Signing in with GitHub: the account, then its repository (Setup), then its papers. */
@@ -38,27 +40,35 @@ const GitHubPages: React.FC = () => {
   const [session, setSessionState] = useState(currentSession);
   const [waiting, setWaiting] = useState(signingIn !== null);
   const [problem, setProblem] = useMessage();
-  const [repo, setRepo] = useState<LemmaRepo | null>(() => (session ? rememberedRepo(session.login) : null));
+  // The repository chosen in this tab, for the account it was chosen for; otherwise the one this browser remembers.
+  const [chosen, setChosen] = useState<{ login: string; repo: LemmaRepo | null } | null>(null);
   const login = session?.login;
+  const repo = useMemo(() => (login ? (chosen?.login === login ? chosen.repo : rememberedRepo(login)) : null), [login, chosen]);
+  // The same object until the account itself changes: a renewed token must not reload the papers.
+  const account = useMemo(
+    () => (session ? accountOf(session) : null),
+    [session?.login, session?.id, session?.name, session?.avatarUrl],
+  );
 
   useEffect(() => onSession(setSessionState), []);
   useEffect(() => {
     if (!signingIn) {
       // A token that ran out while the page was closed is renewed before anything is read.
       void freshSession();
-      return;
+      return undefined;
     }
+    let current = true;
     signingIn
-      .then((next) => {
-        if (next) setRepo(rememberedRepo(next.login));
+      .catch((error: unknown) => {
+        if (current) setProblem(() => (error instanceof PhraseError ? error.message : translate(SIGN_IN_FAILED)));
       })
-      .catch((error: unknown) => setProblem(() => (error instanceof PhraseError ? error.message : t('登录失败，请重新登录'))))
-      .finally(() => setWaiting(false));
-  }, [t, setProblem]);
-  // Another account, or none: its repository is looked up again.
-  useEffect(() => {
-    setRepo(login ? rememberedRepo(login) : null);
-  }, [login]);
+      .finally(() => {
+        if (current) setWaiting(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [setProblem]);
   // The repository this browser remembers may have been deleted, or Lemma uninstalled from it.
   useEffect(() => {
     if (!login || !repo) return undefined;
@@ -67,7 +77,7 @@ const GitHubPages: React.FC = () => {
       .then((status) => {
         if (!current || status === 'lemma') return;
         rememberRepo(login, null);
-        setRepo(null);
+        setChosen({ login, repo: null });
       })
       .catch(() => undefined);
     return () => {
@@ -75,7 +85,6 @@ const GitHubPages: React.FC = () => {
     };
   }, [login, repo]);
 
-  const account = session ? accountOf(session) : null;
   const begin = () => {
     if (!appConfigured()) {
       setProblem(() => t('登录服务还没有设置好'));
@@ -114,7 +123,7 @@ const GitHubPages: React.FC = () => {
               <Setup
                 account={account}
                 onConnect={(next) => {
-                  setRepo(next);
+                  if (login) setChosen({ login, repo: next });
                   navigate('/');
                 }}
               />

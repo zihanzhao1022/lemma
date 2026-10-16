@@ -367,4 +367,9 @@ export const { t, useT, table } = phrases({
   '空仓库，可以用': { ja: '空のリポジトリ（使えます）', en: 'Empty, ready to use' },
   '里面已经有别的文件': { ja: 'ほかのファイルが入っています', en: 'Has other files' },
   '使用': { ja: '使う', en: 'Use' },
+  '{name} 现在能读写你所有的仓库。建议在 GitHub 上改成 Only select repositories，只勾选存论文的那个。': {
+    ja: '{name} は今、あなたのすべてのリポジトリを読み書きできます。GitHub で Only select repositories に変えて、論文用のリポジトリだけにチェックを入れることをおすすめします。',
+    en: '{name} can now read and write all your repositories. We suggest changing it on GitHub to Only select repositories, with just the one for your papers ticked.',
+  },
+  '去 GitHub 修改': { ja: 'GitHub で変更する', en: 'Change it on GitHub' },
 });

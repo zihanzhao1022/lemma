@@ -31,6 +31,7 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
 
 const keepCookie = (token: string, seconds: number): string => `${REFRESH_COOKIE}=${token}; Path=/api; HttpOnly; Secure; SameSite=Strict; Max-Age=${seconds}`;
+// Only signing out clears the cookie: a failed renewal must not wipe the newer one another tab may just have got.
 const CLEARED_COOKIE = `${REFRESH_COOKIE}=; Path=/api; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 
 /** The site's own pages only: the refresh cookie must never answer another site. */
@@ -68,10 +69,19 @@ async function askGitHub(params: Record<string, string>): Promise<TokenAnswer> {
   return (await res.json().catch(() => ({ error: 'bad_answer' }))) as TokenAnswer;
 }
 
-/** The session for a new access token, with its refresh token kept in the cookie. */
+/**
+ * The session for a new access token, with its refresh token kept in the cookie, also when looking up the
+ * account fails: GitHub has already retired the old refresh token by then.
+ */
 async function signedIn(answer: TokenAnswer, accessToken: string): Promise<Response> {
-  const res = await fetch('https://api.github.com/user', { headers: githubHeaders(`Bearer ${accessToken}`) });
-  if (!res.ok) return json({ error: 'user_lookup_failed' }, 502);
+  const cookie: Record<string, string> = answer.refresh_token ? { 'Set-Cookie': keepCookie(answer.refresh_token, answer.refresh_token_expires_in ?? REFRESH_SECONDS) } : {};
+  let res: Response;
+  try {
+    res = await fetch('https://api.github.com/user', { headers: githubHeaders(`Bearer ${accessToken}`) });
+  } catch {
+    return json({ error: 'github_unreachable' }, 502, cookie);
+  }
+  if (!res.ok) return json({ error: 'user_lookup_failed' }, 502, cookie);
   const user = (await res.json()) as { login: string; id: number; name?: string | null; avatar_url?: string };
   const body: SignedIn = {
     token: accessToken,
@@ -81,7 +91,7 @@ async function signedIn(answer: TokenAnswer, accessToken: string): Promise<Respo
     name: user.name || user.login,
     avatarUrl: user.avatar_url ?? '',
   };
-  return json(body, 200, answer.refresh_token ? { 'Set-Cookie': keepCookie(answer.refresh_token, answer.refresh_token_expires_in ?? REFRESH_SECONDS) } : {});
+  return json(body, 200, cookie);
 }
 
 const configured = (env: Env): env is Env & { GITHUB_CLIENT_SECRET: string } => Boolean(env.GITHUB_CLIENT_SECRET && GITHUB_APP.clientId);
@@ -126,8 +136,9 @@ export async function handleRefresh(request: Request, env: Env): Promise<Respons
       grant_type: 'refresh_token',
       refresh_token: refresh,
     });
-    // An expired or revoked refresh token: the browser has to sign in again.
-    if (!answer.access_token) return json({ error: answer.error ?? 'refresh_failed' }, 401, { 'Set-Cookie': CLEARED_COOKIE });
+    // Only GitHub's word that the refresh token is dead signs the browser out; anything else (an outage, a rate
+    // limit) may pass, and the browser keeps its session.
+    if (!answer.access_token) return json({ error: answer.error ?? 'refresh_failed' }, answer.error === 'bad_refresh_token' ? 401 : 502);
     return await signedIn(answer, answer.access_token);
   } catch {
     return json({ error: 'github_unreachable' }, 502);

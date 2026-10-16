@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GITHUB_APP } from './config';
-import { LemmaRepo, initializeRepo, newRepoUrl, reachableRepos, repoStatus, validRepoName } from './repo';
-import { GitHubSession, authorizedFetch, currentSession, setSession } from './session';
+import { LemmaRepo, initializeRepo, newRepoUrl, reachableRepos, repoStatus, repoStatuses, validRepoName } from './repo';
+import { GitHubSession, authorizedFetch, currentSession, renewSession, setSession, signedOut } from './session';
 
 const session = (token: string, inMs: number): GitHubSession => ({ token, expiresAt: Date.now() + inMs, login: 'ada-example', id: 42, name: 'Ada Example', avatarUrl: '' });
 
@@ -69,6 +69,52 @@ describe('requests to GitHub', () => {
   });
 });
 
+describe('sessions across tabs and sign-outs', () => {
+  /** localStorage as tabs share it: what another tab writes is there to read. */
+  const shared = new Map<string, string>();
+  beforeEach(() => {
+    shared.clear();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => shared.get(key) ?? null,
+      setItem: (key: string, value: string) => shared.set(key, value),
+      removeItem: (key: string) => shared.delete(key),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('drop a renewal that ends after signing out', async () => {
+    setSession(session('ghu_old', 10 * 1000));
+    let answer: (res: Response) => void = () => undefined;
+    const fetchImpl = (() => new Promise<Response>((resolve) => (answer = resolve))) as typeof fetch;
+    const renewing = renewSession(fetchImpl);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    signedOut();
+    answer(ok(session('ghu_new', 8 * 60 * 60 * 1000)));
+    await renewing;
+    expect(currentSession()).toBeNull();
+  });
+
+  it("take the token another tab has just got rather than signing out", async () => {
+    setSession(session('ghu_old', 10 * 1000));
+    const fetchImpl = (async () => {
+      // Meanwhile the other tab renewed, with the refresh token this request also carried.
+      shared.set('lemma-session', JSON.stringify(session('ghu_other_tab', 8 * 60 * 60 * 1000)));
+      return new Response('{}', { status: 401 });
+    }) as typeof fetch;
+    expect((await renewSession(fetchImpl))?.token).toBe('ghu_other_tab');
+    expect(currentSession()?.token).toBe('ghu_other_tab');
+  });
+
+  it("never resend a request with another account's token", async () => {
+    setSession(session('ghu_ada', 60 * 60 * 1000));
+    const { sent, fetchImpl } = fake((url) =>
+      url === '/api/refresh' ? ok({ ...session('ghu_bo', 8 * 60 * 60 * 1000), login: 'bo-sample', id: 7 }) : new Response('{}', { status: 401 }),
+    );
+    expect((await authorizedFetch(fetchImpl)('https://api.github.com/repos/ada-example/lemma-papers')).status).toBe(401);
+    expect(sent.filter((item) => item.url.startsWith('https://api.github.com')).map((item) => item.authorization)).toEqual(['Bearer ghu_ada']);
+  });
+});
+
 describe("the account's repository", () => {
   beforeEach(() => {
     GITHUB_APP.slug = 'lemmatex';
@@ -85,16 +131,46 @@ describe("the account's repository", () => {
       if (url.endsWith('/user/installations?per_page=100')) {
         return ok({
           installations: [
-            { id: 1, app_slug: 'lemmatex', account: { login: 'Ada-Example' } },
+            { id: 1, app_slug: 'lemmatex', account: { login: 'Ada-Example' }, repository_selection: 'selected' },
             { id: 2, app_slug: 'another-app', account: { login: 'ada-example' } },
             { id: 3, app_slug: 'lemmatex', account: { login: 'some-org' } },
           ],
         });
       }
-      if (url.endsWith('/user/installations/1/repositories?per_page=100')) return ok({ repositories: [answer('lemma-papers'), answer('fork', 'someone')] });
+      if (url.endsWith('/user/installations/1/repositories?per_page=100&page=1')) return ok({ repositories: [answer('lemma-papers'), answer('fork', 'someone')] });
       throw new Error(`unexpected ${url}`);
     });
-    expect(await reachableRepos('ada-example', fetchImpl)).toEqual([repo]);
+    expect(await reachableRepos('ada-example', fetchImpl)).toEqual({ repos: [repo], everything: false });
+  });
+
+  it('is found among hundreds, page by page, and says when Lemma can reach every repository', async () => {
+    const many = Array.from({ length: 130 }, (_, index) => answer(`repo-${index}`));
+    const { fetchImpl } = fake((url) => {
+      if (url.includes('/user/installations?')) return ok({ installations: [{ id: 1, app_slug: 'lemmatex', account: { login: 'ada-example' }, repository_selection: 'all' }] });
+      const page = Number(new URL(url).searchParams.get('page'));
+      return ok({ repositories: many.slice((page - 1) * 100, page * 100) });
+    });
+    const reachable = await reachableRepos('ada-example', fetchImpl);
+    expect(reachable.repos).toHaveLength(130);
+    expect(reachable.everything).toBe(true);
+  });
+
+  it('are looked at a few at a time, a failure counting as other files', async () => {
+    let open = 0;
+    let most = 0;
+    const repos = Array.from({ length: 9 }, (_, index) => ({ ...repo, name: `repo-${index}` }));
+    const { fetchImpl } = fake(() => new Response('{}', { status: 500 }));
+    const slow = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      open += 1;
+      most = Math.max(most, open);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      open -= 1;
+      return fetchImpl(input, init);
+    }) as typeof fetch;
+    const found = await repoStatuses(repos, slow, 3);
+    expect(most).toBeLessThanOrEqual(3);
+    expect(found.map((item) => item.status)).toEqual(Array(9).fill('other'));
+    expect(found.map((item) => item.repo.name)).toEqual(repos.map((item) => item.name));
   });
 
   it("is told apart: Lemma's, empty, fresh from GitHub's form, someone else's files, or out of reach", async () => {

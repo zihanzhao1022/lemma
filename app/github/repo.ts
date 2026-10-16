@@ -53,20 +53,34 @@ interface RepoAnswer {
 
 const fromAnswer = (repo: RepoAnswer): LemmaRepo => ({ owner: repo.owner.login, name: repo.name, branch: repo.default_branch, private: repo.private });
 
+export interface Reachable {
+  repos: LemmaRepo[];
+  /** Lemma was installed on all of the account's repositories, not just the one for its papers. */
+  everything: boolean;
+}
+
+const PAGE = 100;
+
 /** The account's own repositories that Lemma's App was installed on. */
-export async function reachableRepos(login: string, fetchImpl: typeof fetch): Promise<LemmaRepo[]> {
-  const installations = await getJson<{ installations: { id: number; app_slug: string; account: { login: string } }[] }>(fetchImpl, '/user/installations?per_page=100');
+export async function reachableRepos(login: string, fetchImpl: typeof fetch): Promise<Reachable> {
+  const installations = await getJson<{ installations: { id: number; app_slug: string; account: { login: string }; repository_selection?: string }[] }>(
+    fetchImpl,
+    `/user/installations?per_page=${PAGE}`,
+  );
   if (!installations.body) throw new Error(`installations: ${installations.status}`);
   const mine = installations.body.installations.filter(
     (item) => item.app_slug === GITHUB_APP.slug && item.account.login.toLowerCase() === login.toLowerCase(),
   );
   const repos: LemmaRepo[] = [];
   for (const installation of mine) {
-    const listed = await getJson<{ repositories: RepoAnswer[] }>(fetchImpl, `/user/installations/${installation.id}/repositories?per_page=100`);
-    if (!listed.body) throw new Error(`repositories: ${listed.status}`);
-    repos.push(...listed.body.repositories.filter((repo) => repo.owner.login.toLowerCase() === login.toLowerCase()).map(fromAnswer));
+    for (let page = 1; ; page += 1) {
+      const listed = await getJson<{ repositories: RepoAnswer[] }>(fetchImpl, `/user/installations/${installation.id}/repositories?per_page=${PAGE}&page=${page}`);
+      if (!listed.body) throw new Error(`repositories: ${listed.status}`);
+      repos.push(...listed.body.repositories.filter((repo) => repo.owner.login.toLowerCase() === login.toLowerCase()).map(fromAnswer));
+      if (listed.body.repositories.length < PAGE) break;
+    }
   }
-  return repos;
+  return { repos, everything: mine.some((item) => item.repository_selection === 'all') };
 }
 
 /** Whether a repository is Lemma's, empty, or holds other files. */
@@ -81,6 +95,25 @@ export async function repoStatus(repo: LemmaRepo, fetchImpl: typeof fetch): Prom
   if (!commits.ok) throw new Error(`commits: ${commits.status}`);
   const root = await getJson<{ name: string }[]>(fetchImpl, `/repos/${repo.owner}/${repo.name}/contents/`);
   return root.body?.every((entry) => STARTER_FILES.test(entry.name)) ? 'fresh' : 'other';
+}
+
+/**
+ * Each repository's status, a few at a time (GitHub limits requests made at once); one that cannot be read
+ * counts as holding other files.
+ */
+export async function repoStatuses(repos: LemmaRepo[], fetchImpl: typeof fetch, atOnce = 4): Promise<{ repo: LemmaRepo; status: RepoStatus }[]> {
+  const found: { repo: LemmaRepo; status: RepoStatus }[] = [];
+  let next = 0;
+  const work = async () => {
+    while (next < repos.length) {
+      const index = next;
+      next += 1;
+      const status = await repoStatus(repos[index], fetchImpl).catch((): RepoStatus => 'other');
+      found[index] = { repo: repos[index], status };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(atOnce, repos.length) }, work));
+  return found;
 }
 
 const readme = (site: string): string => `# Papers in Lemma

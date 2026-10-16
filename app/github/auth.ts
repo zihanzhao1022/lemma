@@ -8,7 +8,7 @@ import { PhraseError } from '../../lib/i18n';
 import { t } from '../../lib/phrases/app';
 import { safeReturnHash } from '../../lib/session';
 import { GITHUB_APP } from './config';
-import { GitHubSession, currentSession, setSession } from './session';
+import { GitHubSession, currentSession, setSession, signedOut } from './session';
 
 /** Kept in sessionStorage while the browser is at GitHub. */
 interface Pending {
@@ -78,12 +78,14 @@ export function takeCallback(): Callback | null {
 export async function finishSignIn(callback: Callback, fetchImpl: typeof fetch = (input, init) => fetch(input, init)): Promise<GitHubSession | null> {
   const pending = readPending();
   writePending(null);
-  if (callback.error) {
+  const ours = !!pending && callback.state === pending.state;
+  // GitHub's error codes only, and only for what this browser asked for: a link's own words never show here.
+  if (callback.error && ours && /^[a-z_]{1,64}$/.test(callback.error)) {
     const error = callback.error;
     throw new PhraseError(() => (error === 'access_denied' ? t('已取消登录') : t('GitHub 登录失败（{error}）', { error })));
   }
   if (!callback.code) return currentSession();
-  if (!pending || callback.state !== pending.state) {
+  if (!ours) {
     // An installation made on GitHub's own pages also signs in, but this browser never asked for that code.
     if (callback.installed) return currentSession();
     throw new PhraseError(() => t('登录校验失败，请重新登录'));
@@ -105,10 +107,10 @@ export async function finishSignIn(callback: Callback, fetchImpl: typeof fetch =
   return session;
 }
 
-/** Signs out here and at GitHub: the token stops working, and so does staying signed in. */
+/** Signs out here, in other tabs and at GitHub: the token stops working, and so does staying signed in. */
 export async function signOut(fetchImpl: typeof fetch = (input, init) => fetch(input, init)): Promise<void> {
   const session = currentSession();
-  setSession(null);
+  signedOut();
   try {
     await fetchImpl('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: session?.token }) });
   } catch {

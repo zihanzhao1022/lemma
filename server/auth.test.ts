@@ -93,13 +93,30 @@ describe('staying signed in', () => {
     expect(res.headers.get('Set-Cookie')).toContain('lemma_refresh=ghr_new');
   });
 
-  it('signs the browser out when there is no cookie or GitHub refuses it', async () => {
+  it('signs the browser out when there is no cookie or GitHub says the refresh token is dead, and leaves the cookie', async () => {
     fakeGitHub({ error: 'bad_refresh_token' });
     expect((await handleRefresh(post('/api/refresh', {}), env)).status).toBe(401);
     const refused = await handleRefresh(post('/api/refresh', {}, { Cookie: 'lemma_refresh=ghr_expired' }), env);
     expect(refused.status).toBe(401);
-    expect(refused.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    // Another tab may have stored a newer refresh token in the meantime.
+    expect(refused.headers.get('Set-Cookie')).toBeNull();
     expect((await handleRefresh(post('/api/refresh', {}, { Origin: 'https://evil.example', Cookie: 'lemma_refresh=x' }), env)).status).toBe(403);
+  });
+
+  it('keeps the browser signed in through a GitHub outage', async () => {
+    vi.stubGlobal('fetch', async () => new Response('<html>Unicorn!</html>', { status: 503 }));
+    expect((await handleRefresh(post('/api/refresh', {}, { Cookie: 'lemma_refresh=ghr_ok' }), env)).status).toBe(502);
+  });
+
+  it('keeps the new refresh token even when looking up the account fails', async () => {
+    vi.stubGlobal('fetch', async (input: string) =>
+      input === 'https://github.com/login/oauth/access_token'
+        ? new Response(JSON.stringify({ access_token: 'ghu_new', refresh_token: 'ghr_new' }))
+        : new Response('{}', { status: 500 }),
+    );
+    const res = await handleRefresh(post('/api/refresh', {}, { Cookie: 'lemma_refresh=ghr_old' }), env);
+    expect(res.status).toBe(502);
+    expect(res.headers.get('Set-Cookie')).toContain('lemma_refresh=ghr_new');
   });
 });
 
