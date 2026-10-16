@@ -198,18 +198,22 @@ function connectMock(session: Session, onChange: (state: PresenceState) => void)
   };
 }
 
-/** Presence for the signed-in owner or collaborator (see components/presence.ts). */
-export function usePresence(session: Session): PresenceValue {
+/**
+ * Presence for the signed-in owner or collaborator (see components/presence.ts). With `enabled` false it
+ * connects to nothing: Lemma's GitHub accounts have no comments or readers yet.
+ */
+export function usePresence(session: Session, enabled = true): PresenceValue {
   const [state, setState] = useState<PresenceState>({ viewers: [] });
   const connection = useRef<Connection | null>(null);
   useEffect(() => {
+    if (!enabled) return undefined;
     const created = (MOCK_MODE ? connectMock : connect)(session, setState);
     connection.current = created;
     return () => {
       created.close();
       connection.current = null;
     };
-  }, [session]);
+  }, [session, enabled]);
   const setPaper = useCallback((paperId: string | null) => connection.current?.setPaper(paperId), []);
   const setBlock = useCallback((blockId: string | null) => connection.current?.setBlock(blockId), []);
   const resolveRequest = useCallback((login: string) => connection.current?.resolve(login), []);

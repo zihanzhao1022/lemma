@@ -1,8 +1,8 @@
 # Lemma
 
-实验结果管理 + 科研写作一体化平台，而且很方便展示。现在是原型阶段。
+实验结果管理 + 科研写作一体化平台，而且很方便展示。
 
-A platform for managing experiment results and writing the paper in one place, made to present well. This is a prototype.
+A platform for managing experiment results and writing the paper in one place, made to present well.
 
 ## 它能做什么
 
@@ -33,7 +33,7 @@ npm run build   # 类型检查并构建到 dist/
 npm run preview # 预览构建结果
 ```
 
-**原型说明**：登录用的是三个虚构账号（`zihanzhao1022`、`alice`、`bob`），数据都存在浏览器里（localStorage），清掉网站数据就回到初始状态。第一次打开会放进几篇虚构的示例论文。`index.html` 里的 `window.__LEMMA_PROTOTYPE__` 开启这个模式（见 `lib/session.ts`）。
+**不连 GitHub 的开发模式**：`npm run dev:mock` 用三个虚构账号（`zihanzhao1022`、`alice`、`bob`），数据都存在浏览器里（localStorage），清掉网站数据就回到初始状态，第一次打开会放进几篇虚构的示例论文（见 `.env.mock` 和 `lib/session.ts`）。
 
 ## 目录
 
@@ -53,17 +53,25 @@ npm run preview # 预览构建结果
 
 ## 部署
 
-静态站点，任何静态托管都可以。展示页是 Cloudflare 上的 Worker `lemmatex`（只放静态文件），连着这个仓库，每次推送到 main 自动构建和发布：
+展示页是 Cloudflare Pages 项目 `lemmatex`（https://lemmatex.pages.dev ），连着这个仓库，每次推送到 main 自动构建和发布：
 
-- 构建命令：`npm run build`
-- 部署命令：`npx wrangler deploy`，按 `wrangler.jsonc` 把 `dist/` 发布出去（Worker 名必须和这里的 `name` 一致）
-- Node 版本：读取 `.node-version`（22）
+- 构建命令：`npm run build`，输出目录 `dist`，Node 版本读取 `.node-version`（22）
+- `functions/api/` 是登录用的三个接口（Pages Functions，和网站同一个域名）：`/api/token` 用 GitHub 返回的 code 换令牌，`/api/refresh` 用只有这几个接口能读的 Cookie 续期，`/api/logout` 退出。代码在 `server/auth.ts`。
+- 在 Pages 项目的 Settings → Variables and Secrets 里设置 `GITHUB_CLIENT_SECRET`（类型 Secret）：GitHub App 的 client secret，不进仓库。
 
-地址是 `lemmatex.<账号的子域>.workers.dev`，在 Cloudflare 控制台 lemmatex 的 Domains 里能看到，也能在那里绑定自己的域名。本地检查配置：`npm run build && npx wrangler deploy --dry-run`（不会发布）。
+## 账号和数据
+
+每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `lemma-papers`，私有）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`lemma.json` 标记这是 Lemma 的仓库。第一次登录时，Lemma 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 Lemma 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
+
+GitHub App 是 `lemmatex`（https://github.com/apps/lemmatex ），公开的 client ID 和名字写在 `app/github/config.ts`。它的权限只有仓库内容读写（和必带的元数据只读），回调地址是 https://lemmatex.pages.dev/ ，安装时同时请求用户授权。
+
+目前每个账号只能管理自己的论文：分享给合作者、"与我共享"、批注和公开链接还没接上，界面上先不显示（见 `app/AccountContext.tsx` 的 `Features`）。
+
+本地开发：`npm run dev` 是真实登录（需要 Pages Functions，只在 Cloudflare 上有）；`npm run dev:mock` 用三个虚构账号，数据存在浏览器里，不连 GitHub。
 
 ## 来历
 
-从 [zihanzhao1022.github.io](https://github.com/zihanzhao1022/zihanzhao1022.github.io) 的“论文结果”页面拆出来。`editor/` 里还留着一些主页编辑器的代码（个人资料、新闻等表单，`editor/config.ts` 里主页的 GitHub App 和 Worker 地址），原型用不到，以后接真实账号时再整理。
+从 [zihanzhao1022.github.io](https://github.com/zihanzhao1022/zihanzhao1022.github.io) 的“论文结果”页面拆出来。`editor/` 里还留着一些主页编辑器的代码（个人资料、新闻等表单，`editor/config.ts` 里主页的 GitHub App 和 Worker 地址），Lemma 用不到（它的登录在 `app/github/`），以后再整理。
 
 ## 许可
 

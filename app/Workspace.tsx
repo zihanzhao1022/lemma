@@ -51,7 +51,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const paper = (paperId ? content.results.find((item) => item.id === paperId) : undefined) ?? findPaper(content.results, slug);
   const shown = useMemo(() => ({ ...content, results: paper ? [paper] : [] }), [content, paper]);
   const session = useMemo(() => (owner ? ownerSession(account.account) : collaboratorSession(account.account)), [owner, account.account]);
-  const presence = usePresence(session);
+  const presence = usePresence(session, account.features.comments);
   const [request, setRequest] = useState<EditRequest | null>(null);
   const [upload, setUpload] = useState<{ paperId: string; plan: UploadPlan } | null>(null);
   // The owner looks at the page as readers see it, or edits it.
@@ -231,7 +231,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     <ContentContext.Provider value={shown}>
       <EditModeContext.Provider value={value}>
         <ResultsAccessContext.Provider value={access}>
-          <PresenceContext.Provider value={presence}>
+          <PresenceContext.Provider value={account.features.comments ? presence : null}>
             {/* The paper's own bar: what one does with the whole paper. */}
             <div ref={bar} className="sticky top-12 z-30 -mx-4 mb-6 flex flex-wrap items-center gap-1 border-b border-gray-200 bg-white/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 md:-mx-12 md:px-12">
               {owner && (
@@ -275,7 +275,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                   {t('演示')}
                 </button>
               )}
-              {owner && (
+              {owner && account.features.sharing && (
                 <button type="button" onClick={() => setSharingOpen(true)} className="inline-flex items-center gap-1.5 rounded-md bg-violet-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-800">
                   <Share2 size={16} />
                   {t('分享')}

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** "true" turns on the made-up accounts in development; index.html turns them on for the prototype anyway. */
+  /** "true" (`npm run dev:mock`, see .env.mock) signs in made-up accounts and keeps everything in the browser. */
   readonly VITE_EDITOR_MOCK?: string;
 }

@@ -5,15 +5,37 @@ import { createMockCollaboratorBackend, createMockResultsBackend, mockStore } fr
 import { ResultsBackend } from '../editor/results/backend';
 import { WorkerError } from '../editor/results/workerBackend';
 import { SiteContent } from '../types';
-import { ACCOUNTS, Account, collaboratorSession, ownerSession, storeKeyOf } from './accounts';
+import { ACCOUNTS, Account, collaboratorSession, connectedRepo, ownerSession, storeKeyOf } from './accounts';
+import { repoBackend } from './github/backend';
+import { LemmaRepo, repoLabel } from './github/repo';
 import { Organizer, paperKey, tidy, touch } from './organizer';
 import { examplesReady, loadOrganizer, saveOrganizer } from './seed';
+
+/** Where an account's papers are: its GitHub repository, or a made-up account's store in this browser (`npm run dev:mock`). */
+export type AccountSource = { kind: 'github'; repo: LemmaRepo } | { kind: 'mock' };
+
+/** What the account can do besides keeping its own papers. */
+export interface Features {
+  /** Sharing papers with people, and papers others shared. */
+  sharing: boolean;
+  /** Papers anyone with the link can read. */
+  publishing: boolean;
+  /** Comments in the margin, and who is reading a paper. */
+  comments: boolean;
+}
+
+// GitHub accounts keep their own papers for now; the made-up accounts show everything the app will do.
+const GITHUB_FEATURES: Features = { sharing: false, publishing: false, comments: false };
+const MOCK_FEATURES: Features = { sharing: true, publishing: true, comments: true };
 
 /** One of the account's two lists of papers, with what saves to it. */
 export type PaperList = ReturnType<typeof useResultsEditor> & { content: SiteContent };
 
 export interface AccountValue {
   account: Account;
+  /** owner/name of the repository the account's papers are in. */
+  repo: string;
+  features: Features;
   /** The account's own papers, in its repository. */
   mine: PaperList;
   /** Others' papers shared with the account, through the (mock) worker. */
@@ -53,7 +75,16 @@ function sharedBackend(account: Account): ResultsBackend {
   };
 }
 
-function useList(session: ReturnType<typeof ownerSession>, connect: () => ResultsBackend, onToast: (toast: EditorToast | null) => void): PaperList {
+/** Nothing is shared with a GitHub account yet. */
+const NOTHING_SHARED: ResultsBackend = {
+  load: async () => ({ state: 'ready', papers: [], roles: {} }),
+  readFile: () => Promise.reject(new Error('nothing is shared')),
+  save: () => Promise.reject(new Error('nothing is shared')),
+  syncPublic: async () => null,
+  resync: async () => null,
+};
+
+function useList(session: ReturnType<typeof ownerSession>, connect: () => Promise<ResultsBackend>, onToast: (toast: EditorToast | null) => void): PaperList {
   const [content, setContent] = useState(empty);
   const contentRef = useRef(content);
   contentRef.current = content;
@@ -66,17 +97,19 @@ function useList(session: ReturnType<typeof ownerSession>, connect: () => Result
     onDeploy: noop,
     onToast,
     onSignedOut: noop,
-    // The example papers are in the repositories before anything is read.
-    connect: () => examplesReady().then(connect),
+    connect,
   });
   return { ...editor, content };
 }
 
 /** The signed-in account's papers: its own and those shared with it. */
-export const AccountProvider: React.FC<{ account: Account; children: React.ReactNode }> = ({ account, children }) => {
+export const AccountProvider: React.FC<{ account: Account; source: AccountSource; children: React.ReactNode }> = ({ account, source, children }) => {
   const [toast, setToast] = useState<EditorToast | null>(null);
   const [organizer, setOrganizer] = useState(() => loadOrganizer(account.login));
+  const github = source.kind === 'github' ? source.repo : null;
   useEffect(() => {
+    // The made-up accounts' example papers are sorted into folders once they are in.
+    if (github) return undefined;
     let current = true;
     void examplesReady().then(() => {
       if (current) setOrganizer(loadOrganizer(account.login));
@@ -84,7 +117,7 @@ export const AccountProvider: React.FC<{ account: Account; children: React.React
     return () => {
       current = false;
     };
-  }, [account.login]);
+  }, [account.login, github]);
   const organize = useCallback(
     (change: (organizer: Organizer) => Organizer) =>
       setOrganizer((current) => {
@@ -97,15 +130,18 @@ export const AccountProvider: React.FC<{ account: Account; children: React.React
   const touchPaper = useCallback((owner: string, paperId: string) => organize((current) => touch(current, paperKey(owner, paperId))), [organize]);
   const owner = useMemo(() => ownerSession(account), [account]);
   const collaborator = useMemo(() => collaboratorSession(account), [account]);
-  const mine = useList(owner, () => createMockResultsBackend(storeKeyOf(account.login)), setToast);
-  const shared = useList(collaborator, () => sharedBackend(account), setToast);
+  // The made-up accounts' example papers are in their stores before anything is read.
+  const mine = useList(owner, () => (github ? Promise.resolve(repoBackend(github, account.login)) : examplesReady().then(() => createMockResultsBackend(storeKeyOf(account.login)))), setToast);
+  const shared = useList(collaborator, () => (github ? Promise.resolve(NOTHING_SHARED) : examplesReady().then(() => sharedBackend(account))), setToast);
   const ownerOf = useCallback(
-    (paperId: string) => ACCOUNTS.find((other) => mockStore(storeKeyOf(other.login)).papers.some((paper) => paper.id === paperId)),
-    [],
+    (paperId: string) => (github ? undefined : ACCOUNTS.find((other) => mockStore(storeKeyOf(other.login)).papers.some((paper) => paper.id === paperId))),
+    [github],
   );
+  const repo = github ? repoLabel(github) : connectedRepo(account.login) ?? '';
+  const features = github ? GITHUB_FEATURES : MOCK_FEATURES;
   const value = useMemo<AccountValue>(
-    () => ({ account, mine, shared, ownerOf, organizer, organize, touchPaper, toast, setToast }),
-    [account, mine, shared, ownerOf, organizer, organize, touchPaper, toast],
+    () => ({ account, repo, features, mine, shared, ownerOf, organizer, organize, touchPaper, toast, setToast }),
+    [account, repo, features, mine, shared, ownerOf, organizer, organize, touchPaper, toast],
   );
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 };

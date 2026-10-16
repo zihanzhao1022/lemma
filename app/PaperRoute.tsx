@@ -90,6 +90,10 @@ const PaperRoute: React.FC = () => {
   const { owner = '', slug = '' } = useParams();
   const account = useAccount();
   if (account && owner.toLowerCase() === account.account.login.toLowerCase()) return <Workspace list={account.mine} owner />;
+  // Nobody else's papers reach a GitHub account yet: neither shared ones nor published ones.
+  if (account && !account.features.sharing && !account.features.publishing) {
+    return <Missing text={t('找不到这篇论文。')} hint={t('链接可能写错了，或者作者已经删除了它。')} />;
+  }
   if (account) {
     const shared = account.shared.content.results.find((paper) => paper.slug === slug && account.ownerOf(paper.id)?.login === owner);
     if (shared) return <Workspace list={account.shared} owner={false} paperId={shared.id} />;

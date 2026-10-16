@@ -13,6 +13,8 @@ interface Props {
   onView: (view: View) => void;
   /** How many papers each kind of view holds, and each folder and tag (archived papers left out). */
   counts: { all: number; mine: number; shared: number; archived: number; folder: (id: string) => number; tag: (id: string) => number };
+  /** Whether papers can be shared with the account (the "shared with me" list). */
+  sharing: boolean;
   onNew: () => void;
 }
 
@@ -85,7 +87,7 @@ const NameField: React.FC<{ initial?: string; placeholder: string; depth?: numbe
 type Editing = { kind: 'new-folder'; parent: string | null } | { kind: 'rename-folder'; id: string } | { kind: 'new-tag' } | { kind: 'rename-tag'; id: string } | null;
 
 /** The left column of the list of papers: kinds of papers, the account's folders and its tags. */
-const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, onNew }) => {
+const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, sharing, onNew }) => {
   const t = useT();
   const [editing, setEditing] = useState<Editing>(null);
   const [closed, setClosed] = useState<Set<string>>(new Set());
@@ -215,7 +217,7 @@ const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, o
   const kinds: { view: View; icon: React.ReactNode; label: string; count: number; drop?: boolean }[] = [
     { view: { kind: 'all' }, icon: <Inbox size={15} className="text-gray-400" />, label: t('全部论文'), count: counts.all, drop: true },
     { view: { kind: 'mine' }, icon: <FileText size={15} className="text-gray-400" />, label: t('我的论文'), count: counts.mine },
-    { view: { kind: 'shared' }, icon: <Users size={15} className="text-gray-400" />, label: t('共享给我的'), count: counts.shared },
+    ...(sharing ? [{ view: { kind: 'shared' } as View, icon: <Users size={15} className="text-gray-400" />, label: t('共享给我的'), count: counts.shared }] : []),
     { view: { kind: 'archived' }, icon: <Archive size={15} className="text-gray-400" />, label: t('已归档'), count: counts.archived },
   ];
 

@@ -3,8 +3,9 @@ import { LogOut, Repeat } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import LangSwitch from '../components/LangSwitch';
 import { BUTTON_SECONDARY, Modal } from '../editor/components/Modal';
+import { MOCK_MODE } from '../lib/session';
 import { useT } from '../lib/phrases/app';
-import { ACCOUNTS, Account, connectedRepo } from './accounts';
+import { ACCOUNTS, Account } from './accounts';
 import Avatar from './Avatar';
 import { NAME, Wordmark } from './brand';
 
@@ -49,8 +50,8 @@ export const SignInDialog: React.FC<{ current: Account | null; onChoose: (accoun
   );
 };
 
-/** The account's picture, opening what it can do: switch accounts (the prototype) or sign out. */
-const AccountMenu: React.FC<{ account: Account; onSwitch: () => void; onSignOut: () => void }> = ({ account, onSwitch, onSignOut }) => {
+/** The account's picture, opening what it can do: switch accounts (the made-up ones) or sign out. */
+const AccountMenu: React.FC<{ account: Account; repo: string | null; onSwitch?: () => void; onSignOut: () => void }> = ({ account, repo, onSwitch, onSignOut }) => {
   const t = useT();
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
@@ -72,12 +73,14 @@ const AccountMenu: React.FC<{ account: Account; onSwitch: () => void; onSignOut:
         <div className="absolute right-0 top-10 z-50 w-56 overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg">
           <div className="border-b border-gray-100 px-3 py-2">
             <p className="text-sm font-medium text-gray-900">{account.name}</p>
-            <p className="text-xs text-gray-500">{connectedRepo(account.login) ?? t('还没有连接仓库')}</p>
+            <p className="truncate text-xs text-gray-500">{repo ?? t('还没有连接仓库')}</p>
           </div>
-          <button type="button" className={item} onClick={() => { setOpen(false); onSwitch(); }}>
-            <Repeat size={14} />
-            {t('换个账号')}
-          </button>
+          {onSwitch && (
+            <button type="button" className={item} onClick={() => { setOpen(false); onSwitch(); }}>
+              <Repeat size={14} />
+              {t('换个账号')}
+            </button>
+          )}
           <button type="button" className={item} onClick={() => { setOpen(false); onSignOut(); }}>
             <LogOut size={14} />
             {t('退出登录')}
@@ -90,7 +93,11 @@ const AccountMenu: React.FC<{ account: Account; onSwitch: () => void; onSignOut:
 
 interface Props {
   account: Account | null;
+  /** owner/name of the account's repository, once there is one. */
+  repo: string | null;
   onSignIn: () => void;
+  /** Only the made-up accounts switch. */
+  onSwitch?: () => void;
   onSignOut: () => void;
   children: React.ReactNode;
 }
@@ -123,7 +130,7 @@ function useUnderBar(bar: React.RefObject<HTMLElement>, page: string): { scrolle
 }
 
 /** The bar over every page of the app, and the room the pages get under it. */
-const AppShell: React.FC<Props> = ({ account, onSignIn, onSignOut, children }) => {
+const AppShell: React.FC<Props> = ({ account, repo, onSignIn, onSwitch, onSignOut, children }) => {
   const t = useT();
   const { pathname } = useLocation();
   const bar = useRef<HTMLElement>(null);
@@ -134,7 +141,7 @@ const AppShell: React.FC<Props> = ({ account, onSignIn, onSignOut, children }) =
   const bleed = !account && pathname === '/';
   return (
     <div className="min-h-screen bg-white text-gray-900">
-      <p className="bg-[#f5f5f7] px-4 py-2 text-center text-xs text-[#6e6e73]">{t('这是原型：账号是虚构的，数据只存在这个浏览器里。')}</p>
+      {MOCK_MODE && <p className="bg-[#f5f5f7] px-4 py-2 text-center text-xs text-[#6e6e73]">{t('这是原型：账号是虚构的，数据只存在这个浏览器里。')}</p>}
       <header
         ref={bar}
         className={`sticky top-0 z-40 border-b backdrop-blur-xl backdrop-saturate-[1.8] transition-[background-color,border-color,color] duration-300 ${
@@ -153,7 +160,7 @@ const AppShell: React.FC<Props> = ({ account, onSignIn, onSignOut, children }) =
           <div className="ml-auto flex items-center gap-4">
             <LangSwitch dark={dark} />
             {account ? (
-              <AccountMenu account={account} onSwitch={onSignIn} onSignOut={onSignOut} />
+              <AccountMenu account={account} repo={repo} onSwitch={onSwitch} onSignOut={onSignOut} />
             ) : (
               <button type="button" onClick={onSignIn} className={`text-sm font-medium ${dark ? 'text-white/85 hover:text-white' : 'text-gray-700 hover:text-gray-900'}`}>
                 {t('登录')}

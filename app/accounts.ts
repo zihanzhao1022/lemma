@@ -2,11 +2,13 @@ import { mockUserId } from '../editor/auth';
 import { STORE_KEY } from '../editor/results/mockBackend';
 import { Session } from '../lib/session';
 
-/** A made-up GitHub account of the prototype. Each has its own repository: a mock store in this browser. */
+/** A GitHub account: the one signed in, or one of the made-up accounts of `npm run dev:mock`. */
 export interface Account {
   login: string;
   id: number;
   name: string;
+  /** GitHub's picture of the account; the made-up accounts have none. */
+  avatarUrl?: string;
 }
 
 export const ACCOUNTS: Account[] = [

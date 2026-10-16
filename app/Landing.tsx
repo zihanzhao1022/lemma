@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Code2, FileText, Folder, FolderOpen, Inbox, Lock, Scale } from 'lucide-react';
 import { useLang } from '../lib/i18n';
 import { useT } from '../lib/phrases/app';
+import { MOCK_MODE } from '../lib/session';
 import { NAME } from './brand';
 import { ACCOUNTS, Account } from './accounts';
 import Avatar from './Avatar';
@@ -476,7 +477,8 @@ const Landing: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) => {
     <div className="overflow-x-clip">
       {/* The first screen: the promise, the way in, and a results page putting itself together. */}
       <section data-shown="" className="relative">
-        <div className="mx-auto flex min-h-[calc(100svh-5.25rem)] max-w-[1120px] flex-col items-center px-4 pb-16 pt-[clamp(1.5rem,4vh,3rem)] sm:px-6">
+        {/* A screen high, under the bar (and the made-up accounts' notice above it). */}
+        <div className={`mx-auto flex ${MOCK_MODE ? 'min-h-[calc(100svh-5.25rem)]' : 'min-h-[calc(100svh-3rem)]'} max-w-[1120px] flex-col items-center px-4 pb-16 pt-[clamp(1.5rem,4vh,3rem)] sm:px-6`}>
           {/* The page opens a lemma environment, closed by \end{lemma} at the bottom. */}
           <div className="w-full max-w-[60rem]">
             <LatexTag command="begin" />

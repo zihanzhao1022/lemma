@@ -24,7 +24,7 @@ import { describeSaveError } from '../editor/backend';
 import { useLang, useMessage } from '../lib/i18n';
 import { useT } from '../lib/phrases/app';
 import { ResultPaper } from '../types';
-import { Account, accountOf, connectedRepo } from './accounts';
+import { Account, accountOf } from './accounts';
 import { useAccount } from './AccountContext';
 import Avatar from './Avatar';
 import { newPaper, sharing } from './library';
@@ -272,7 +272,7 @@ type Editing = { kind: 'new-folder'; parent: string | null } | { kind: 'rename';
 const Dashboard: React.FC = () => {
   const t = useT();
   const lang = useLang();
-  const { account, mine, shared, ownerOf, organizer, organize } = useAccount()!;
+  const { account, repo, features, mine, shared, ownerOf, organizer, organize } = useAccount()!;
   const [view, setView] = useState<View>({ kind: 'all' });
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -330,7 +330,6 @@ const Dashboard: React.FC = () => {
   }, [flat, organizer, rows, view, search, order, base, closed]);
   const shown = lines.flatMap((line) => (line.kind === 'paper' ? [line.paper] : []));
 
-  const repo = connectedRepo(account.login);
   const loading = mine.access.state === 'loading' || shared.access.state === 'loading';
   // Only what is on screen counts as chosen; changing the view or the search leaves the rest alone.
   const keys = shown.filter((row) => selected.has(row.key)).map((row) => row.key);
@@ -629,7 +628,7 @@ const Dashboard: React.FC = () => {
   return (
     <div className="grid gap-8 py-8 md:grid-cols-[14.5rem_minmax(0,1fr)] md:gap-10">
       <aside className="rounded-2xl bg-[#f5f5f7] p-3 md:sticky md:top-[4.25rem] md:max-h-[calc(100svh-5.25rem)] md:self-start md:overflow-y-auto">
-        <Sidebar organizer={organizer} organize={organize} view={view} onView={show} counts={counts} onNew={() => setCreating(true)} />
+        <Sidebar organizer={organizer} organize={organize} view={view} onView={show} counts={counts} sharing={features.sharing} onNew={() => setCreating(true)} />
         {repo && <p className="mt-6 break-words px-2 pb-1 text-xs leading-relaxed text-gray-400">{t('存放在 GitHub 仓库 {repo}', { repo })}</p>}
       </aside>
 
@@ -715,7 +714,9 @@ const Dashboard: React.FC = () => {
             <p className="text-gray-800">
               {search ? t('没有找到这样的论文') : archive ? t('没有归档的论文') : view.kind === 'shared' ? t('别人把论文共享给你后，会出现在这里。') : t('这里还没有论文')}
             </p>
-            {!search && !archive && view.kind !== 'shared' && <p className="mt-1 text-sm text-gray-500">{t('新建一篇，把第一张图或表格放进去，再把链接发给合作者。')}</p>}
+            {!search && !archive && view.kind !== 'shared' && (
+              <p className="mt-1 text-sm text-gray-500">{features.sharing ? t('新建一篇，把第一张图或表格放进去，再把链接发给合作者。') : t('新建一篇，把第一张图或表格放进去。')}</p>
+            )}
           </div>
         ) : (
           <ul

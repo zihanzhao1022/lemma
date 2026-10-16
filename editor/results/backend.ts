@@ -158,8 +158,11 @@ export async function commitResults(
   }
 }
 
-/** The owner's backend; `cache` keeps the files this browser has read (see lib/fileCache). */
-export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi, cache?: FileCache): ResultsBackend {
+/**
+ * The owner's backend; `cache` keeps the files this browser has read (see lib/fileCache). Without `publicApi`
+ * (Lemma, where every paper is private) nothing is ever published. `branch` is the private repository's.
+ */
+export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi | null, cache?: FileCache, branch = EDITOR_CONFIG.branch): ResultsBackend {
   const files = new Map<string, Promise<Uint8Array>>();
 
   const readFile = (path: string, version?: string): Promise<Uint8Array> => {
@@ -168,7 +171,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
       bytes = (async () => {
         const kept = await cache?.read(path, version);
         if (kept) return kept;
-        const data = await privateApi.readBytes(path, EDITOR_CONFIG.branch);
+        const data = await privateApi.readBytes(path, branch);
         cache?.remember(path, data, version);
         return data;
       })();
@@ -184,6 +187,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
   let known: KnownHead | null = null;
 
   async function syncPublic(papers: ResultPaper[], message: string): Promise<string | null> {
+    if (!publicApi) return null;
     publicBehind = true;
     const commit = await syncOnce(papers, message);
     publicBehind = false;
@@ -191,6 +195,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
   }
 
   async function syncOnce(papers: ResultPaper[], message: string): Promise<string | null> {
+    if (!publicApi) return null;
     for (let attempt = 1; ; attempt += 1) {
       const head = await publicApi.headSha();
       const tree = await publicApi.treeSha(head);
@@ -258,7 +263,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
         files.set(write.path, Promise.resolve(write.data));
         cache?.remember(write.path, write.data);
       });
-      if (!publicBehind && (!changed || (!hasPublished(before) && !hasPublished(papers)))) return { papers, publicCommit: null };
+      if (!publicApi || (!publicBehind && (!changed || (!hasPublished(before) && !hasPublished(papers))))) return { papers, publicCommit: null };
       // The site's history is public: name a paper only when it is (or just was) published.
       const touched = touchedPapers(op);
       const named = touched.length === 0 || touched.every((id) => isPublishedIn(before, id) || isPublishedIn(papers, id));
@@ -269,6 +274,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
     syncPublic,
 
     async resync(message) {
+      if (!publicApi) return null;
       // Behind until this succeeds, even if reading the private list fails first.
       publicBehind = true;
       return syncPublic(parsePapers(await readTextFile(privateApi, RESULTS_PATH, await privateApi.headSha())), message);
