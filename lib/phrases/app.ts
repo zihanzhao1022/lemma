@@ -401,7 +401,6 @@ export const { t, useT, table } = phrases({
     ja: 'この論文にはまだブロックがありません。まず「ブロック」でテキスト、図、表を追加してください。',
     en: 'This paper has no blocks yet. Add text, figures or tables under Blocks first.',
   },
-  '连同下面 {n} 块': { ja: '下の {n} ブロックごと', en: 'with the {n} blocks under it' },
   地图: { ja: 'マップ', en: 'Map' },
   '地图（M）': { ja: 'マップ（M）', en: 'Map (M)' },
   位置: { ja: '現在地', en: 'Where you are' },
@@ -437,32 +436,35 @@ export const { t, useT, table } = phrases({
   '{name} 不是 UTF-8 编码，不能在这里编辑': { ja: '{name} は UTF-8 ではないため、ここでは編集できません', en: '{name} is not in UTF-8, so it cannot be edited here' },
 
   // The logic built by hand
-  在树里: { ja: 'ツリー内', en: 'In the tree' },
   清空逻辑树: { ja: '論理構成を空にする', en: 'Clear the logic' },
   '清空这棵逻辑树？论文本身不受影响。': { ja: 'この論理構成を空にしますか？論文そのものは変わりません。', en: 'Clear this logic? The paper itself does not change.' },
   清空: { ja: '空にする', en: 'Clear' },
   论文的块: { ja: '論文のブロック', en: 'The paper’s blocks' },
-  '{n} / {m} 在树里': { ja: '{n} / {m} がツリー内', en: '{n} of {m} in the tree' },
-  '放开，从树里拿掉': { ja: '放すとツリーから外れます', en: 'Drop to take it out of the tree' },
 
   // The logic read and built like the block view
-  '拖到另一块上，挂到它下面；拖回左边，从树里拿掉': { ja: '別のブロックの上にドラッグするとその下に入り、左に戻すとツリーから外れます', en: 'Drag onto another block to put it under that one; back to the left to take it out of the tree' },
-  拖动这一块: { ja: 'このブロックをドラッグ', en: 'Drag this block' },
-  只看这一支: { ja: 'この枝だけ見る', en: 'Show only this branch' },
-  '从树里拿掉，下面的块上移一层': { ja: 'ツリーから外します。下のブロックは 1 段上がります', en: 'Take it out of the tree; the blocks under it move up a level' },
-  拿出树: { ja: 'ツリーから外す', en: 'Take out' },
-  '放到「{name}」下面': { ja: '「{name}」の下に入れる', en: 'Put under “{name}”' },
-  '分支 {i} / {n}': { ja: '枝 {i} / {n}', en: 'Branch {i} of {n}' },
-  '拖到这里，新建一个分支': { ja: 'ここにドラッグして新しい枝を作る', en: 'Drop here to start a branch' },
 
   // Dropping blocks in the branch view
-  '拖到这里，放进「{name}」这一支': { ja: 'ここにドラッグすると「{name}」の枝に入ります', en: 'Drop here to put it in the “{name}” branch' },
-  '和「{name}」同一层': { ja: '「{name}」と同じ階層', en: 'beside “{name}”' },
-  '把左边的块拖到这里，开始第一个分支': { ja: '左のブロックをここにドラッグして、最初の枝を作ります', en: 'Drag a block here from the left to start the first branch' },
-  '先放一个方法，再把实验拖到这个方法上，就挂在它下面。': { ja: 'まず手法を 1 つ置き、実験をその手法の上にドラッグすると、その下に入ります。', en: 'Put a method in first, then drag each experiment onto it to put it under that method.' },
-  '拖动块左边的把手：拖到一块上就挂到它下面，拖到块与块之间就和它们同一层，拖回左边就从树里拿掉。': {
-    ja: 'ブロック左の取っ手をドラッグします。ブロックの上に置くとその下に入り、ブロックの間に置くとそれらと同じ階層になり、左に戻すとツリーから外れます。',
-    en: 'Drag a block by the handle on its left: onto a block to put it under that one, between blocks to put it beside them, back to the left to take it out of the tree.',
+
+  // The logic as a graph
+  '拖到图里的一个节点上，就成为它的一个分支': { ja: 'グラフのノードの上にドラッグすると、その枝になります', en: 'Drag onto a node of the graph to make it a branch of that node' },
+  在图里: { ja: 'グラフ内', en: 'In the graph' },
+  '{n} / {m} 在图里': { ja: '{n} / {m} がグラフ内', en: '{n} of {m} in the graph' },
+  '从左边把块拖到节点上，就添加一个分支；拖动节点调整位置，拖到另一个节点上就挂到它下面。滚轮缩放，空白处拖动画布。': {
+    ja: '左のブロックをノードの上にドラッグすると枝が増えます。ノードはドラッグで動かせ、別のノードの上に置くとその下に入ります。ホイールで拡大縮小、空いている所をドラッグするとキャンバスが動きます。',
+    en: 'Drag a block from the left onto a node to add a branch; drag nodes to move them, onto another node to put them under it. The wheel zooms; drag empty space to move around.',
   },
-  '拖到中间的块上就挂到它下面，拖到页面底部就放进这一支': { ja: '中央のブロックの上に置くとその下に入り、ページの下に置くとこの枝に入ります', en: 'Drop on a block in the middle to put it under that block, or at the bottom of the page to put it in this branch' },
+  重新排布: { ja: '配置をやり直す', en: 'Lay out again' },
+  '挂到「{name}」下面': { ja: '「{name}」の下に入れる', en: 'Put under “{name}”' },
+  '从左边把块拖到「{name}」上，开始搭逻辑。': { ja: '左のブロックを「{name}」の上にドラッグして、論理構成を作り始めます。', en: 'Drag blocks from the left onto “{name}” to start the logic.' },
+  逻辑从这里开始: { ja: '論理構成はここから始まります', en: 'The logic starts here' },
+  '挂在「{name}」下面': { ja: '「{name}」の下', en: 'Under “{name}”' },
+  还没连到别的节点上: { ja: 'まだ他のノードにつながっていません', en: 'Not linked to any node yet' },
+  找一块挂到这里: { ja: 'ここに入れるブロックを探す', en: 'Find a block to put here' },
+  所有块都已经在图里了: { ja: 'すべてのブロックがグラフにあります', en: 'Every block is in the graph' },
+  挂在哪个节点下面: { ja: 'どのノードの下に置くか', en: 'Under which node' },
+  不连接: { ja: 'つながない', en: 'Not linked' },
+  添加分支: { ja: '枝を追加', en: 'Add a branch' },
+  从图里拿掉: { ja: 'グラフから外す', en: 'Take out of the graph' },
+  从这里演示: { ja: 'ここから発表', en: 'Present from here' },
+  显示全部: { ja: '全体を表示', en: 'Show everything' },
 });
