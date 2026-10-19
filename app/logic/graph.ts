@@ -72,3 +72,34 @@ export function fitAll(nodes: Placed[], width: number, height: number, pad = 60)
   const k = Math.max(0.2, Math.min(1, (width - 2 * pad) / (right - left), (height - 2 * pad) / (bottom - top)));
   return { k, x: width / 2 - ((left + right) / 2) * k, y: height / 2 - ((top + bottom) / 2) * k };
 }
+
+/** A line drawn between two blocks besides the ones they hang by: the pair, the smaller ID first. */
+export type Relation = [string, string];
+
+const pair = (a: string, b: string): Relation => (a < b ? [a, b] : [b, a]);
+
+/** Whether `a` and `b` have a line drawn between them. */
+export const related = (relations: Relation[], a: string, b: string): boolean => {
+  const [first, second] = pair(a, b);
+  return relations.some(([x, y]) => x === first && y === second);
+};
+
+/** `relations` with a line between `a` and `b`: once, and never from a block to itself. */
+export const withRelation = (relations: Relation[], a: string, b: string): Relation[] => (a === b || related(relations, a, b) ? relations : [...relations, pair(a, b)]);
+
+export const withoutRelation = (relations: Relation[], a: string, b: string): Relation[] => {
+  const [first, second] = pair(a, b);
+  return relations.filter(([x, y]) => x !== first || y !== second);
+};
+
+/** The blocks a block has lines drawn to. */
+export const relatedTo = (relations: Relation[], id: string): string[] => relations.flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : []));
+
+/** `relations` between blocks that are both in the graph, each pair once, in order. */
+export function cleanRelations(relations: Relation[] | undefined, inGraph: ReadonlySet<string>): Relation[] {
+  const kept: Relation[] = [];
+  for (const [a, b] of relations ?? []) {
+    if (a !== b && inGraph.has(a) && inGraph.has(b) && !related(kept, a, b)) kept.push(pair(a, b));
+  }
+  return kept;
+}

@@ -94,6 +94,13 @@ describe('applyResultsOp', () => {
     expect(kept.slides).toEqual(deck);
   });
 
+  it('sets the lines drawn between blocks, and drops them when there are none', () => {
+    const [drawn] = applyResultsOp([paper('p1')], { kind: 'patchPaper', id: 'p1', fields: { relations: [['a', 'b']] } });
+    expect(drawn.relations).toEqual([['a', 'b']]);
+    const [none] = applyResultsOp([drawn], { kind: 'patchPaper', id: 'p1', fields: { relations: [] } });
+    expect(none).not.toHaveProperty('relations');
+  });
+
   it('sets the logic, and drops it when nothing is moved any more', () => {
     const [moved] = applyResultsOp([paper('p1')], { kind: 'patchPaper', id: 'p1', fields: { logic: { e1: 'm1' } } });
     expect(moved.logic).toEqual({ e1: 'm1' });

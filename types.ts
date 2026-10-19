@@ -297,6 +297,11 @@ export interface ResultPaper extends Hideable {
    * Blocks not listed stay where the paper's headings put them (app/logic/tree.ts). Private only.
    */
   logic?: Record<string, string>;
+  /**
+   * Lines drawn by hand between blocks of the logic besides the ones they hang by (an experiment that bears on two
+   * methods): pairs of block IDs, each pair once, the smaller ID first. They change no order. Private only.
+   */
+  relations?: [string, string][];
 }
 
 /**

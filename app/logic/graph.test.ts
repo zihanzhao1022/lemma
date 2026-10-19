@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ResultBlock } from '../../types';
-import { fitAll, graphOf, nodeAt, radiusOf, startOf } from './graph';
+import { cleanRelations, fitAll, graphOf, nodeAt, radiusOf, related, relatedTo, startOf, withRelation, withoutRelation } from './graph';
 import { logicTree } from './tree';
 
 const text = (id: string, source: string): ResultBlock => ({ id, kind: 'text', source });
@@ -55,5 +55,22 @@ describe('the graph of a paper’s logic', () => {
     expect(view.k).toBeLessThan(1);
     // The middle of the nodes lands in the middle of the view.
     expect(view.x + 0 * view.k).toBeCloseTo(400, 0);
+  });
+});
+
+describe('lines drawn between blocks', () => {
+  it('keeps each pair once, the smaller ID first, and none from a block to itself', () => {
+    let relations = withRelation([], 'm2', 'e1');
+    relations = withRelation(relations, 'e1', 'm2');
+    relations = withRelation(relations, 'e1', 'e1');
+    expect(relations).toEqual([['e1', 'm2']]);
+    expect(related(relations, 'm2', 'e1')).toBe(true);
+    expect(relatedTo(withRelation(relations, 'e1', 'm1'), 'e1')).toEqual(['m2', 'm1']);
+    expect(withoutRelation(relations, 'm2', 'e1')).toEqual([]);
+  });
+
+  it('drops lines to blocks that left the graph', () => {
+    expect(cleanRelations([['a', 'b'], ['b', 'a'], ['a', 'gone'], ['c', 'c']], new Set(['a', 'b', 'c']))).toEqual([['a', 'b']]);
+    expect(cleanRelations(undefined, new Set())).toEqual([]);
   });
 });

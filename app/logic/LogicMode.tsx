@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
 import { ForceLink, Simulation, SimulationLinkDatum, SimulationNodeDatum, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force';
-import { AlignLeft, GripVertical, Image, ListTree, Minus, Network, Play, Plus, RotateCcw, Scan, Search, Table2, Trash2, Undo2, X } from 'lucide-react';
+import { AlignLeft, GripVertical, Image, Link2, ListTree, Minus, Network, Play, Plus, RotateCcw, Scan, Search, Table2, Trash2, Undo2, X } from 'lucide-react';
 import { BlockWithTools } from '../../components/results/ResultPage';
 import { describeSaveError } from '../../editor/backend';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
@@ -9,10 +9,10 @@ import { resultsCommitMessage } from '../../editor/results/ops';
 import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultBlock, ResultBlockKind, ResultPaper } from '../../types';
-import { Placed, fitAll, graphOf, nodeAt, radiusOf, startOf } from './graph';
+import { Placed, Relation, cleanRelations, fitAll, graphOf, nodeAt, radiusOf, related, relatedTo, startOf, withRelation, withoutRelation } from './graph';
 import { LabelWords, NodeLabel, nodeLabels } from './labels';
-import { changedLogic, logicOf, savedLogic, unsavedLogic } from './latest';
-import { Logic, TOP, cleanLogic, logicTree, subtreeOf, withPlacement, withoutBlock } from './tree';
+import { LogicDraft, changedDraft, draftOf, savedDraft, unsavedLogic } from './latest';
+import { Logic, TOP, cleanLogic, logicTree, placedIn, subtreeOf, withPlacement, withoutBlock } from './tree';
 
 interface Props {
   paper: ResultPaper;
@@ -108,7 +108,9 @@ const Canvas = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElem
  */
 const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) => {
   const t = useT();
-  const [logic, setLogic] = useState<Logic>(() => logicOf(paper));
+  // The logic and the lines drawn between its blocks, changed and saved together.
+  const [draft, setDraft] = useState<LogicDraft>(() => draftOf(paper));
+  const { logic, relations } = draft;
   // Logic changed here whose save had not landed when the view opened (or failed) is saved again.
   const [status, setStatus] = useState<Status>(() => (unsavedLogic(paper.id) ? 'changed' : 'saved'));
   const [problem, setProblem] = useMessage();
@@ -118,15 +120,19 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
   const [listDrag, setListDrag] = useState<string | null>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [listOpen, setListOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
+  // What the panel's picker adds to the chosen block: a branch under it, or a line to it.
+  const [picker, setPicker] = useState<'branch' | 'line' | null>(null);
+  // A line being drawn from a node to the pointer, and a line clicked to take it away.
+  const [drawing, setDrawing] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [pickedLine, setPickedLine] = useState<Relation | null>(null);
   const [query, setQuery] = useState('');
   const [, setFrame] = useState(0);
   const viewport = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
-  const logicRef = useRef(logic);
-  logicRef.current = logic;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const paperRef = useRef(paper);
   paperRef.current = paper;
   const unsaved = useRef(status === 'changed');
@@ -154,28 +160,32 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
   const labels = useMemo(() => nodeLabels(paper, words), [paper, words]);
   const blocks = useMemo(() => Object.fromEntries(paper.blocks.map((block) => [block.id, block])), [paper.blocks]);
   const inGraph = useMemo(() => new Set(graph.ids), [graph.ids]);
+  // The lines drawn between blocks that are both in the graph.
+  const lines = useMemo(() => cleanRelations(relations, inGraph), [relations, inGraph]);
 
   /** Saves the logic as it is now; changes made while saving are saved after. */
   const flush = useCallback(async () => {
     if (saving.current) return saving.current;
     const run = (async () => {
-      const shot = logicRef.current;
+      const shot = draftRef.current;
       const current = paperRef.current;
       setStatus('saving');
       try {
-        const kept = cleanLogic(current.blocks, shot);
+        const kept = cleanLogic(current.blocks, shot.logic);
         const first = startRef.current;
         if (first && kept[first] !== undefined) kept[first] = TOP;
+        // Lines only between blocks that are still in the graph.
+        const lines = cleanRelations(shot.relations, new Set([...placedIn(current.blocks, kept), ...(first ? [first] : [])]));
         await onSave(
-          { kind: 'patchPaper', id: current.id, fields: { logic: Object.keys(kept).length > 0 ? kept : null } },
+          { kind: 'patchPaper', id: current.id, fields: { logic: Object.keys(kept).length > 0 ? kept : null, relations: lines.length > 0 ? lines : null } },
           [],
           [],
           resultsCommitMessage('update logic of', current.title),
           `content: update result "${current.title}"`,
         );
-        savedLogic(current.id, shot);
-        if (logicRef.current === shot) unsaved.current = false;
-        setStatus(logicRef.current === shot ? 'saved' : 'changed');
+        savedDraft(current.id, shot);
+        if (draftRef.current === shot) unsaved.current = false;
+        setStatus(draftRef.current === shot ? 'saved' : 'changed');
       } catch (error) {
         setStatus('failed');
         setProblem(() => describeSaveError(error));
@@ -191,7 +201,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     if (status !== 'changed') return undefined;
     const timer = window.setTimeout(() => void flush(), 800);
     return () => window.clearTimeout(timer);
-  }, [logic, status, flush]);
+  }, [draft, status, flush]);
 
   // Leaving the paper saves what is not saved yet, after any save on its way; closing the tab cannot wait for a
   // save, so the browser asks first.
@@ -213,30 +223,37 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
 
   // The paper's logic saved elsewhere (another tab) shows here when nothing changed here meanwhile.
   useEffect(() => {
-    if (!unsaved.current && !saving.current) setLogic(paper.logic ?? {});
-  }, [paper.logic]);
+    if (!unsaved.current && !saving.current) setDraft({ logic: paper.logic ?? {}, relations: paper.relations ?? [] });
+  }, [paper.logic, paper.relations]);
 
-  const change = (next: Logic) => {
-    logicRef.current = next;
+  const change = (nextLogic: Logic, nextRelations: Relation[] = draftRef.current.relations) => {
+    const next: LogicDraft = { logic: nextLogic, relations: nextRelations };
+    draftRef.current = next;
     unsaved.current = true;
-    changedLogic(paper.id, next);
-    setLogic(next);
+    changedDraft(paper.id, next);
+    setDraft(next);
     setStatus('changed');
     setProblem(null);
   };
+  /** Draws a line between two blocks of the graph, or takes one away. */
+  const relate = (a: string, b: string, on: boolean) => change(draftRef.current.logic, (on ? withRelation : withoutRelation)(draftRef.current.relations, a, b));
 
   /** Hangs block `id` under `parent`, or alone (null); the start never moves under another block. */
   const place = (id: string, parent: string | null) => {
     if (id === start && parent !== null) return;
     if (parent !== null && tree.nodes[id] && subtreeOf(tree, id).has(parent)) return;
     if (id === parent || (tree.nodes[id] && tree.nodes[id].parent === parent)) return;
-    change(withPlacement(paper.blocks, logicRef.current, id, parent));
+    change(withPlacement(paper.blocks, draftRef.current.logic, id, parent));
   };
 
   /** Takes block `id` out of the graph; the blocks under it hang where it hung. */
   const remove = (id: string) => {
     if (id === start || !tree.nodes[id]) return;
-    change(withoutBlock(paper.blocks, logicRef.current, id));
+    // Its lines go with it.
+    change(
+      withoutBlock(paper.blocks, draftRef.current.logic, id),
+      draftRef.current.relations.filter(([a, b]) => a !== id && b !== id),
+    );
     delete pins.current[id];
     writePins(paper.id, pins.current);
     if (selected === id) setSelected(null);
@@ -284,6 +301,14 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
             .id((node) => node.id)
             .distance(130)
             .strength(0.5),
+        )
+        // A drawn line pulls its blocks a little closer, not as hard as a branch.
+        .force(
+          'relations',
+          forceLink<GraphNode, GraphEdge>([])
+            .id((node) => node.id)
+            .distance(170)
+            .strength(0.06),
         );
     simulation.current = forces;
     const before = nodes.current;
@@ -308,12 +333,13 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     nodes.current = next;
     forces.nodes([...next.values()]);
     (forces.force('link') as ForceLink<GraphNode, GraphEdge>).links(graph.links.map((line) => ({ ...line })));
+    (forces.force('relations') as ForceLink<GraphNode, GraphEdge>).links(lines.map(([source, target]) => ({ source, target })));
     forces.alpha(before.size === 0 ? 1 : 0.6);
     // Settled at once (a tab in the background never animates), then gliding the rest of the way.
     for (let tick = 0; tick < (before.size === 0 ? 300 : 160); tick += 1) forces.tick();
     setFrame((n) => n + 1);
     animate();
-  }, [graph, tree, start, animate]);
+  }, [graph, tree, start, lines, animate]);
 
   const placed: Placed[] = [...nodes.current.values()].map((node) => ({ id: node.id, x: node.x ?? 0, y: node.y ?? 0, r: node.r }));
   const placedRef = useRef(placed);
@@ -372,8 +398,24 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
   const grab = useRef<
     | { kind: 'node'; id: string; pointer: number; x: number; y: number; moved: boolean; skip: Set<string> }
     | { kind: 'pan'; pointer: number; x: number; y: number; from: View; moved: boolean }
+    | { kind: 'line'; from: string; pointer: number; x: number; y: number; moved: boolean }
     | null
   >(null);
+  /** The blocks a line from `id` cannot go to: itself, those it already has one to, and those it hangs with. */
+  const lineSkip = (id: string): Set<string> => new Set([id, ...relatedTo(lines, id), ...(tree.nodes[id]?.children ?? []), ...(tree.nodes[id]?.parent ? [tree.nodes[id].parent!] : [])]);
+  const onHandleDown = (event: React.PointerEvent, id: string) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    try {
+      viewport.current?.setPointerCapture(event.pointerId);
+    } catch {
+      // A pointer the browser no longer tracks: the drag still follows it over the canvas.
+    }
+    const node = nodes.current.get(id);
+    grab.current = { kind: 'line', from: id, pointer: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+    setDrawing({ from: id, x: node?.x ?? 0, y: node?.y ?? 0 });
+    setPickedLine(null);
+  };
   const onNodeDown = (event: React.PointerEvent, id: string) => {
     if (event.button !== 0) return;
     event.stopPropagation();
@@ -408,6 +450,12 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
       setView({ ...held.from, x: held.from.x + dx, y: held.from.y + dy });
       return;
     }
+    if (held.kind === 'line') {
+      const at = toGraph(event.clientX, event.clientY);
+      setDrawing({ from: held.from, x: at.x, y: at.y });
+      setTarget(nodeAt(placed, at.x, at.y, lineSkip(held.from)));
+      return;
+    }
     const node = nodes.current.get(held.id);
     if (!node) return;
     const at = toGraph(event.clientX, event.clientY);
@@ -424,8 +472,19 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     if (!held || held.pointer !== event.pointerId) return;
     grab.current = null;
     if (held.kind === 'pan') {
-      // A click on the canvas, not a drag of it, puts the node in hand down.
-      if (!held.moved && event.button === 0) setSelected(null);
+      // A click on the canvas, not a drag of it, puts the node (or the line) in hand down.
+      if (!held.moved && event.button === 0) {
+        setSelected(null);
+        setPickedLine(null);
+      }
+      return;
+    }
+    if (held.kind === 'line') {
+      const at = toGraph(event.clientX, event.clientY);
+      const to = held.moved ? nodeAt(placed, at.x, at.y, lineSkip(held.from)) : null;
+      setDrawing(null);
+      setTarget(null);
+      if (to) relate(held.from, to, true);
       return;
     }
     simulation.current?.alphaTarget(0);
@@ -496,18 +555,22 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     setView((current) => ({ ...current, x: room / 2 - (node.x ?? 0) * current.k, y: height / 2 - (node.y ?? 0) * current.k }));
   };
 
+  // The node under the pointer and what it is linked to, by a branch or a drawn line.
+  const focus = hovered ?? target;
   const neighbours = useMemo(() => {
-    const focus = hovered ?? target;
     if (!focus) return null;
-    const near = new Set([focus, ...(tree.nodes[focus]?.children ?? [])]);
+    const near = new Set([focus, ...(tree.nodes[focus]?.children ?? []), ...relatedTo(lines, focus)]);
     const parent = tree.nodes[focus]?.parent;
     if (parent) near.add(parent);
     return near;
-  }, [hovered, target, tree]);
-  const choices = useMemo(() => {
-    const wanted = query.trim().toLowerCase();
-    return paper.blocks.filter((block) => !inGraph.has(block.id) && (!wanted || (labels[block.id]?.title ?? '').toLowerCase().includes(wanted)));
-  }, [paper.blocks, inGraph, labels, query]);
+  }, [focus, tree, lines]);
+  // What the panel's picker offers: blocks not yet in the graph for a branch, blocks in it for a line.
+  const wanted = query.trim().toLowerCase();
+  const matches = (id: string) => !wanted || (labels[id]?.title ?? '').toLowerCase().includes(wanted);
+  const choices =
+    picker === 'line' && selected
+      ? graph.ids.filter((id) => !lineSkip(selected).has(id) && matches(id)).flatMap((id) => (blocks[id] ? [blocks[id]] : []))
+      : paper.blocks.filter((block) => !inGraph.has(block.id) && matches(block.id));
   const selectedBlock = selected ? blocks[selected] : undefined;
   const bar = 'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1 text-[13px] text-gray-600 transition-colors duration-150 hover:bg-black/[0.05] hover:text-gray-900 disabled:opacity-40';
   const control = 'flex h-8 min-w-8 items-center justify-center rounded-md px-1.5 text-gray-600 hover:bg-black/[0.05] hover:text-gray-900';
@@ -528,7 +591,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
         <span className="shrink-0 whitespace-nowrap text-xs text-gray-400">
           {{ saved: t('已保存'), changed: t('有未保存的修改'), saving: t('保存中…'), failed: t('没有保存') }[status]}
         </span>
-        <span className="hidden min-w-0 truncate text-xs text-gray-400 xl:block">{t('从左边把块拖到节点上，就添加一个分支；拖动节点调整位置，拖到另一个节点上就挂到它下面。滚轮缩放，空白处拖动画布。')}</span>
+        <span className="hidden min-w-0 truncate text-xs text-gray-400 xl:block">{t('从左边把块拖到节点上，就添加一个分支；拖动节点调整位置，拖到另一个节点上就挂到它下面；从节点右上角的小圆点拖到另一个节点，就连一条关联线。')}</span>
         <span className="ml-auto flex items-center gap-1">
           {Object.keys(pins.current).length > 0 && (
             <button type="button" onClick={relayout} className={bar} title={t('重新排布')}>
@@ -542,7 +605,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
               className={bar}
               title={t('清空逻辑树')}
               onClick={() => {
-                if (window.confirm(t('清空这棵逻辑树？论文本身不受影响。'))) change({});
+                if (window.confirm(t('清空这棵逻辑树？论文本身不受影响。'))) change({}, []);
               }}
             >
               <Trash2 size={14} />
@@ -599,7 +662,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
             node.fy = point.y;
           }
           if (tree.nodes[id]) place(id, null);
-          else change(withPlacement(paper.blocks, logicRef.current, id, null));
+          else change(withPlacement(paper.blocks, draftRef.current.logic, id, null));
         }}
         onDragCancel={() => {
           setListDrag(null);
@@ -649,6 +712,53 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
               ) : (
                 <svg className="absolute inset-0 h-full w-full overflow-visible" aria-label={t('逻辑结构')}>
                   <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+                    {/* Lines drawn by hand: dashed, under the branches; a wide clear line takes the click. */}
+                    {lines.map(([a, b]) => {
+                      const from = nodes.current.get(a);
+                      const to = nodes.current.get(b);
+                      if (!from || !to) return null;
+                      const lit = focus === a || focus === b;
+                      const picked = pickedLine?.[0] === a && pickedLine[1] === b;
+                      return (
+                        <g key={`line-${a}-${b}`}>
+                          <line
+                            x1={from.x}
+                            y1={from.y}
+                            x2={to.x}
+                            y2={to.y}
+                            stroke={picked ? '#2563eb' : '#60a5fa'}
+                            strokeWidth={(lit || picked ? 2 : 1.4) / Math.max(0.6, view.k)}
+                            strokeDasharray={`${6 / Math.max(0.6, view.k)} ${5 / Math.max(0.6, view.k)}`}
+                            opacity={neighbours && !lit ? 0.3 : 1}
+                          />
+                          <line
+                            x1={from.x}
+                            y1={from.y}
+                            x2={to.x}
+                            y2={to.y}
+                            stroke="transparent"
+                            strokeWidth={14 / view.k}
+                            className="cursor-pointer"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={() => setPickedLine([a, b])}
+                          >
+                            <title>{t('「{a}」和「{b}」的关联', { a: title(a), b: title(b) })}</title>
+                          </line>
+                        </g>
+                      );
+                    })}
+                    {drawing && nodes.current.get(drawing.from) && (
+                      <line
+                        x1={nodes.current.get(drawing.from)?.x}
+                        y1={nodes.current.get(drawing.from)?.y}
+                        x2={drawing.x}
+                        y2={drawing.y}
+                        stroke="#2563eb"
+                        strokeWidth={1.8 / Math.max(0.6, view.k)}
+                        strokeDasharray={`${6 / Math.max(0.6, view.k)} ${5 / Math.max(0.6, view.k)}`}
+                        className="pointer-events-none"
+                      />
+                    )}
                     {graph.links.map((line) => {
                       const from = nodes.current.get(line.source);
                       const to = nodes.current.get(line.target);
@@ -723,9 +833,21 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                             </text>
                           )}
                           {id === target && (
-                            <text y={-node.r - 12} textAnchor="middle" className="pointer-events-none" fontSize={11} fill="#6d28d9" fontWeight={600} stroke="#fafafb" strokeWidth={3} paintOrder="stroke">
-                              {t('挂到「{name}」下面', { name: shortTitle(title(id)) })}
+                            <text y={-node.r - 12} textAnchor="middle" className="pointer-events-none" fontSize={11} fill={drawing ? '#2563eb' : '#6d28d9'} fontWeight={600} stroke="#fafafb" strokeWidth={3} paintOrder="stroke">
+                              {drawing ? t('连到「{name}」', { name: shortTitle(title(id)) }) : t('挂到「{name}」下面', { name: shortTitle(title(id)) })}
                             </text>
+                          )}
+                          {/* The dot a line is drawn from, on the node under the pointer or the one chosen. */}
+                          {(id === hovered || id === selected) && !drawing && !(grab.current?.kind === 'node' && grab.current.moved) && (
+                            <g
+                              transform={`translate(${node.r * 0.75 + 5} ${-(node.r * 0.75 + 5)})`}
+                              onPointerDown={(event) => onHandleDown(event, id)}
+                              className="cursor-crosshair"
+                            >
+                              <title>{t('拖到另一个节点上，连一条关联线')}</title>
+                              <circle r={6.5} fill="#ffffff" stroke="#2563eb" strokeWidth={1.5} />
+                              <path d="M -3 0 H 3 M 0 -3 V 3" stroke="#2563eb" strokeWidth={1.5} strokeLinecap="round" />
+                            </g>
                           )}
                         </g>
                       );
@@ -736,20 +858,56 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
               {tree.order.length === 0 && start && (
                 <p className="pointer-events-none absolute inset-x-0 bottom-16 text-center text-sm text-gray-500">{t('从左边把块拖到「{name}」上，开始搭逻辑。', { name: title(start) })}</p>
               )}
+              {/* A line clicked: what can be done with it, at its middle. */}
+              {pickedLine &&
+                (() => {
+                  const from = nodes.current.get(pickedLine[0]);
+                  const to = nodes.current.get(pickedLine[1]);
+                  if (!from || !to || !related(lines, pickedLine[0], pickedLine[1])) return null;
+                  const x = (((from.x ?? 0) + (to.x ?? 0)) / 2) * view.k + view.x;
+                  const y = (((from.y ?? 0) + (to.y ?? 0)) / 2) * view.k + view.y;
+                  return (
+                    <button
+                      type="button"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => {
+                        relate(pickedLine[0], pickedLine[1], false);
+                        setPickedLine(null);
+                      }}
+                      className="absolute z-10 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-xs text-red-700 shadow-md ring-1 ring-black/[0.08] hover:bg-red-50"
+                      style={{ left: x, top: y }}
+                    >
+                      <X size={12} />
+                      {t('删除这条关联')}
+                    </button>
+                  );
+                })()}
             </Canvas>
 
-            {/* The zoom, over the canvas. */}
-            <div className="absolute bottom-3 left-3 flex items-center rounded-lg bg-white/95 p-0.5 shadow-sm ring-1 ring-black/[0.06]">
-              <button type="button" onClick={() => zoom(1 / 1.25)} aria-label={t('缩小')} title={t('缩小')} className={control}>
-                <Minus size={15} />
-              </button>
-              <span className="w-12 text-center text-xs tabular-nums text-gray-600">{Math.round(view.k * 100)}%</span>
-              <button type="button" onClick={() => zoom(1.25)} aria-label={t('放大')} title={t('放大')} className={control}>
-                <Plus size={15} />
-              </button>
-              <button type="button" onClick={fitView} aria-label={t('显示全部')} title={t('显示全部')} className={control}>
-                <Scan size={15} />
-              </button>
+            {/* The zoom and what the lines mean, over the canvas. */}
+            <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-2">
+              <div className="flex items-center rounded-lg bg-white/95 p-0.5 shadow-sm ring-1 ring-black/[0.06]">
+                <button type="button" onClick={() => zoom(1 / 1.25)} aria-label={t('缩小')} title={t('缩小')} className={control}>
+                  <Minus size={15} />
+                </button>
+                <span className="w-12 text-center text-xs tabular-nums text-gray-600">{Math.round(view.k * 100)}%</span>
+                <button type="button" onClick={() => zoom(1.25)} aria-label={t('放大')} title={t('放大')} className={control}>
+                  <Plus size={15} />
+                </button>
+                <button type="button" onClick={fitView} aria-label={t('显示全部')} title={t('显示全部')} className={control}>
+                  <Scan size={15} />
+                </button>
+              </div>
+              <div className="hidden items-center gap-3 rounded-lg bg-white/95 px-3 py-1.5 text-[11.5px] text-gray-500 shadow-sm ring-1 ring-black/[0.06] sm:flex">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-0.5 w-5 rounded bg-[#cfcfd6]" />
+                  {t('分支')}
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-5 border-t-2 border-dashed border-[#60a5fa]" />
+                  {t('关联')}
+                </span>
+              </div>
             </div>
 
             {/* The chosen node's block, as the block view shows it, and what can be done with it. */}
@@ -777,17 +935,23 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                   <BlockWithTools paperId={paper.id} block={selectedBlock} />
                 </div>
                 <div className="space-y-3 border-t border-black/[0.06] px-4 py-3">
-                  {adding ? (
+                  {picker ? (
                     <div className="space-y-1.5">
                       <label className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-2 py-1.5 focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-100">
                         <Search size={13} className="text-gray-400" />
-                        <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('找一块挂到这里')} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none" />
-                        <button type="button" onClick={() => setAdding(false)} aria-label={t('关闭')} className="text-gray-400 hover:text-gray-700">
+                        <input
+                          autoFocus
+                          value={query}
+                          onChange={(event) => setQuery(event.target.value)}
+                          placeholder={picker === 'line' ? t('找一块连到这里') : t('找一块挂到这里')}
+                          className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+                        />
+                        <button type="button" onClick={() => setPicker(null)} aria-label={t('关闭')} className="text-gray-400 hover:text-gray-700">
                           <X size={13} />
                         </button>
                       </label>
                       <div className="max-h-40 overflow-y-auto">
-                        {choices.length === 0 && <p className="py-2 text-center text-xs text-gray-400">{t('所有块都已经在图里了')}</p>}
+                        {choices.length === 0 && <p className="py-2 text-center text-xs text-gray-400">{picker === 'line' ? t('图里没有可以连的块了') : t('所有块都已经在图里了')}</p>}
                         {choices.map((block) => {
                           const Icon = KIND_ICON[block.kind];
                           return (
@@ -795,8 +959,9 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                               key={block.id}
                               type="button"
                               onClick={() => {
-                                change(withPlacement(paper.blocks, logicRef.current, block.id, selected));
-                                setAdding(false);
+                                if (picker === 'line') relate(selected, block.id, true);
+                                else change(withPlacement(paper.blocks, draftRef.current.logic, block.id, selected));
+                                setPicker(null);
                                 setQuery('');
                               }}
                               className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[13px] text-gray-700 hover:bg-violet-50 hover:text-violet-800"
@@ -809,31 +974,57 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                       </div>
                     </div>
                   ) : (
-                    selected !== start && (
-                      <label className="block text-xs text-gray-500">
-                        {t('挂在哪个节点下面')}
-                        <select
-                          value={tree.nodes[selected]?.parent ?? ''}
-                          onChange={(event) => place(selected, event.target.value || null)}
-                          className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[13px] text-gray-800 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100"
-                        >
-                          <option value="">{t('不连接')}</option>
-                          {graph.ids
-                            .filter((id) => id !== selected && !(tree.nodes[selected] && subtreeOf(tree, selected).has(id)))
-                            .map((id) => (
-                              <option key={id} value={id}>
-                                {title(id)}
-                              </option>
+                    <>
+                      {selected !== start && (
+                        <label className="block text-xs text-gray-500">
+                          {t('挂在哪个节点下面')}
+                          <select
+                            value={tree.nodes[selected]?.parent ?? ''}
+                            onChange={(event) => place(selected, event.target.value || null)}
+                            className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[13px] text-gray-800 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100"
+                          >
+                            <option value="">{t('不连接')}</option>
+                            {graph.ids
+                              .filter((id) => id !== selected && !(tree.nodes[selected] && subtreeOf(tree, selected).has(id)))
+                              .map((id) => (
+                                <option key={id} value={id}>
+                                  {title(id)}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      )}
+                      {/* The lines drawn to this block, each one taken away by its ×. */}
+                      <div className="text-xs text-gray-500">
+                        <p>{t('关联')}</p>
+                        {relatedTo(lines, selected).length === 0 ? (
+                          <p className="mt-0.5 text-gray-400">{t('还没有关联线：从节点右上角的小圆点拖到另一个节点就能连上。')}</p>
+                        ) : (
+                          <ul className="mt-1 flex flex-wrap gap-1.5">
+                            {relatedTo(lines, selected).map((other) => (
+                              <li key={other} className="inline-flex max-w-full items-center gap-1 rounded-full bg-blue-50 py-0.5 pl-2.5 pr-1 text-blue-800">
+                                <span className="truncate">{title(other)}</span>
+                                <button type="button" onClick={() => relate(selected, other, false)} aria-label={t('删除这条关联')} title={t('删除这条关联')} className="rounded-full p-0.5 hover:bg-blue-100">
+                                  <X size={11} />
+                                </button>
+                              </li>
                             ))}
-                        </select>
-                      </label>
-                    )
+                          </ul>
+                        )}
+                      </div>
+                    </>
                   )}
                   <div className="flex flex-wrap gap-1.5">
-                    {!adding && (
-                      <button type="button" onClick={() => setAdding(true)} className={`${bar} ring-1 ring-black/[0.08]`}>
+                    {!picker && (
+                      <button type="button" onClick={() => setPicker('branch')} className={`${bar} ring-1 ring-black/[0.08]`}>
                         <Plus size={14} />
                         {t('添加分支')}
+                      </button>
+                    )}
+                    {!picker && (
+                      <button type="button" onClick={() => setPicker('line')} className={`${bar} ring-1 ring-black/[0.08]`}>
+                        <Link2 size={14} />
+                        {t('添加关联')}
                       </button>
                     )}
                     {selected !== start && tree.nodes[selected] && (
