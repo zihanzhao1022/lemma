@@ -64,10 +64,10 @@ npm run preview # 预览构建结果
 
 ## 连接 Claude Code
 
-在终端里运行一次：
+在终端里运行一次（`--scope user`：在哪个目录里打开 Claude Code 都能用）：
 
 ```bash
-claude mcp add --transport http lemma https://lemmatex.pages.dev/mcp
+claude mcp add --transport http --scope user lemma https://lemmatex.pages.dev/mcp
 ```
 
 然后在 Claude Code 里输入 `/mcp`，选 lemma → Authenticate：浏览器会打开 Lemma 的确认页，允许之后用 GitHub 登录，就连上了。之后可以直接说「列出我的 Lemma 论文」「把实验 3.2 挂到方法 2.1 下面」「改一下引言的第二段」。
