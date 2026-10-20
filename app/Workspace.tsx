@@ -327,6 +327,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                   blockKind={request.blockKind}
                   afterBlockId={request.afterBlockId}
                   convertTo={request.convertTo}
+                  newId={request.newId}
                   readFile={access.readFile}
                   onSave={counted}
                   onClose={closeDialog}

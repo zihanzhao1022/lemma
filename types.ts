@@ -407,6 +407,8 @@ export type EditRequest =
       afterBlockId?: string;
       /** Turn an existing figure into a table or a table into a figure: saving changes the block's kind. */
       convertTo?: FloatKind;
+      /** The ID a new block gets, so that whoever asked for it can find it once it is saved. */
+      newId?: string;
     }
   /** A results paper's preamble and attachments. */
   | { kind: 'paperSettings'; paperId: string }

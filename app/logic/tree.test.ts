@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ResultBlock, ResultPaper } from '../../types';
 import { nodeLabels, wordsOf } from './labels';
 import { layoutTree } from './layout';
-import { ancestorsOf, buildTree, canMove, cleanLogic, logicTree, movesFrom, paperParents, paperTree, placedIn, pruned, subtreeOf, withPlacement, withoutBlock } from './tree';
+import { ancestorsOf, branchEnd, buildTree, canMove, cleanLogic, logicTree, movesFrom, paperParents, paperTree, placedIn, pruned, subtreeOf, withPlacement, withoutBlock } from './tree';
 
 const text = (id: string, source: string): ResultBlock => ({ id, kind: 'text', source });
 
@@ -90,6 +90,18 @@ describe('a logic built by hand', () => {
     const looped = logicTree(paper({ m1: 'e1', e1: 'm1', e2: 'gone' }));
     expect(looped.order.sort()).toEqual(['e1', 'e2', 'm1']);
     expect(looped.nodes.e2.parent).toBeNull();
+  });
+
+  it('puts a block made for a branch next to its siblings in the paper, after all that is under the last of them', () => {
+    const tree = logicTree(paper(LOGIC));
+    // A new method stays among the methods, though the experiments of Method 2 hang under it.
+    expect(branchEnd(paper(), tree, 'meth')).toBe('m2');
+    expect(branchEnd(paper(), tree, 'e1')).toBe('t1');
+    // After the text that goes on under Exp 4's heading.
+    expect(branchEnd(paper(), tree, 'e3')).toBe('more');
+    // Nothing under it yet: after its own part of the paper, or after itself.
+    expect(branchEnd(paper(), tree, 'exps')).toBe('more');
+    expect(branchEnd(paper(), tree, 'concl')).toBe('concl');
   });
 
   it('takes a block out, the blocks under it going up to where it was', () => {

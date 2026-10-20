@@ -2,17 +2,19 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
 import { ForceLink, Simulation, SimulationLinkDatum, SimulationNodeDatum, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force';
 import { AlignLeft, GripVertical, Image, Link2, ListTree, Minus, Network, Play, Plus, RotateCcw, Scan, Search, Table2, Trash2, Undo2, X } from 'lucide-react';
+import { useEditMode } from '../../components/EditMode';
 import { BlockWithTools } from '../../components/results/ResultPage';
 import { describeSaveError } from '../../editor/backend';
+import { newBlockId } from '../../editor/results/actions';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { resultsCommitMessage } from '../../editor/results/ops';
-import { useMessage } from '../../lib/i18n';
+import { N_, useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultBlock, ResultBlockKind, ResultPaper } from '../../types';
 import { Placed, Relation, cleanRelations, fitAll, graphOf, nodeAt, radiusOf, related, relatedTo, startOf, withRelation, withoutRelation } from './graph';
 import { LabelWords, NodeLabel, nodeLabels } from './labels';
 import { LogicDraft, changedDraft, draftOf, savedDraft, unsavedLogic } from './latest';
-import { Logic, TOP, cleanLogic, logicTree, placedIn, subtreeOf, withPlacement, withoutBlock } from './tree';
+import { Logic, TOP, branchEnd, cleanLogic, logicTree, placedIn, subtreeOf, withPlacement, withoutBlock } from './tree';
 
 interface Props {
   paper: ResultPaper;
@@ -37,6 +39,8 @@ interface GraphNode extends SimulationNodeDatum {
 type GraphEdge = SimulationLinkDatum<GraphNode>;
 
 const KIND_ICON: Record<ResultBlockKind, typeof AlignLeft> = { text: AlignLeft, figure: Image, table: Table2 };
+const KINDS: ResultBlockKind[] = ['text', 'figure', 'table'];
+const KIND_NAME: Record<ResultBlockKind, string> = { text: N_('文字'), figure: N_('图'), table: N_('表格') };
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3;
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
@@ -85,6 +89,56 @@ const ListItem: React.FC<{ block: ResultBlock; label: NodeLabel; inGraph: boolea
   );
 };
 
+/** The kinds a new block can be, as the block view offers them; a press elsewhere or Escape closes it. */
+const KindMenu: React.FC<{
+  onPick: (kind: ResultBlockKind) => void;
+  onClose: () => void;
+  /** Presses in here (the menu and the button that opened it) leave it open; the menu itself when omitted. */
+  within?: React.RefObject<HTMLElement>;
+  className?: string;
+  style?: React.CSSProperties;
+}> = ({ onPick, onClose, within, className = '', style }) => {
+  const t = useT();
+  const menu = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const onDown = (event: PointerEvent) => {
+      if (!(within ?? menu).current?.contains(event.target as Node)) close.current();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close.current();
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [within]);
+  return (
+    <div ref={menu} role="menu" aria-label={t('新建一块')} className={`z-40 w-36 rounded-xl bg-white p-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.3)] ring-1 ring-black/[0.08] ${className}`} style={style}>
+      <p className="px-2 pb-0.5 pt-1 text-[11px] text-gray-400">{t('新建一块')}</p>
+      {KINDS.map((kind, index) => {
+        const Icon = KIND_ICON[kind];
+        return (
+          <button
+            key={kind}
+            type="button"
+            role="menuitem"
+            autoFocus={index === 0}
+            onClick={() => onPick(kind)}
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-gray-700 outline-none hover:bg-violet-50 hover:text-violet-800 focus-visible:bg-violet-50 focus-visible:text-violet-800"
+          >
+            <Icon size={14} className={kind === 'text' ? 'text-gray-400' : 'text-violet-500'} aria-hidden="true" />
+            {t(KIND_NAME[kind])}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 /** The canvas, a place blocks from the list are dropped on. */
 const Canvas = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(function Canvas(props, ref) {
   const { setNodeRef } = useDroppable({ id: 'graph' });
@@ -126,6 +180,13 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
   const [drawing, setDrawing] = useState<{ from: string; x: number; y: number } | null>(null);
   const [pickedLine, setPickedLine] = useState<Relation | null>(null);
   const [query, setQuery] = useState('');
+  // The kinds a new block can be, offered under the bar's button or where the canvas was double-clicked; the
+  // block shows at `at` once saved.
+  const [adding, setAdding] = useState<{ menu: 'bar' | { left: number; top: number }; at: [number, number] } | null>(null);
+  const addButton = useRef<HTMLSpanElement>(null);
+  // A block asked for here: once its save lands it goes into the graph, under `parent` or alone at `at`.
+  const asked = useRef<{ id: string; parent: string | null; at: [number, number] | null } | null>(null);
+  const { open } = useEditMode();
   const [, setFrame] = useState(0);
   const viewport = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLDivElement | null>(null);
@@ -258,6 +319,30 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     writePins(paper.id, pins.current);
     if (selected === id) setSelected(null);
   };
+
+  /** Opens the editor for a new block of `kind`; once saved, it hangs under `parent`, or stays alone at `at`. */
+  const create = (kind: ResultBlockKind, parent: string | null, at: [number, number] | null) => {
+    setAdding(null);
+    setPicker(null);
+    setQuery('');
+    const id = newBlockId();
+    asked.current = { id, parent, at };
+    // In the paper, a branch's block goes next to the blocks already under its parent (branchEnd); a block alone, at the end.
+    open({ kind: 'block', paperId: paper.id, blockKind: kind, afterBlockId: parent ? branchEnd(paper, tree, parent) : undefined, newId: id });
+  };
+
+  // The block asked for, once its save lands: into the graph, and chosen.
+  useEffect(() => {
+    const wish = asked.current;
+    if (!wish || !paper.blocks.some((block) => block.id === wish.id)) return;
+    asked.current = null;
+    if (wish.at) {
+      pins.current[wish.id] = wish.at;
+      writePins(paper.id, pins.current);
+    }
+    change(withPlacement(paper.blocks, draftRef.current.logic, wish.id, wish.parent));
+    setSelected(wish.id);
+  }, [paper.blocks]);
 
   // The forces, and the nodes they move, kept across renders so every node keeps its place.
   const simulation = useRef<Simulation<GraphNode, GraphEdge> | null>(null);
@@ -392,6 +477,37 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
     const rect = viewport.current?.getBoundingClientRect();
     const current = viewRef.current;
     return { x: (clientX - (rect?.left ?? 0) - current.x) / current.k, y: (clientY - (rect?.top ?? 0) - current.y) / current.k };
+  };
+
+  /** A free place in the middle of what is in sight (beside the panel, when one is open), for a block alone. */
+  const middle = (): [number, number] => {
+    const rect = viewport.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return [0, 0];
+    const room = selected && rect.width >= 640 ? rect.width - 400 : rect.width;
+    const centre = toGraph(rect.left + room / 2, rect.top + rect.height / 2);
+    // Clear of the nodes there and their labels: the middle, else the nearest such place around it, below first.
+    const free = (x: number, y: number) => placed.every((node) => Math.abs(node.x - x) > 80 || Math.abs(node.y - y) > 50);
+    for (let ring = 0; ring <= 6; ring += 1) {
+      for (let step = 0; step < (ring === 0 ? 1 : 8); step += 1) {
+        const angle = Math.PI / 2 + (step * Math.PI) / 4;
+        const x = centre.x + Math.cos(angle) * ring * 60;
+        const y = centre.y + Math.sin(angle) * ring * 60;
+        if (free(x, y)) return [x, y];
+      }
+    }
+    return [centre.x, centre.y];
+  };
+
+  /** A double click on an empty place of the canvas offers a new block there. */
+  const onDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if ((event.target as Element).closest('[data-graph-node], [data-graph-line], button')) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = toGraph(event.clientX, event.clientY);
+    setSelected(null);
+    setAdding({
+      menu: { left: clamp(event.clientX - rect.left + 16, 8, rect.width - 152), top: clamp(event.clientY - rect.top - 12, 8, rect.height - 150) },
+      at: [point.x, point.y],
+    });
   };
 
   // A node in hand, or the canvas: the middle button drags the canvas anywhere, the left one where there is no node.
@@ -593,6 +709,22 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
         </span>
         <span className="hidden min-w-0 truncate text-xs text-gray-400 xl:block">{t('从左边把块拖到节点上，就添加一个分支；拖动节点调整位置，拖到另一个节点上就挂到它下面；从节点右上角的小圆点拖到另一个节点，就连一条关联线。')}</span>
         <span className="ml-auto flex items-center gap-1">
+          <span ref={addButton} className="relative">
+            <button
+              type="button"
+              onClick={() => setAdding(adding?.menu === 'bar' ? null : { menu: 'bar', at: middle() })}
+              aria-haspopup="menu"
+              aria-expanded={adding?.menu === 'bar'}
+              title={t('新建一块；双击画布的空白处也可以')}
+              className={bar}
+            >
+              <Plus size={14} />
+              <span className="hidden sm:inline">{t('新建块')}</span>
+            </button>
+            {adding?.menu === 'bar' && (
+              <KindMenu within={addButton} onPick={(kind) => create(kind, null, adding.at)} onClose={() => setAdding(null)} className="absolute right-0 top-full mt-1.5" />
+            )}
+          </span>
           {Object.keys(pins.current).length > 0 && (
             <button type="button" onClick={relayout} className={bar} title={t('重新排布')}>
               <RotateCcw size={14} />
@@ -685,7 +817,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
               )}
             </p>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-              {paper.blocks.length === 0 && <p className="py-6 text-center text-xs text-gray-400">{t('这篇论文还没有块。先在「分块」里添加文字、图或表格。')}</p>}
+              {paper.blocks.length === 0 && <p className="py-6 text-center text-xs text-gray-400">{t('这篇论文还没有块：用上面的「新建块」，或者双击画布，添加第一块。')}</p>}
               {paper.blocks.map((block) => (
                 <ListItem key={block.id} block={block} label={labels[block.id] ?? { title: block.id }} inGraph={inGraph.has(block.id)} selected={selected === block.id} onPick={pick} />
               ))}
@@ -699,6 +831,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
+              onDoubleClick={onDoubleClick}
               onAuxClick={(event) => event.preventDefault()}
               className={`absolute inset-0 touch-none select-none overflow-hidden bg-[#fafafb] ${grab.current?.moved ? 'cursor-grabbing' : 'cursor-grab'}`}
               style={{
@@ -708,7 +841,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
               }}
             >
               {nodeCount === 0 ? (
-                <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-gray-500">{t('这篇论文还没有块。先在「分块」里添加文字、图或表格。')}</p>
+                <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-gray-500">{t('这篇论文还没有块：用上面的「新建块」，或者双击画布，添加第一块。')}</p>
               ) : (
                 <svg className="absolute inset-0 h-full w-full overflow-visible" aria-label={t('逻辑结构')}>
                   <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
@@ -738,6 +871,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                             y2={to.y}
                             stroke="transparent"
                             strokeWidth={14 / view.k}
+                            data-graph-line
                             className="cursor-pointer"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={() => setPickedLine([a, b])}
@@ -852,6 +986,9 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                         </g>
                       );
                     })}
+                    {adding && (
+                      <circle cx={adding.at[0]} cy={adding.at[1]} r={10} fill="rgba(139,92,246,0.12)" stroke="#8b5cf6" strokeWidth={1.5} strokeDasharray="3 2" className="pointer-events-none" />
+                    )}
                   </g>
                 </svg>
               )}
@@ -883,6 +1020,9 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                   );
                 })()}
             </Canvas>
+            {adding && adding.menu !== 'bar' && (
+              <KindMenu onPick={(kind) => create(kind, null, adding.at)} onClose={() => setAdding(null)} className="absolute" style={{ left: adding.menu.left, top: adding.menu.top }} />
+            )}
 
             {/* The zoom and what the lines mean, over the canvas. */}
             <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-2">
@@ -972,6 +1112,25 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                           );
                         })}
                       </div>
+                      {picker === 'branch' && (
+                        <div className="flex flex-wrap items-center gap-1.5 border-t border-black/[0.06] pt-2 text-xs text-gray-500">
+                          {t('或者新建一块挂在这里：')}
+                          {KINDS.map((kind) => {
+                            const Icon = KIND_ICON[kind];
+                            return (
+                              <button
+                                key={kind}
+                                type="button"
+                                onClick={() => create(kind, selected, null)}
+                                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12.5px] text-gray-700 ring-1 ring-black/[0.1] hover:bg-violet-50 hover:text-violet-800"
+                              >
+                                <Icon size={12} className={kind === 'text' ? 'text-gray-400' : 'text-violet-500'} aria-hidden="true" />
+                                {t(KIND_NAME[kind])}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>

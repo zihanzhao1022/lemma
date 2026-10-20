@@ -397,10 +397,6 @@ export const { t, useT, table } = phrases({
   逻辑结构: { ja: '論理構成', en: 'Logic' },
   摘要: { ja: '概要', en: 'Abstract' },
   '（空白）': { ja: '（空白）', en: '(empty)' },
-  '这篇论文还没有块。先在「分块」里添加文字、图或表格。': {
-    ja: 'この論文にはまだブロックがありません。まず「ブロック」でテキスト、図、表を追加してください。',
-    en: 'This paper has no blocks yet. Add text, figures or tables under Blocks first.',
-  },
   地图: { ja: 'マップ', en: 'Map' },
   '地图（M）': { ja: 'マップ（M）', en: 'Map (M)' },
   位置: { ja: '現在地', en: 'Where you are' },
@@ -441,10 +437,6 @@ export const { t, useT, table } = phrases({
   清空: { ja: '空にする', en: 'Clear' },
   论文的块: { ja: '論文のブロック', en: 'The paper’s blocks' },
 
-  // The logic read and built like the block view
-
-  // Dropping blocks in the branch view
-
   // The logic as a graph
   '拖到图里的一个节点上，就成为它的一个分支': { ja: 'グラフのノードの上にドラッグすると、その枝になります', en: 'Drag onto a node of the graph to make it a branch of that node' },
   在图里: { ja: 'グラフ内', en: 'In the graph' },
@@ -479,4 +471,14 @@ export const { t, useT, table } = phrases({
   '还没有关联线：从节点右上角的小圆点拖到另一个节点就能连上。': { ja: 'まだ関連線がありません。ノード右上の小さな丸から別のノードへドラッグするとつながります。', en: 'No links yet: drag from the small dot at a node’s top right to another node.' },
   添加关联: { ja: '関連を追加', en: 'Add a link' },
   分支: { ja: '枝', en: 'Branches' },
+
+  // Blocks made on the graph
+  新建块: { ja: '新規ブロック', en: 'New block' },
+  新建一块: { ja: '新しいブロック', en: 'New block' },
+  '新建一块；双击画布的空白处也可以': { ja: '新しいブロックを作ります。キャンバスの空いているところをダブルクリックしても作れます', en: 'Make a new block; double-clicking an empty spot on the canvas does it too' },
+  '或者新建一块挂在这里：': { ja: 'または、ここに新しいブロックを作る：', en: 'Or make a new one here:' },
+  '这篇论文还没有块：用上面的「新建块」，或者双击画布，添加第一块。': {
+    ja: 'この論文にはまだブロックがありません。上の「新規ブロック」か、キャンバスのダブルクリックで最初のブロックを追加してください。',
+    en: 'This paper has no blocks yet: add the first one with New block above, or by double-clicking the canvas.',
+  },
 });

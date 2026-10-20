@@ -64,19 +64,21 @@ interface Props {
   afterBlockId?: string;
   /** Turn the figure or table into the other kind (see convertedBlock); saving changes its kind. */
   convertTo?: FloatKind;
+  /** The ID a new block gets; a fresh one when omitted. */
+  newId?: string;
   readFile: ReadFile;
   onSave: ResultsSave;
   onClose: () => void;
 }
 
 /** Full-screen LaTeX editor for one block: code on the left, the compiled PDF on the right. */
-const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afterBlockId, convertTo, readFile, onSave, onClose }) => {
+const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afterBlockId, convertTo, newId, readFile, onSave, onClose }) => {
   const t = useT();
   const existing = blockId === undefined ? undefined : paper.blocks.find((item) => item.id === blockId);
   const [block] = useState<ResultBlock>(() => {
     if (existing && convertTo && convertTo !== existing.kind) return convertedBlock(existing, convertTo);
     return existing ?? {
-      id: newBlockId(), kind: blockKind,
+      id: newId ?? newBlockId(), kind: blockKind,
       source: blockKind === 'table' ? serializeTable(createTable()) : BLOCK_TEMPLATES[blockKind](),
     };
   });

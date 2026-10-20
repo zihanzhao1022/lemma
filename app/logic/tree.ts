@@ -229,6 +229,18 @@ export function subtreeOf(tree: LogicTree, id: string): Set<string> {
   return found;
 }
 
+/**
+ * The block a new branch of `id` follows in the paper: the end of the part of the paper (by its headings) that
+ * holds the last block already under `id`, or `id` itself. Next to its siblings, then, and never inside the
+ * section of another block.
+ */
+export function branchEnd(paper: Pick<ResultPaper, 'blocks' | 'preamble'>, tree: LogicTree, id: string): string {
+  const children = tree.nodes[id]?.children ?? [];
+  const last = children.length > 0 ? children[children.length - 1] : id;
+  const part = subtreeOf(paperTree(paper), last);
+  return [...paper.blocks].reverse().find((block) => part.has(block.id))?.id ?? last;
+}
+
 /** A text block's first heading as the page numbers it ("3.1 Method"), or without the number. */
 export function headingTitle(sections: BlockSection[] | undefined, numbered = true): string | undefined {
   const heading = sections?.find((section) => section.level !== 'appendix' && section.level !== 'paragraph' && section.title) ?? sections?.find((section) => section.title);
