@@ -353,6 +353,7 @@ export const TOOLS: Tool[] = [
       if (!Array.isArray(args.placements) || args.placements.length === 0) throw new ToolError('Give the placements: [{ block, under }].');
       let { logic, tree } = logicOf(paper);
       const { start } = logicOf(paper);
+      let relations = paper.relations ?? [];
       const named = new Set<string>();
       for (const item of args.placements as { block?: unknown; under?: unknown }[]) {
         const block = blockOf(paper, item?.block);
@@ -363,10 +364,12 @@ export const TOOLS: Tool[] = [
         }
         logic = withPlacement(paper.blocks, logic, block.id, under);
         tree = logicTree({ blocks: paper.blocks, logic });
+        // A line drawn between the two goes: a branch joins them now.
+        if (under) relations = withoutRelation(relations, block.id, under);
         named.add(block.id);
         if (under) named.add(under);
       }
-      const saved = await library.save(logicPatch(paper, paper.blocks, logic, paper.relations ?? []), message('update logic of', paper), [], stillThere(paper.id, [...named]));
+      const saved = await library.save(logicPatch(paper, paper.blocks, logic, relations), message('update logic of', paper), [], stillThere(paper.id, [...named]));
       return `Saved.\n${logicAfter(saved, paper.id)}`;
     },
   },

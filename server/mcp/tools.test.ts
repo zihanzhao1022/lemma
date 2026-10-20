@@ -257,6 +257,13 @@ describe('building the logic', () => {
     expect(state.commits[0].message).toBe('results: update logic of "A Made-up Study of Gates" (Claude Code)');
   });
 
+  it('drops a line drawn between two blocks once one hangs under the other', async () => {
+    const { library, state } = fakeLibrary([{ ...paper(), logic: { meth: 'intro', m1: 'meth', e1: 'm1', e2: '' }, relations: [['e1', 'e2']] }]);
+    await tool(library, 'place_blocks', { paper: 'res-a', placements: [{ block: 'e2', under: 'e1' }] });
+    expect(state.papers[0].logic).toMatchObject({ e2: 'e1' });
+    expect(state.papers[0].relations).toBeUndefined();
+  });
+
   it('takes blocks out of the logic, never the introduction', async () => {
     const { library, state } = fakeLibrary();
     await tool(library, 'remove_from_logic', { paper: 'res-a', blocks: ['meth'] });
