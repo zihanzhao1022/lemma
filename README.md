@@ -13,6 +13,7 @@ A platform for managing experiment results and writing the paper in one place, m
   - 可视化幻灯片：用论文里编译好的图和表格先生成一套，再拖拽排版、加文字和演讲备注；论文里的块改了，幻灯片上的也跟着变。可以导出 PDF（块保持矢量）和 PowerPoint（文字可编辑，块是 300 dpi 图片）。
   - Beamer：用 LaTeX 写，`\lemmablock{tab:main}` 把论文里编译好的块放到一页上（按块的 `\label` 或块 id），右边实时编译。导出 PDF 就是编译结果，导出 PowerPoint 是每页一张图。
 - **协作和展示**：分享给合作者、页边批注、演示模式（一块一屏，或者放幻灯片）。
+- **在 Claude Code 里用**：Lemma 是一个 MCP 服务器，Claude Code 可以读论文、改块的 LaTeX 和导言区、搭逻辑结构（见下面「连接 Claude Code」）。
 
 LaTeX 在浏览器里编译（SwiftLaTeX 的 pdfTeX，见 `public/texlive/`），不需要编译服务器。
 
@@ -46,6 +47,7 @@ npm run preview # 预览构建结果
 | `components/results/` | 论文页：分块显示、目录、批注、PDF 显示 |
 | `editor/results/` | 块编辑器、表格可视化编辑器、编译和保存 |
 | `editor/tex/` | 浏览器里的 pdfTeX（worker 外壳、日志解析） |
+| `server/` | Cloudflare Pages Functions 的代码：GitHub 登录（`auth.ts`），给 Claude Code 的 MCP 服务器（`mcp/`） |
 | `lib/` | 多语言（`lib/phrases/`，中文为键，带日文和英文）、会话和通用工具 |
 | `public/texlive/` | TeX 引擎和常用 TeX Live 文件，由 `scripts/fetch-texlive.mjs` 生成 |
 
@@ -57,7 +59,25 @@ npm run preview # 预览构建结果
 
 - 构建命令：`npm run build`，输出目录 `dist`，Node 版本读取 `.node-version`（22）
 - `functions/api/` 是登录用的三个接口（Pages Functions，和网站同一个域名）：`/api/token` 用 GitHub 返回的 code 换令牌，`/api/refresh` 用只有这几个接口能读的 Cookie 续期，`/api/logout` 退出。代码在 `server/auth.ts`。
+- `functions/mcp.ts`、`functions/api/mcp/`、`functions/.well-known/` 和 `functions/index.ts` 是给 Claude Code 的 MCP 服务器（见「连接 Claude Code」），用的是同一个 `GITHUB_CLIENT_SECRET`，不需要别的设置。本地试：`npm run build` 之后 `npx wrangler pages dev dist --port 8788`。
 - 在 Pages 项目的 Settings → Variables and Secrets 里设置 `GITHUB_CLIENT_SECRET`（类型 Secret）：GitHub App 的 client secret，不进仓库。
+
+## 连接 Claude Code
+
+在终端里运行一次：
+
+```bash
+claude mcp add --transport http lemma https://lemmatex.pages.dev/mcp
+```
+
+然后在 Claude Code 里输入 `/mcp`，选 lemma → Authenticate：浏览器会打开 Lemma 的确认页，允许之后用 GitHub 登录，就连上了。之后可以直接说「列出我的 Lemma 论文」「把实验 3.2 挂到方法 2.1 下面」「改一下引言的第二段」。
+
+- 能做的事：列出论文，看一篇论文的块、逻辑结构、关联线和附件，读块的 LaTeX 和文本附件（比如 `references.bib`）；改、加、删块，改导言区，把块挂到逻辑结构里或拿出来，连或删关联线。分享和公开不在其中。
+- 每次修改都马上作为一次提交存进你的论文仓库，提交说明末尾带「(Claude Code)」。
+- Claude Code 那边不编译 LaTeX：在 Lemma 里打开这篇论文时，改过的块会在后台自动编译；切回 Lemma 的标签页时会重新读取论文。
+- 授权只会交给本机（localhost）上的 Claude Code。要撤销，在 GitHub 的 Settings → Applications → Authorized GitHub Apps 里撤销 Lemma。
+
+实现在 `server/mcp/`：`oauth.ts` 让网站当 OAuth 授权服务器（用 GitHub 登录，发给客户端的是封好的令牌，`seal.ts`，服务器不存任何东西），`protocol.ts` 是 MCP 接口，`tools.ts` 是各个工具，`library.ts` 用和网页相同的方式读写论文仓库。GitHub App 只允许回到网站首页，所以 GitHub 的回答先到首页，再由 `functions/index.ts` 转给 MCP 的登录流程。
 
 ## 账号和数据
 

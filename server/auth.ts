@@ -24,8 +24,8 @@ export interface SignedIn {
 
 const REFRESH_COOKIE = 'lemma_refresh';
 // GitHub's lifetimes, for an answer that leaves them out.
-const ACCESS_SECONDS = 8 * 60 * 60;
-const REFRESH_SECONDS = 180 * 24 * 60 * 60;
+export const ACCESS_SECONDS = 8 * 60 * 60;
+export const REFRESH_SECONDS = 180 * 24 * 60 * 60;
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
@@ -37,7 +37,7 @@ const CLEARED_COOKIE = `${REFRESH_COOKIE}=; Path=/api; HttpOnly; Secure; SameSit
 /** The site's own pages only: the refresh cookie must never answer another site. */
 const sameOrigin = (request: Request): boolean => request.headers.get('Origin') === new URL(request.url).origin;
 
-function readCookie(request: Request, name: string): string | null {
+export function readCookie(request: Request, name: string): string | null {
   for (const part of (request.headers.get('Cookie') ?? '').split(';')) {
     const [key, ...value] = part.trim().split('=');
     if (key === name) return value.join('=') || null;
@@ -45,14 +45,14 @@ function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
-const githubHeaders = (authorization: string): Record<string, string> => ({
+export const githubHeaders = (authorization: string): Record<string, string> => ({
   Accept: 'application/vnd.github+json',
   Authorization: authorization,
   'User-Agent': 'Lemma',
   'X-GitHub-Api-Version': '2022-11-28',
 });
 
-interface TokenAnswer {
+export interface TokenAnswer {
   access_token?: string;
   expires_in?: number;
   refresh_token?: string;
@@ -60,7 +60,8 @@ interface TokenAnswer {
   error?: string;
 }
 
-async function askGitHub(params: Record<string, string>): Promise<TokenAnswer> {
+/** GitHub's token endpoint: a code or a refresh token for an access token (and a new refresh token). */
+export async function askGitHub(params: Record<string, string>): Promise<TokenAnswer> {
   const res = await fetch('https://github.com/login/oauth/access_token', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -94,7 +95,7 @@ async function signedIn(answer: TokenAnswer, accessToken: string): Promise<Respo
   return json(body, 200, cookie);
 }
 
-const configured = (env: Env): env is Env & { GITHUB_CLIENT_SECRET: string } => Boolean(env.GITHUB_CLIENT_SECRET && GITHUB_APP.clientId);
+export const configured = (env: Env): env is Env & { GITHUB_CLIENT_SECRET: string } => Boolean(env.GITHUB_CLIENT_SECRET && GITHUB_APP.clientId);
 
 /** POST /api/token {code, verifier?, redirectUri}: the code GitHub sent back, for a session. */
 export async function handleToken(request: Request, env: Env): Promise<Response> {

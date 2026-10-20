@@ -137,6 +137,29 @@ export const AccountProvider: React.FC<{ account: Account; source: AccountSource
     (paperId: string) => (github ? undefined : ACCOUNTS.find((other) => mockStore(storeKeyOf(other.login)).papers.some((paper) => paper.id === paperId))),
     [github],
   );
+  // Papers changed elsewhere meanwhile (on another computer, or by Claude Code through Lemma's MCP server) show
+  // when the person comes back to this tab.
+  const { reload } = mine;
+  useEffect(() => {
+    if (!github) return undefined;
+    let away = 0;
+    const leave = () => {
+      away = Date.now();
+    };
+    const back = () => {
+      if (away && Date.now() - away > 5_000) reload();
+      away = 0;
+    };
+    const onVisibility = () => (document.visibilityState === 'hidden' ? leave() : back());
+    window.addEventListener('blur', leave);
+    window.addEventListener('focus', back);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', leave);
+      window.removeEventListener('focus', back);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [github, reload]);
   const repo = github ? repoLabel(github) : connectedRepo(account.login) ?? '';
   const features = github ? GITHUB_FEATURES : MOCK_FEATURES;
   const value = useMemo<AccountValue>(

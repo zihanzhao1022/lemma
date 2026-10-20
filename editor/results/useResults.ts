@@ -12,7 +12,7 @@ import type { ResultsSave } from './BlockEditor';
 import { PaperRole, withCollaboratorIds } from './collaborators';
 import { createCollaboratorResults, createResults, createUserLookup } from './connect';
 import { switchedOp } from './convert';
-import { describeFailure } from './numbering';
+import { describeFailure, staleBlocks } from './numbering';
 import { ResultsOp, applyResultsOp, fromContentOp, resultsCommitMessage } from './ops';
 import { replaceContent } from './project';
 import { WorkerError } from './workerBackend';
@@ -521,6 +521,37 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [backend, loadState.state, unavailable, enqueue, settle],
   );
 
+  /** Papers whose out-of-date blocks are compiling in the background (compileStale). */
+  const compiling = useRef(new Set<string>());
+
+  /**
+   * Compiles the paper's blocks whose PDFs are out of date because they were changed where LaTeX does not run
+   * (Claude Code, through Lemma's MCP server: server/mcp), in the background, and saves their PDFs. Editing goes
+   * on meanwhile and wins: a PDF is kept only while its block's source is still the one compiled (setOutputs).
+   */
+  const compileStale = useCallback(
+    (paperId: string) => {
+      if (!backend || loadState.state !== 'private' || compiling.current.has(paperId)) return;
+      const paper = latest.current.find((item) => item.id === paperId);
+      const stale = paper ? staleBlocks(paper) : [];
+      if (!paper || stale.length === 0) return;
+      compiling.current.add(paperId);
+      callbacks.current.onToast({ message: () => t('正在编译在别处改过的 {n} 个块…', { n: stale.length }) });
+      (async () => {
+        const rebuilt = await rebuildWith(paper, await loadAttachments(paper, backend.readFile), { keepGoing: true });
+        if (Object.keys(rebuilt.outputs).length > 0 || rebuilt.references !== undefined) {
+          const message = resultsCommitMessage('compile', paper.title);
+          settle(await enqueue(() => backend.save(withOutputs(paperId, [], rebuilt), rebuilt.writes, rebuilt.deletes, message, `content: update result "${paper.title}"`)));
+        }
+        const failed = rebuilt.failed;
+        callbacks.current.onToast({ message: () => (failed ? describeFailure(paper.blocks, failed) : t('{n} 个块已经重新编译', { n: stale.length })) });
+      })()
+        .catch((error: unknown) => callbacks.current.onToast({ message: () => describeSaveError(error) }))
+        .finally(() => compiling.current.delete(paperId));
+    },
+    [backend, loadState.state, enqueue, settle],
+  );
+
   /**
    * Whether this paper's blocks are still being renumbered and saved after a drag, a switch or an upload. The
    * block and preamble dialogs rebuild from the page, which may not have the new blocks, numbers or files
@@ -542,5 +573,5 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [collaborator, loadState, backend, roles, siteBehind, syncSite, approveEdits, siteAccess, saveSiteViewers],
   );
 
-  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, importPaper, reload, isRenumbering };
+  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering };
 }

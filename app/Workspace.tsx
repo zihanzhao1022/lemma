@@ -10,6 +10,7 @@ import { PresenceContext } from '../components/presence';
 import { ItemModal } from '../editor/components/ItemModal';
 import { usePresence } from '../editor/presence';
 import { loadAttachments } from '../editor/results/actions';
+import { hashText, staleBlocks } from '../editor/results/numbering';
 import { UploadPlan, planUpload } from '../editor/results/uploads';
 import { describeSaveError } from '../editor/backend';
 import { findPaper } from '../lib/results';
@@ -52,7 +53,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const t = useT();
   const account = useAccount()!;
   const { slug } = useParams();
-  const { access, saveResults, saveContentOp, reorderBlocks, switchBlock: switchToKept, uploadFiles: uploadToPaper, isRenumbering, content } = list;
+  const { access, saveResults, saveContentOp, reorderBlocks, switchBlock: switchToKept, uploadFiles: uploadToPaper, isRenumbering, compileStale, content } = list;
   // Shared papers come from several owners, whose slugs may repeat: the route says which one.
   const paper = (paperId ? content.results.find((item) => item.id === paperId) : undefined) ?? findPaper(content.results, slug);
   const shown = useMemo(() => ({ ...content, results: paper ? [paper] : [] }), [content, paper]);
@@ -120,6 +121,20 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     },
     [owner, access, busy, setToast, t],
   );
+
+  // Blocks changed where LaTeX does not run (Claude Code, through Lemma's MCP server) compile once the paper is
+  // open here. What would not compile is tried again only once it changed.
+  const tried = useRef(new Set<string>());
+  useEffect(() => {
+    if (!owner || !paper || access.state !== 'private' || isRenumbering(paper.id)) return;
+    const stale = staleBlocks(paper);
+    if (stale.length === 0) return;
+    const sources = stale.map((id) => paper.blocks.find((block) => block.id === id)?.source ?? '');
+    const key = hashText([paper.id, paper.preamble ?? '', ...sources].join('\n'));
+    if (tried.current.has(key)) return;
+    tried.current.add(key);
+    compileStale(paper.id);
+  }, [owner, paper, access.state, isRenumbering, compileStale]);
 
   const prepared = useRef(new Set<string>());
   const prepare = useCallback(
