@@ -256,6 +256,19 @@ export type CommentOp =
   | { kind: 'resolve'; thread: string; resolved: boolean };
 
 /** A paper on the results pages. Unpublished papers exist only in the private repository. */
+/**
+ * A person's research space: their papers and their ideas (questions, topics, notes) as a graph built by hand, to
+ * think a subject through across papers (app/space). Kept in their repository as research-space.json.
+ */
+export interface ResearchSpace {
+  /** Each node under the node it belongs to: a paper's or an idea's ID → the other's, or '' for none. */
+  parents: Record<string, string>;
+  /** Lines drawn between related nodes: pairs, each once, the smaller ID first. */
+  relations: [string, string][];
+  /** The ideas' words, by ID ("idea-…"). */
+  ideas: Record<string, string>;
+}
+
 export interface ResultPaper extends Hideable {
   id: string;
   /** Address of the paper's page: #/results/<slug>. */

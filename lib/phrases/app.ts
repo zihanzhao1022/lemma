@@ -472,6 +472,35 @@ export const { t, useT, table } = phrases({
   添加关联: { ja: '関連を追加', en: 'Add a link' },
   分支: { ja: '枝', en: 'Branches' },
 
+  // The research space over the list of papers
+  我的研究空间: { ja: '私の研究空間', en: 'My research space' },
+  添加到空间: { ja: '研究空間に追加', en: 'Add to the space' },
+  '放进一篇论文或写一个想法；双击画布的空白处也可以': {
+    ja: '論文を入れるか、アイデアを書きます。キャンバスの空いているところをダブルクリックしても追加できます',
+    en: 'Put in a paper or write an idea; double-clicking an empty spot on the canvas works too',
+  },
+  新想法: { ja: '新しいアイデア', en: 'New idea' },
+  想法: { ja: 'アイデア', en: 'Idea' },
+  '（空白想法）': { ja: '（空のアイデア）', en: '(empty idea)' },
+  '写下这个想法：一个问题、一个方向、一句笔记…': { ja: 'アイデアを書きましょう：問い、方向性、メモ…', en: 'Write the idea down: a question, a direction, a note…' },
+  打开论文: { ja: '論文を開く', en: 'Open the paper' },
+  从空间里拿掉: { ja: '研究空間から外す', en: 'Take out of the space' },
+  删除这个想法: { ja: 'このアイデアを削除', en: 'Delete this idea' },
+  '正在读取研究空间…': { ja: '研究空間を読み込んでいます…', en: 'Reading your research space…' },
+  '把下面的论文拖到这里，或者双击画布写下一个想法，搭出你的研究思路。': {
+    ja: '下の論文をここにドラッグするか、キャンバスをダブルクリックしてアイデアを書き、研究の筋道を組み立てましょう。',
+    en: 'Drag papers from the list below into here, or double-click the canvas to write an idea, and lay out how your research hangs together.',
+  },
+  '把一个节点拖到另一个上，就挂到它下面；从节点右上角的小圆点拖到另一个节点，就连一条关联线。': {
+    ja: 'ノードを別のノードの上にドラッグするとその下に入ります。ノード右上の小さな丸から別のノードへドラッグすると関連線を引けます。',
+    en: 'Drag a node onto another to put it under it; drag from the small dot at a node’s top right to another node to draw a link.',
+  },
+  找一篇论文挂到这里: { ja: 'ここに入れる論文を探す', en: 'Find a paper to put here' },
+  所有论文都已经在空间里了: { ja: 'すべての論文が研究空間にあります', en: 'Every paper is in the space' },
+  找一个节点连到这里: { ja: 'ここにつなぐノードを探す', en: 'Find a node to link here' },
+  空间里没有可以连的节点了: { ja: 'つなげるノードがもうありません', en: 'No node left to link' },
+  或者挂一个新想法: { ja: 'または新しいアイデアを入れる', en: 'Or put a new idea here' },
+
   // Blocks made on the graph
   新建块: { ja: '新規ブロック', en: 'New block' },
   新建一块: { ja: '新しいブロック', en: 'New block' },

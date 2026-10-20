@@ -1,5 +1,5 @@
 import { sectionsOf } from '../../lib/sections';
-import { BlockSection, ResultBlock, ResultPaper } from '../../types';
+import { BlockSection, ResultPaper } from '../../types';
 
 /**
  * Trees of a paper's blocks. The paper's own (paperTree) follows its headings: a subsection under its section, a
@@ -113,7 +113,7 @@ export const paperTree = (paper: Pick<ResultPaper, 'blocks' | 'preamble'>): Logi
   );
 
 /** The blocks in the paper's logic: those placed in it, and those placed blocks are under. */
-export function placedIn(blocks: ResultBlock[], logic: Logic | undefined): Set<string> {
+export function placedIn(blocks: readonly { id: string }[], logic: Logic | undefined): Set<string> {
   const ids = new Set(blocks.map((block) => block.id));
   const found = new Set<string>();
   for (const [id, parent] of Object.entries(logic ?? {})) {
@@ -125,7 +125,7 @@ export function placedIn(blocks: ResultBlock[], logic: Logic | undefined): Set<s
 }
 
 /** The paper's logic as a tree: only the blocks placed in it; one under a block that is gone is at the top. */
-export function logicTree(paper: Pick<ResultPaper, 'blocks' | 'logic'>): LogicTree {
+export function logicTree(paper: { blocks: readonly { id: string }[]; logic?: Logic }): LogicTree {
   const logic = paper.logic ?? {};
   const inTree = placedIn(paper.blocks, logic);
   const ids = paper.blocks.map((block) => block.id).filter((id) => inTree.has(id));
@@ -147,7 +147,7 @@ export function canMove(tree: LogicTree, id: string, target: string): boolean {
 }
 
 /** `logic` without blocks that are gone; a block under one that is gone goes to the top. */
-export function cleanLogic(blocks: ResultBlock[], logic: Logic | undefined): Logic {
+export function cleanLogic(blocks: readonly { id: string }[], logic: Logic | undefined): Logic {
   const ids = new Set(blocks.map((block) => block.id));
   const kept: Logic = {};
   for (const [id, parent] of Object.entries(logic ?? {})) {
@@ -157,12 +157,12 @@ export function cleanLogic(blocks: ResultBlock[], logic: Logic | undefined): Log
 }
 
 /** `logic` with block `id` under `target`, or at the top (null); placed in the tree if it was not. */
-export function withPlacement(blocks: ResultBlock[], logic: Logic, id: string, target: string | null): Logic {
+export function withPlacement(blocks: readonly { id: string }[], logic: Logic, id: string, target: string | null): Logic {
   return { ...cleanLogic(blocks, logic), [id]: target ?? TOP };
 }
 
 /** `logic` without block `id`: the blocks that were under it go up to where it was. */
-export function withoutBlock(blocks: ResultBlock[], logic: Logic, id: string): Logic {
+export function withoutBlock(blocks: readonly { id: string }[], logic: Logic, id: string): Logic {
   const next = cleanLogic(blocks, logic);
   const up = next[id] ?? TOP;
   delete next[id];

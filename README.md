@@ -9,6 +9,8 @@ A platform for managing experiment results and writing the paper in one place, m
 - **论文页**：用 LaTeX 写的文字、图和表格分块编译成清楚的网页，按章节排好；图可以放大，图和表格能互相切换，两份都保留。
 - **写作模式**：整篇论文作为一个 main.tex 编辑，右边是整篇 PDF；双击 PDF 里的文字会跳到对应的 LaTeX 代码。
 - **论文列表**：文件夹（可嵌套、可拖拽）、彩色标签、归档、搜索。
+- **我的研究空间**：论文列表上方的一张图，节点是你的论文和想法（问题、方向、笔记）。把论文从下面的列表拖进来，拖到一个节点上就挂到它下面，再连上关联线，梳理一个课题的思路；双击论文节点打开论文。
+- **逻辑结构**：每篇论文里，把块挂成一棵树（实验挂在它检验的方法下面），演示和幻灯片按它走。
 - **幻灯片**：每篇论文一套，第一次选做法：
   - 可视化幻灯片：用论文里编译好的图和表格先生成一套，再拖拽排版、加文字和演讲备注；论文里的块改了，幻灯片上的也跟着变。可以导出 PDF（块保持矢量）和 PowerPoint（文字可编辑，块是 300 dpi 图片）。
   - Beamer：用 LaTeX 写，`\lemmablock{tab:main}` 把论文里编译好的块放到一页上（按块的 `\label` 或块 id），右边实时编译。导出 PDF 就是编译结果，导出 PowerPoint 是每页一张图。
@@ -43,6 +45,8 @@ npm run preview # 预览构建结果
 | `app/` | Lemma 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
 | `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码 |
 | `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、演示、导出 PDF 和 PowerPoint |
+| `app/logic/` | 论文的逻辑结构；`ForceGraph.tsx` 是它和研究空间共用的力导向图 |
+| `app/space/` | 我的研究空间：论文和想法组成的图 |
 | `app/example/` | 内置的虚构示例论文（预先编译好的 PDF） |
 | `components/results/` | 论文页：分块显示、目录、批注、PDF 显示 |
 | `editor/results/` | 块编辑器、表格可视化编辑器、编译和保存 |
@@ -81,7 +85,7 @@ claude mcp add --transport http --scope user lemma https://lemmatex.pages.dev/mc
 
 ## 账号和数据
 
-每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `lemma-papers`，私有）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`lemma.json` 标记这是 Lemma 的仓库。第一次登录时，Lemma 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 Lemma 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
+每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `lemma-papers`，私有）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`research-space.json` 是研究空间，`lemma.json` 标记这是 Lemma 的仓库。第一次登录时，Lemma 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 Lemma 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
 
 GitHub App 是 `lemmatex`（https://github.com/apps/lemmatex ），公开的 client ID 和名字写在 `app/github/config.ts`。它的权限只有仓库内容读写（和必带的元数据只读），回调地址是 https://lemmatex.pages.dev/ ，安装时同时请求用户授权。
 

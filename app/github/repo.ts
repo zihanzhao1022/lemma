@@ -122,6 +122,7 @@ This repository keeps papers written with [Lemma](${site}):
 
 - \`results.json\` lists them, with each paper's information and the LaTeX source of its blocks;
 - \`results/<paper>/\` holds the PDFs Lemma compiled and the files attached to each paper;
+- \`research-space.json\` keeps the research space: the papers and ideas drawn as a graph;
 - \`lemma.json\` tells Lemma that this repository is its own.
 
 Lemma reads and writes it through its GitHub App, which can reach only the repositories it was installed on.

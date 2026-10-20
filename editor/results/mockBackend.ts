@@ -1,10 +1,11 @@
-import { ResultPaper, ResultsSiteAccess } from '../../types';
+import { ResearchSpace, ResultPaper, ResultsSiteAccess } from '../../types';
 import { ConflictError } from '../errors';
 import { GitHubError } from '../github';
 import { ResultsBackend, toBase64 } from './backend';
 import { GitHubUser, PaperRole, canReadFile, checkEditorOp, hasAnyRole, isPaperPath, paperOfPath, papersFor, roleOf } from './collaborators';
 import { ResultsOp, applyResultsOp, referencedPaths, touchedPapers } from './ops';
 import { hasPublished, isEmptyPlan, planPublicSync, publicPath } from './snapshot';
+import { emptySpace } from './space';
 import { COLLABORATOR_UPLOAD_LIMIT, WorkerError, tooLarge } from './workerBackend';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,6 +24,7 @@ const failure = (): string | null => {
 interface Store {
   papers: ResultPaper[];
   access?: ResultsSiteAccess;
+  space?: ResearchSpace;
   files: Map<string, Uint8Array>;
   publicJson: string;
   publicFiles: string[];
@@ -145,6 +147,19 @@ export function createMockResultsBackend(key = STORE_KEY): ResultsBackend {
       data.access = structuredClone(access);
       persist(data, key);
       console.info(`[mock private commit] ${message}`, access);
+    },
+
+    async loadSpace() {
+      await wait(100);
+      return structuredClone(data.space ?? emptySpace());
+    },
+
+    async saveSpace(space, message) {
+      await wait(300);
+      if (failure() === 'network') throw new GitHubError('网络连接失败', 0);
+      data.space = structuredClone(space);
+      persist(data, key);
+      console.info(`[mock private commit] ${message}`, space);
     },
   };
 }

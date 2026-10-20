@@ -3,7 +3,7 @@ import { ResultsAccess } from '../../components/results/access';
 import { Message, N_, PhraseError } from '../../lib/i18n';
 import { t } from '../../lib/phrases/results';
 import { Session } from '../../lib/session';
-import { FloatKind, ResultPaper, ResultsSiteAccess, SiteContent } from '../../types';
+import { FloatKind, ResearchSpace, ResultPaper, ResultsSiteAccess, SiteContent } from '../../types';
 import { describeSaveError } from '../backend';
 import { ContentOp } from '../ops';
 import { attachmentPath, loadAttachments, putFiles, rebuildPaper, rebuildWith, withOutputs } from './actions';
@@ -56,6 +56,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const [siteBehind, setSiteBehind] = useState(false);
   /** Who may view every paper (the owner's results-access.json). */
   const [siteAccess, setSiteAccess] = useState<ResultsSiteAccess>({});
+  /** The owner's research space (research-space.json); null until read, or where there is none (a collaborator). */
+  const [space, setSpace] = useState<ResearchSpace | null>(null);
   /** A collaborator's role on each paper shared with them. */
   const [roles, setRoles] = useState<Record<string, PaperRole> | undefined>(undefined);
   /** Once the private list is in, reloading the public content must not replace it with the snapshot. */
@@ -113,6 +115,12 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
             if (!cancelled) setSiteAccess(access);
           })
           .catch(() => undefined);
+        created
+          .loadSpace?.()
+          .then((loadedSpace) => {
+            if (!cancelled) setSpace(loadedSpace);
+          })
+          .catch(() => undefined);
         if (loaded.papers.some((paper) => !paper.hidden && paper.pendingReview?.length)) {
           callbacks.current.onToast({ message: () => t('协作者修改了已公开的论文，在论文页确认后才会更新到网站') });
         }
@@ -157,6 +165,11 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
         show(loaded.papers);
       })
       .catch(() => undefined);
+    if (backend.loadSpace) {
+      enqueue(() => backend.loadSpace!())
+        .then(setSpace)
+        .catch(() => undefined);
+    }
   }, [backend, enqueue, show]);
 
   const syncSite = useCallback(() => {
@@ -242,6 +255,16 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
       setSiteAccess(next);
     },
     [backend, siteAccess, lookupUser, enqueue],
+  );
+
+  /** Saves the owner's research space as it is now; in the queue with the other saves, one commit at a time. */
+  const saveSpace = useCallback(
+    async (next: ResearchSpace, message: string): Promise<void> => {
+      if (!backend?.saveSpace || loadState.state !== 'private') throw unavailable();
+      await enqueue(() => backend.saveSpace!(next, message));
+      setSpace(next);
+    },
+    [backend, loadState.state, unavailable, enqueue],
   );
 
   /** Saves an edit made through the generic dialogs or by dragging a paper. */
@@ -573,5 +596,5 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [collaborator, loadState, backend, roles, siteBehind, syncSite, approveEdits, siteAccess, saveSiteViewers],
   );
 
-  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering };
+  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace };
 }

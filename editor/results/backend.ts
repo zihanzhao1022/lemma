@@ -1,5 +1,5 @@
 import type { FileCache } from '../../lib/fileCache';
-import { ResultPaper, ResultsSiteAccess } from '../../types';
+import { ResearchSpace, ResultPaper, ResultsSiteAccess } from '../../types';
 import { EDITOR_CONFIG } from '../config';
 import { ConflictError } from '../errors';
 import { GitHubApi, GitHubError, TreeEntry } from '../github';
@@ -7,6 +7,7 @@ import { ACCESS_PATH, parseAccess } from './collaborators';
 import type { PaperRole } from './collaborators';
 import { ResultsOp, applyResultsOp, referencedPaths, touchedPapers } from './ops';
 import { PUBLIC_FILES_PREFIX, SNAPSHOT_PATH, hasPublished, isEmptyPlan, planPublicSync, publicPath } from './snapshot';
+import { SPACE_PATH, parseSpace, serializeSpace } from './space';
 
 /** The private repository's list of papers. */
 export const RESULTS_PATH = 'results.json';
@@ -59,6 +60,9 @@ export interface ResultsBackend {
   /** Who may view every paper (results-access.json); the owner's backends only. */
   loadAccess?(): Promise<ResultsSiteAccess>;
   saveAccess?(access: ResultsSiteAccess, message: string): Promise<void>;
+  /** The account's research space (research-space.json, see ResearchSpace); the owner's backends only. */
+  loadSpace?(): Promise<ResearchSpace>;
+  saveSpace?(space: ResearchSpace, message: string): Promise<void>;
 }
 
 /** Commit message for the site's repository when no published paper is involved: never names a hidden one. */
@@ -229,6 +233,23 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
     }
   }
 
+  /** Commits one file of the private repository as `text`, starting over when the branch moved in between. */
+  async function commitFile(path: string, text: string, message: string): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      const head = await privateApi.headSha();
+      const tree = await privateApi.treeSha(head);
+      const entry: TreeEntry = { path, mode: '100644', type: 'blob', content: text };
+      const commit = await privateApi.createCommit(message, await privateApi.createTree(tree, [entry]), head);
+      try {
+        await privateApi.updateBranch(commit);
+        return;
+      } catch (error) {
+        if (!isConflict(error)) throw error;
+        if (attempt >= MAX_ATTEMPTS) throw new ConflictError();
+      }
+    }
+  }
+
   return {
     async load() {
       let head: string;
@@ -285,19 +306,15 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
     },
 
     async saveAccess(access, message) {
-      for (let attempt = 1; ; attempt += 1) {
-        const head = await privateApi.headSha();
-        const tree = await privateApi.treeSha(head);
-        const entry: TreeEntry = { path: ACCESS_PATH, mode: '100644', type: 'blob', content: `${JSON.stringify(access, null, 2)}\n` };
-        const commit = await privateApi.createCommit(message, await privateApi.createTree(tree, [entry]), head);
-        try {
-          await privateApi.updateBranch(commit);
-          return;
-        } catch (error) {
-          if (!isConflict(error)) throw error;
-          if (attempt >= MAX_ATTEMPTS) throw new ConflictError();
-        }
-      }
+      await commitFile(ACCESS_PATH, `${JSON.stringify(access, null, 2)}\n`, message);
+    },
+
+    async loadSpace() {
+      return parseSpace(await readTextFile(privateApi, SPACE_PATH, await privateApi.headSha()));
+    },
+
+    async saveSpace(space, message) {
+      await commitFile(SPACE_PATH, serializeSpace(space), message);
     },
   };
 }
