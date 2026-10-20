@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeftRight, Check, Copy, ListTree, MessageSquare, MessageSquarePlus, X } from 'lucide-react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { exportPaperTex, exportTex } from '../../editor/results/texNames';
 import { N_, Translate } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/site';
@@ -338,6 +338,26 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
   const setPaper = presence?.setPaper;
   const setBlock = presence?.setBlock;
   const paperId = paper?.id;
+  // A link to one block (?block=…, from the research space) brings it into view once the page shows it, and marks
+  // it a moment; again a little later, as the PDFs above it come in and push it down.
+  const [search] = useSearchParams();
+  const linkedBlock = search.get('block');
+  useEffect(() => {
+    if (!linkedBlock || !paperId) return undefined;
+    const show = (mark: boolean) => {
+      const element = document.querySelector<HTMLElement>(`[data-result-block-id="${CSS.escape(linkedBlock)}"]`);
+      if (!element) return;
+      // Clear of the bars that stay at the top while the page scrolls.
+      window.scrollTo({ top: element.getBoundingClientRect().top + window.scrollY - 140, behavior: mark ? 'smooth' : 'auto' });
+      if (mark) element.animate([{ boxShadow: '0 0 0 3px rgba(139,92,246,0.55)' }, { boxShadow: '0 0 0 3px rgba(139,92,246,0)' }], { duration: 2200, easing: 'ease-out' });
+    };
+    const first = window.setTimeout(() => show(true), 250);
+    const again = window.setTimeout(() => show(false), 1500);
+    return () => {
+      window.clearTimeout(first);
+      window.clearTimeout(again);
+    };
+  }, [linkedBlock, paperId]);
   useEffect(() => {
     if (!setPaper || !paperId) return undefined;
     setPaper(paperId);

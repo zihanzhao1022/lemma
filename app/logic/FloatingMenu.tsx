@@ -10,6 +10,28 @@ export interface MenuChoice {
   onPick: () => void;
 }
 
+/** Closes a floating menu or picker on a press outside `within` (or `own`) or on Escape. */
+export function useDismiss(own: React.RefObject<HTMLElement>, within: React.RefObject<HTMLElement> | undefined, onClose: (() => void) | undefined): void {
+  const close = useRef(onClose);
+  close.current = onClose;
+  const active = onClose !== undefined;
+  useEffect(() => {
+    if (!active) return undefined;
+    const onDown = (event: PointerEvent) => {
+      if (!(within ?? own).current?.contains(event.target as Node)) close.current?.();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close.current?.();
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [own, within, active]);
+}
+
 /**
  * A small menu over a graph: under a button of its bar, or where the canvas was double-clicked. A press elsewhere
  * or Escape closes it; the first choice has the focus.
@@ -26,22 +48,7 @@ const FloatingMenu: React.FC<{
   style?: React.CSSProperties;
 }> = ({ title, choices, onClose, within, wide = false, className = '', style }) => {
   const menu = useRef<HTMLDivElement>(null);
-  const close = useRef(onClose);
-  close.current = onClose;
-  useEffect(() => {
-    const onDown = (event: PointerEvent) => {
-      if (!(within ?? menu).current?.contains(event.target as Node)) close.current();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close.current();
-    };
-    window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [within]);
+  useDismiss(menu, within, onClose);
   return (
     <div
       ref={menu}

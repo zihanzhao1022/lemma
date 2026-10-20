@@ -58,7 +58,11 @@ interface Props {
   /** Where nodes put by hand are kept, in this browser: a layout, not part of the data. */
   pinKey: string;
   label: (id: string) => string;
+  /** More about a node, shown when the pointer rests on it (where a block comes from). */
+  detail?: (id: string) => string | undefined;
   look: (id: string, on: boolean) => NodeLook;
+  /** What the kinds of node mean, beside the lines' meaning under the graph. */
+  keys?: { label: string; look: NodeLook }[];
   selected: string | null;
   onSelect: (id: string | null) => void;
   /** The nodes `id` cannot go under (itself and those under it); null when it goes under none (the start). */
@@ -132,7 +136,9 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
     center = null,
     pinKey,
     label,
+    detail,
     look,
+    keys = [],
     selected,
     onSelect,
     branchOf,
@@ -668,6 +674,7 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
                     className="cursor-pointer outline-none"
                     opacity={dim ? 0.3 : 1}
                   >
+                    {detail?.(id) && <title>{detail(id)}</title>}
                     {id === target && ring(9, { fill: 'rgba(139,92,246,0.14)', stroke: '#8b5cf6', strokeWidth: 1.5 })}
                     {id === selected && ring(5, { fill: 'none', stroke: '#7c3aed', strokeWidth: 2 })}
                     {ring(0, { fill: shape.fill, stroke: shape.stroke, strokeWidth: shape.strokeWidth, strokeDasharray: alone ? '3 2' : undefined })}
@@ -758,6 +765,18 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
             <span className="w-5 border-t-2 border-dashed border-[#60a5fa]" />
             {t('关联')}
           </span>
+          {keys.map((key) => (
+            <span key={key.label} className="inline-flex items-center gap-1.5">
+              <svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden="true">
+                {key.look.square ? (
+                  <rect x={-4.5} y={-4.5} width={9} height={9} rx={2.5} fill={key.look.fill} stroke={key.look.stroke} strokeWidth={1.5} />
+                ) : (
+                  <circle r={4.5} fill={key.look.fill} stroke={key.look.stroke} strokeWidth={1.5} />
+                )}
+              </svg>
+              {key.label}
+            </span>
+          ))}
         </div>
       </div>
       {children}

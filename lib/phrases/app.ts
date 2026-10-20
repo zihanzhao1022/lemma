@@ -474,11 +474,24 @@ export const { t, useT, table } = phrases({
 
   // The research space over the list of papers
   我的研究空间: { ja: '私の研究空間', en: 'My research space' },
-  添加到空间: { ja: '研究空間に追加', en: 'Add to the space' },
-  '放进一篇论文或写一个想法；双击画布的空白处也可以': {
-    ja: '論文を入れるか、アイデアを書きます。キャンバスの空いているところをダブルクリックしても追加できます',
-    en: 'Put in a paper or write an idea; double-clicking an empty spot on the canvas works too',
+  '放进论文、论文里的块，或写一个想法；双击画布的空白处也可以': {
+    ja: '論文やそのブロックを入れるか、アイデアを書きます。キャンバスの空いているところをダブルクリックしても追加できます',
+    en: 'Put in papers or blocks of them, or write an idea; double-clicking an empty spot on the canvas works too',
   },
+  论文: { ja: '論文', en: 'Paper' },
+  图表: { ja: '図・表', en: 'Figures & tables' },
+  在论文里打开: { ja: '論文で開く', en: 'Open in the paper' },
+  挂到这里: { ja: 'ここに入れる', en: 'Put here' },
+  '找论文，或其中的文字、图、表': { ja: '論文、またはその中のテキスト・図・表を探す', en: 'Find a paper, or text, a figure or a table in one' },
+  这篇论文里的块: { ja: 'この論文のブロック', en: 'The blocks of this paper' },
+  已经在空间里: { ja: 'すでに研究空間にあります', en: 'Already in the space' },
+  这篇论文的块都已经在空间里了: { ja: 'この論文のブロックはすべて研究空間にあります', en: 'Every block of this paper is in the space' },
+  没有找到: { ja: '見つかりません', en: 'Nothing found' },
+  论文和其中的块: { ja: '論文とそのブロック', en: 'Papers and their blocks' },
+  拖到右边的图里: { ja: '右のグラフへドラッグ', en: 'Drag into the graph on the right' },
+  '拖到图里的一个节点上，就挂到它下面': { ja: 'グラフのノードの上にドラッグすると、その下に入ります', en: 'Drag onto a node of the graph to put it under that node' },
+  放进空间: { ja: '研究空間に入れる', en: 'Put in the space' },
+  这篇论文还没有块: { ja: 'この論文にはまだブロックがありません', en: 'This paper has no blocks yet' },
   新想法: { ja: '新しいアイデア', en: 'New idea' },
   想法: { ja: 'アイデア', en: 'Idea' },
   '（空白想法）': { ja: '（空のアイデア）', en: '(empty idea)' },
@@ -487,19 +500,16 @@ export const { t, useT, table } = phrases({
   从空间里拿掉: { ja: '研究空間から外す', en: 'Take out of the space' },
   删除这个想法: { ja: 'このアイデアを削除', en: 'Delete this idea' },
   '正在读取研究空间…': { ja: '研究空間を読み込んでいます…', en: 'Reading your research space…' },
-  '把下面的论文拖到这里，或者双击画布写下一个想法，搭出你的研究思路。': {
-    ja: '下の論文をここにドラッグするか、キャンバスをダブルクリックしてアイデアを書き、研究の筋道を組み立てましょう。',
-    en: 'Drag papers from the list below into here, or double-click the canvas to write an idea, and lay out how your research hangs together.',
+  '把下面的论文拖到这里，或者用「添加」放进论文里的图、表、文字和你的想法，搭出你的研究思路。': {
+    ja: '下の論文をここにドラッグするか、「追加」で論文の図・表・テキストや自分のアイデアを入れて、研究の筋道を組み立てましょう。',
+    en: 'Drag papers from the list below into here, or use Add to put in figures, tables and text from them and your own ideas, and lay out how your research hangs together.',
   },
   '把一个节点拖到另一个上，就挂到它下面；从节点右上角的小圆点拖到另一个节点，就连一条关联线。': {
     ja: 'ノードを別のノードの上にドラッグするとその下に入ります。ノード右上の小さな丸から別のノードへドラッグすると関連線を引けます。',
     en: 'Drag a node onto another to put it under it; drag from the small dot at a node’s top right to another node to draw a link.',
   },
-  找一篇论文挂到这里: { ja: 'ここに入れる論文を探す', en: 'Find a paper to put here' },
-  所有论文都已经在空间里了: { ja: 'すべての論文が研究空間にあります', en: 'Every paper is in the space' },
   找一个节点连到这里: { ja: 'ここにつなぐノードを探す', en: 'Find a node to link here' },
   空间里没有可以连的节点了: { ja: 'つなげるノードがもうありません', en: 'No node left to link' },
-  或者挂一个新想法: { ja: 'または新しいアイデアを入れる', en: 'Or put a new idea here' },
 
   // Blocks made on the graph
   新建块: { ja: '新規ブロック', en: 'New block' },

@@ -650,7 +650,7 @@ const Dashboard: React.FC = () => {
 
       <section className="min-w-0">
         {/* How the papers and ideas hang together, over all of them. */}
-        {view.kind === 'all' && <ResearchSpaceView login={account.login} papers={mine.content.results} space={mine.space} onSave={mine.saveSpace} />}
+        {view.kind === 'all' && <ResearchSpaceView login={account.login} papers={mine.content.results} access={mine.access} organizer={organizer} space={mine.space} onSave={mine.saveSpace} />}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <h1 className="galley-display text-[2rem] text-gray-900">{heading}</h1>
           <div className="flex w-full items-center gap-2 sm:w-auto">
