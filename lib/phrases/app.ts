@@ -472,6 +472,10 @@ export const { t, useT, table } = phrases({
   添加关联: { ja: '関連を追加', en: 'Add a link' },
   分支: { ja: '枝', en: 'Branches' },
 
+  // Edits on their way to the repository
+  '{n} 项改动还没同步到 GitHub': { ja: '{n} 件の変更がまだ GitHub に同期されていません', en: 'Not synced to GitHub yet ({n})' },
+  '正在同步 {n} 项改动…': { ja: '{n} 件の変更を同期しています…', en: 'Syncing to GitHub ({n})…' },
+
   // The research space over the list of papers
   我的研究空间: { ja: '私の研究空間', en: 'My research space' },
   '放进论文、论文里的块，或写一个想法；双击画布的空白处也可以': {

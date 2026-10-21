@@ -57,6 +57,8 @@ export interface ResultsBackend {
   syncPublic(papers: ResultPaper[], message: string): Promise<string | null>;
   /** syncPublic with the latest private list, e.g. to retry after a failed sync or to catch up with collaborators. */
   resync(message: string): Promise<string | null>;
+  /** Files of a save still waiting to go up (outbox.ts), read from memory meanwhile. */
+  remember?(writes: FileWrite[]): void;
   /** Who may view every paper (results-access.json); the owner's backends only. */
   loadAccess?(): Promise<ResultsSiteAccess>;
   saveAccess?(access: ResultsSiteAccess, message: string): Promise<void>;
@@ -149,8 +151,13 @@ export async function commitResults(
     const removed = deletes
       .filter((path) => present.has(path) && !used.has(path))
       .map((path): TreeEntry => ({ path, mode: '100644', type: 'blob', sha: null }));
-    if (json === text && uploaded.length === 0 && removed.length === 0) return { before, papers, changed: false, head: { commit: head, text } };
-    const entries: TreeEntry[] = [{ path: RESULTS_PATH, mode: '100644', type: 'blob', content: json }, ...uploaded, ...removed];
+    // Saves sent together may write a file and then delete it (a PDF replaced again): unused, it is not written.
+    const gone = new Set(deletes.filter((path) => !used.has(path)));
+    const written = uploaded.filter((entry) => !gone.has(entry.path));
+    const removedPaths = new Set(removed.map((entry) => entry.path));
+    const kept = written.filter((entry) => !removedPaths.has(entry.path));
+    if (json === text && kept.length === 0 && removed.length === 0) return { before, papers, changed: false, head: { commit: head, text } };
+    const entries: TreeEntry[] = [{ path: RESULTS_PATH, mode: '100644', type: 'blob', content: json }, ...kept, ...removed];
     const commit = await api.createCommit(message, await api.createTree(tree, entries), head);
     try {
       await api.updateBranch(commit);
@@ -251,6 +258,13 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
   }
 
   return {
+    remember(writes) {
+      for (const write of writes) {
+        files.set(write.path, Promise.resolve(write.data));
+        cache?.remember(write.path, write.data);
+      }
+    },
+
     async load() {
       let head: string;
       try {

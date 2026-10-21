@@ -378,6 +378,11 @@ export const { t, useT, table } = phrases({
   // Opening a .zip, and importing a paper from one.
   '导入完成，{n} 个块都编译好了': { ja: '取り込みが終わり、{n} 個のブロックをすべてコンパイルしました', en: 'Imported; all {n} blocks compiled' },
   '已解压：{names}': { ja: '展開しました：{names}', en: 'Opened: {names}' },
+  // Saves waiting in this browser before they reach the repository.
+  '没能同步到 GitHub：{reason}。改动先存在这台电脑上，稍后自动重试': {
+    ja: 'GitHub に同期できませんでした：{reason}。変更はこのコンピューターに保存してあり、後で自動的に再試行します',
+    en: 'Could not sync to GitHub: {reason}. Your changes are kept on this computer and will be retried automatically',
+  },
   // Blocks deleted from the page, without the editor.
   '正在删除并更新编号…': { ja: '削除して番号を更新しています…', en: 'Deleting and renumbering…' },
   已删除这个块: { ja: 'ブロックを削除しました', en: 'Block deleted' },

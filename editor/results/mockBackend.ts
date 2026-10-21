@@ -88,6 +88,8 @@ function applyFiles(data: Store, writes: { path: string; data: Uint8Array }[], d
 /** A stand-in for the private repository and the site's copy, used by `npm run dev:mock`. */
 export function createMockResultsBackend(key = STORE_KEY): ResultsBackend {
   const data = openStore(key);
+  // Files of saves still waiting to go up (outbox.ts).
+  const staged = new Map<string, Uint8Array>();
 
   const syncPublic = async (next: ResultPaper[], message: string): Promise<string | null> => {
     await wait(400);
@@ -109,9 +111,13 @@ export function createMockResultsBackend(key = STORE_KEY): ResultsBackend {
       return { state: 'ready', papers: structuredClone(data.papers) };
     },
 
+    remember(writes) {
+      for (const write of writes) staged.set(write.path, write.data);
+    },
+
     async readFile(path) {
       await wait(50);
-      const bytes = data.files.get(path);
+      const bytes = data.files.get(path) ?? staged.get(path);
       if (!bytes) throw new GitHubError('GitHub 返回 404', 404);
       return bytes;
     },

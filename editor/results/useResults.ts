@@ -15,6 +15,7 @@ import { switchedOp } from './convert';
 import { describeFailure, staleBlocks } from './numbering';
 import { ResultsOp, applyResultsOp, fromContentOp, resultsCommitMessage } from './ops';
 import { replaceContent } from './project';
+import { BufferStore, Waiting, combine, waitingId } from './outbox';
 import { WorkerError } from './workerBackend';
 
 /** A notice for the editor's toast; its words follow the language switch. */
@@ -40,15 +41,29 @@ interface Options {
   onSignedOut?: (message: string) => void;
   /** Where the papers come from instead of the site's repositories or the worker (the Galley prototype's accounts). */
   connect?: () => Promise<ResultsBackend>;
+  /**
+   * Where saves wait in this browser and the last list is kept (outbox.ts): with one, a save shows at once and
+   * goes up with the others made close to it, and the list shows at once on the next visit.
+   */
+  buffer?: BufferStore;
 }
 
 type LoadState = Pick<ResultsAccess, 'state' | 'reason'>;
+
+/** Saves still on their way to the repository (outbox.ts): how many, and whether the last try failed. */
+export interface SyncState {
+  waiting: number;
+  failed: boolean;
+}
+
+/** How long saves wait for more before they go up together. */
+const FLUSH_DELAY = 1200;
 
 /**
  * The editing side of the results pages: the private list, its saves and publishing for the owner; the
  * shared papers, through the worker, for a collaborator.
  */
-export function useResultsEditor({ session, setContent, contentRef, queue, onDeploy, onToast, onSignedOut, connect }: Options) {
+export function useResultsEditor({ session, setContent, contentRef, queue, onDeploy, onToast, onSignedOut, connect, buffer }: Options) {
   const collaborator = session.role === 'collaborator';
   const [backend, setBackend] = useState<ResultsBackend | null>(null);
   const [loadState, setLoadState] = useState<LoadState>({ state: 'loading' });
@@ -72,6 +87,17 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   callbacks.current = { onDeploy, onToast, onSignedOut };
   const connectRef = useRef(connect);
   connectRef.current = connect;
+  const bufferRef = useRef(buffer);
+  bufferRef.current = buffer;
+  const backendRef = useRef<ResultsBackend | null>(null);
+  backendRef.current = backend;
+  /** Saves shown on the page but still waiting to go up (outbox.ts), oldest first. */
+  const outbox = useRef<Waiting[]>([]);
+  const flushing = useRef(false);
+  const flushTimer = useRef(0);
+  const failures = useRef(0);
+  const flushRef = useRef<() => void>(() => undefined);
+  const [sync, setSync] = useState<SyncState>({ waiting: 0, failed: false });
 
   const show = useCallback(
     (papers: ResultPaper[]) =>
@@ -93,9 +119,29 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     const connecting = connectRef.current?.() ?? (collaborator ? createCollaboratorResults(session) : createResults(session));
     connecting
       .then(async (created) => {
+        const store = bufferRef.current;
+        if (store) {
+          // What this browser kept: the list shows at once, and saves left waiting go up once it is read again.
+          setBackend(created);
+          const kept = await store.load().catch(() => null);
+          if (cancelled) return;
+          if (kept) {
+            outbox.current = kept.waiting;
+            pending.current.push(...kept.waiting.map((entry) => entry.op));
+            for (const entry of kept.waiting) created.remember?.(entry.writes);
+            setSync({ waiting: kept.waiting.length, failed: false });
+            if (kept.papers) {
+              privateLoaded.current = true;
+              latest.current = kept.papers;
+              show(kept.papers);
+              setLoadState({ state: 'private' });
+            }
+          }
+        }
         const loaded = await created.load();
         if (cancelled) return;
         setBackend(created);
+        backendRef.current = created;
         if (loaded.state !== 'ready') {
           setLoadState({ state: 'unavailable', reason: loaded.reason });
           return;
@@ -107,6 +153,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
         setRoles(loaded.roles);
         show(loaded.papers);
         setLoadState({ state: 'private' });
+        void store?.keepPapers(loaded.papers).catch(() => undefined);
+        if (outbox.current.length > 0) flushRef.current();
         // Only the owner publishes and keeps the results-wide list.
         if (collaborator) return;
         created
@@ -163,6 +211,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
         if (loaded.state !== 'ready') return;
         latest.current = loaded.papers;
         show(loaded.papers);
+        void bufferRef.current?.keepPapers(loaded.papers).catch(() => undefined);
       })
       .catch(() => undefined);
     if (backend.loadSpace) {
@@ -219,6 +268,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const settle = useCallback(
     (result: ResultsSaveResult) => {
       latest.current = result.papers;
+      void bufferRef.current?.keepPapers(result.papers).catch(() => undefined);
       if (result.roles) setRoles(result.roles);
       show(result.papers);
       if (result.publicCommit) callbacks.current.onDeploy(result.publicCommit);
@@ -234,12 +284,99 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [loadState.state],
   );
 
+  /** Sends the waiting saves up in a while, so that more made meanwhile go with them. */
+  const scheduleFlush = useCallback((ms: number) => {
+    window.clearTimeout(flushTimer.current);
+    flushTimer.current = window.setTimeout(() => flushRef.current(), ms);
+  }, []);
+
+  /**
+   * Sends the waiting saves up as one commit, in the queue with every other save. Edits made meanwhile wait for
+   * the next one; a failure keeps them all here and tries again, later each time.
+   */
+  const flush = useCallback(() => {
+    window.clearTimeout(flushTimer.current);
+    const target = backendRef.current;
+    if (!target || flushing.current || outbox.current.length === 0) return;
+    flushing.current = true;
+    const taken = [...outbox.current];
+    enqueue(async () => {
+      const batch = combine(taken);
+      const result = await target.save(batch.op, batch.writes, batch.deletes, batch.message, batch.publicMessage);
+      const sent = new Set(taken);
+      const ops = new Set(taken.map((entry) => entry.op));
+      outbox.current = outbox.current.filter((entry) => !sent.has(entry));
+      pending.current = pending.current.filter((op) => !ops.has(op));
+      settle(result);
+      void bufferRef.current?.remove(taken.map((entry) => entry.id)).catch(() => undefined);
+    }).then(
+      () => {
+        flushing.current = false;
+        failures.current = 0;
+        setSync({ waiting: outbox.current.length, failed: false });
+        if (outbox.current.length > 0) scheduleFlush(FLUSH_DELAY);
+      },
+      (error: unknown) => {
+        flushing.current = false;
+        failures.current += 1;
+        setSync({ waiting: outbox.current.length, failed: true });
+        if (failures.current === 1) {
+          callbacks.current.onToast({
+            message: () => t('没能同步到 GitHub：{reason}。改动先存在这台电脑上，稍后自动重试', { reason: describeSaveError(error) }),
+            action: { label: () => t('重试'), onClick: () => flushRef.current() },
+          });
+        }
+        scheduleFlush(Math.min(60_000, 5_000 * 2 ** (failures.current - 1)));
+      },
+    );
+  }, [enqueue, settle, scheduleFlush]);
+  flushRef.current = flush;
+
+  /** Saves waiting here go first: a save that does not wait (a drag, an upload) starts from the list after them. */
+  const drain = useCallback(() => {
+    if (outbox.current.length > 0 && !flushing.current) flushRef.current();
+  }, []);
+
+  // Back online, or the person leaving for another tab or computer: what waits goes up now. Leaving the page waits
+  // for it only where nothing outlives the tab.
+  useEffect(() => {
+    const now = () => {
+      if (outbox.current.length > 0) flushRef.current();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') now();
+    };
+    const onLeave = (event: BeforeUnloadEvent) => {
+      if (outbox.current.length === 0 || bufferRef.current?.durable) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('online', now);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('beforeunload', onLeave);
+    return () => {
+      window.removeEventListener('online', now);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('beforeunload', onLeave);
+      window.clearTimeout(flushTimer.current);
+    };
+  }, []);
+
   const saveResults = useCallback<ResultsSave>(
     (op, writes, deletes, message, publicMessage) => {
       if (!backend || loadState.state !== 'private') return Promise.reject(unavailable());
-      return enqueue(async () => settle(await backend.save(op, writes, deletes, message, publicMessage)));
+      if (!buffer) return enqueue(async () => settle(await backend.save(op, writes, deletes, message, publicMessage)));
+      // Shown at once, kept here, and sent up with the saves made close to it.
+      const entry: Waiting = { id: waitingId(), op, writes, deletes, message, publicMessage, at: Date.now() };
+      outbox.current.push(entry);
+      pending.current.push(op);
+      backend.remember?.(writes);
+      setContent((current) => ({ ...current, results: applyResultsOp(current.results, op) }));
+      setSync((current) => ({ ...current, waiting: outbox.current.length }));
+      scheduleFlush(FLUSH_DELAY);
+      return buffer.put(entry).catch(() => undefined);
     },
-    [backend, loadState.state, unavailable, enqueue, settle],
+    [backend, buffer, loadState.state, unavailable, enqueue, settle, setContent, scheduleFlush],
   );
 
   const lookupUser = useMemo(() => createUserLookup(session), [session]);
@@ -261,6 +398,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const saveSpace = useCallback(
     async (next: ResearchSpace, message: string): Promise<void> => {
       if (!backend?.saveSpace || loadState.state !== 'private') throw unavailable();
+      drain();
       await enqueue(() => backend.saveSpace!(next, message));
       setSpace(next);
     },
@@ -316,6 +454,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     (paperId: string) => {
       const paper = latest.current.find((item) => item.id === paperId);
       if (!backend || !paper) return;
+      drain();
       enqueue(async () => {
         const result = await backend.save(
           { kind: 'approveEdits', id: paperId },
@@ -338,6 +477,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const reorderBlocks = useCallback(
     (paperId: string, ids: string[]) => {
       if (!backend || loadState.state !== 'private') return;
+      drain();
       const op: ResultsOp = { kind: 'reorderBlocks', paperId, ids };
       pending.current.push(op);
       setContent((current) => ({ ...current, results: applyResultsOp(current.results, op) }));
@@ -381,6 +521,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const deleteBlock = useCallback(
     (paperId: string, blockId: string) => {
       if (!backend || loadState.state !== 'private') return;
+      drain();
       const op: ResultsOp = { kind: 'deleteBlock', paperId, blockId };
       pending.current.push(op);
       busy.current.add(paperId);
@@ -430,6 +571,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const switchBlock = useCallback(
     (paperId: string, blockId: string, fix: (to: FloatKind) => void) => {
       if (!backend || loadState.state !== 'private') return;
+      drain();
       const block = latest.current.find((paper) => paper.id === paperId)?.blocks.find((item) => item.id === blockId);
       const op = block && switchedOp(paperId, block);
       if (!block?.alternate || !op) return;
@@ -491,6 +633,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const uploadFiles = useCallback(
     (paperId: string, added: Record<string, Uint8Array>) => {
       if (!backend || loadState.state !== 'private') return;
+      drain();
       const count = Object.keys(added).length;
       if (count === 0) return;
       busy.current.add(paperId);
@@ -541,6 +684,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
       into?: { previous: ResultPaper; remove: string[] },
     ): Promise<void> => {
       if (!backend || loadState.state !== 'private') return Promise.reject(unavailable());
+      drain();
       busy.current.add(paper.id);
       const saved = enqueue(async () => {
         const uploads = await putFiles(paper.id, files);
@@ -643,5 +787,5 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [collaborator, loadState, backend, roles, siteBehind, syncSite, approveEdits, siteAccess, saveSiteViewers],
   );
 
-  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, deleteBlock, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace };
+  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, deleteBlock, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace, sync, retrySync: flush };
 }

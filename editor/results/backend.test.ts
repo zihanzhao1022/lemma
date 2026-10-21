@@ -112,6 +112,25 @@ describe('saving an unpublished paper', () => {
     expect(unchanged.createCommit).not.toHaveBeenCalled();
   });
 
+  it('leaves out a file written and then deleted by saves sent together, when nothing uses it', async () => {
+    const repo = fakeRepo({ [RESULTS_PATH]: JSON.stringify([draft]) }, {}, ['results/p1/b1-old.pdf']);
+    const backend = createResultsBackend(repo, null);
+    const twice = { ...draft.blocks[0], output: output('results/p1/b1-second.pdf') };
+    await backend.save(
+      { kind: 'putBlock', paperId: 'p1', block: twice },
+      [
+        { path: 'results/p1/b1-first.pdf', data: new Uint8Array([1]) },
+        { path: 'results/p1/b1-second.pdf', data: new Uint8Array([2]) },
+      ],
+      ['results/p1/b1-old.pdf', 'results/p1/b1-first.pdf'],
+      'results: 2 changes',
+      GENERIC_PUBLIC_MESSAGE,
+    );
+    const paths = repo.createTree.mock.calls[0][1].map((entry) => entry.path);
+    expect(paths).toContain('results/p1/b1-second.pdf');
+    expect(paths).not.toContain('results/p1/b1-first.pdf');
+  });
+
   it('serves files it just wrote from memory', async () => {
     const privateRepo = fakeRepo({ [RESULTS_PATH]: '[]' });
     const backend = createResultsBackend(privateRepo, fakeRepo());

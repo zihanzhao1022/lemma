@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { bundledContent } from '../content';
-import { EditorToast, useResultsEditor } from '../editor/results/useResults';
+import { EditorToast, SyncState, useResultsEditor } from '../editor/results/useResults';
+import { BufferStore, bufferStore } from '../editor/results/outbox';
+import { useT } from '../lib/phrases/app';
 import { createMockCollaboratorBackend, createMockResultsBackend, mockStore } from '../editor/results/mockBackend';
 import { ResultsBackend } from '../editor/results/backend';
 import { WorkerError } from '../editor/results/workerBackend';
@@ -84,7 +86,7 @@ const NOTHING_SHARED: ResultsBackend = {
   resync: async () => null,
 };
 
-function useList(session: ReturnType<typeof ownerSession>, connect: () => Promise<ResultsBackend>, onToast: (toast: EditorToast | null) => void): PaperList {
+function useList(session: ReturnType<typeof ownerSession>, connect: () => Promise<ResultsBackend>, onToast: (toast: EditorToast | null) => void, buffer?: BufferStore): PaperList {
   const [content, setContent] = useState(empty);
   const contentRef = useRef(content);
   contentRef.current = content;
@@ -98,6 +100,7 @@ function useList(session: ReturnType<typeof ownerSession>, connect: () => Promis
     onToast,
     onSignedOut: noop,
     connect,
+    buffer,
   });
   return { ...editor, content };
 }
@@ -130,8 +133,10 @@ export const AccountProvider: React.FC<{ account: Account; source: AccountSource
   const touchPaper = useCallback((owner: string, paperId: string) => organize((current) => touch(current, paperKey(owner, paperId))), [organize]);
   const owner = useMemo(() => ownerSession(account), [account]);
   const collaborator = useMemo(() => collaboratorSession(account), [account]);
+  // The account's own saves wait in this browser and go up together; its list shows at once on the next visit.
+  const buffer = useMemo(() => bufferStore(github ? `${account.login.toLowerCase()}:${repoLabel(github)}` : `mock:${account.login.toLowerCase()}`), [account.login, github]);
   // The made-up accounts' example papers are in their stores before anything is read.
-  const mine = useList(owner, () => (github ? Promise.resolve(repoBackend(github, account.login)) : examplesReady().then(() => createMockResultsBackend(storeKeyOf(account.login)))), setToast);
+  const mine = useList(owner, () => (github ? Promise.resolve(repoBackend(github, account.login)) : examplesReady().then(() => createMockResultsBackend(storeKeyOf(account.login)))), setToast, buffer);
   const shared = useList(collaborator, () => (github ? Promise.resolve(NOTHING_SHARED) : examplesReady().then(() => sharedBackend(account))), setToast);
   const ownerOf = useCallback(
     (paperId: string) => (github ? undefined : ACCOUNTS.find((other) => mockStore(storeKeyOf(other.login)).papers.some((paper) => paper.id === paperId))),
@@ -166,5 +171,35 @@ export const AccountProvider: React.FC<{ account: Account; source: AccountSource
     () => ({ account, repo, features, mine, shared, ownerOf, organizer, organize, touchPaper, toast, setToast }),
     [account, repo, features, mine, shared, ownerOf, organizer, organize, touchPaper, toast],
   );
-  return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
+  return (
+    <AccountContext.Provider value={value}>
+      {children}
+      <SyncBadge sync={mine.sync} retry={mine.retrySync} />
+    </AccountContext.Provider>
+  );
+};
+
+/**
+ * Whether the account's edits have reached its repository: nothing while they have, how many are on their way,
+ * or that the last try failed (it is tried again by itself; the button tries now).
+ */
+const SyncBadge: React.FC<{ sync: SyncState; retry: () => void }> = ({ sync, retry }) => {
+  const t = useT();
+  if (sync.waiting === 0) return null;
+  return (
+    <div
+      role="status"
+      className={`fixed bottom-4 left-4 z-50 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-[0_6px_20px_-8px_rgba(0,0,0,0.35)] ring-1 ${
+        sync.failed ? 'bg-red-50 text-red-800 ring-red-200' : 'bg-white text-gray-600 ring-black/[0.08]'
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${sync.failed ? 'bg-red-500' : 'animate-pulse bg-violet-500 motion-reduce:animate-none'}`} aria-hidden="true" />
+      {sync.failed ? t('{n} 项改动还没同步到 GitHub', { n: sync.waiting }) : t('正在同步 {n} 项改动…', { n: sync.waiting })}
+      {sync.failed && (
+        <button type="button" onClick={retry} className="font-medium underline-offset-2 hover:underline">
+          {t('重试')}
+        </button>
+      )}
+    </div>
+  );
 };

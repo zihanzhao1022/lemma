@@ -6,6 +6,7 @@
  * renewal or sign-out reaches the others, and only one tab renews at a time.
  */
 import { clearFileCaches } from '../../lib/fileCache';
+import { forgetKeptPapers } from '../../editor/results/outbox';
 import type { SignedIn } from '../../server/auth';
 
 export type GitHubSession = SignedIn;
@@ -66,6 +67,7 @@ export function signedOut(): void {
   signOuts += 1;
   setSession(null);
   void clearFileCaches();
+  void forgetKeptPapers();
 }
 
 // What other tabs did: sign in (perhaps as someone else), renew, or sign out.

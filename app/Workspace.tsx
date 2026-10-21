@@ -69,7 +69,6 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   // The paper block by block, or its slides from one of them.
   const [presenting, setPresenting] = useState<Presenting>(null);
   const [sharingOpen, setSharingOpen] = useState(false);
-  const [saving, setSaving] = useState(0);
   // The page's blocks, the whole paper as one LaTeX document with its PDF, its slides, or its logic as a tree.
   const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic'>('blocks');
   // The writing, slide and logic views stay mounted once opened, so switching back and forth keeps their state.
@@ -80,18 +79,14 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   contentRef.current = content;
   const { setToast } = account;
 
-  // How many saves are on their way, for the toolbar; each one that lands counts as a change to the paper.
+  // Each save counts as a change to the paper, for "last modified".
   const { touchPaper } = account;
   const author = paper ? (owner ? account.account.login : account.ownerOf(paper.id)?.login) : undefined;
   const counted = useCallback<typeof saveResults>(
-    (...args) => {
-      setSaving((n) => n + 1);
-      return saveResults(...args)
-        .then(() => {
-          if (paper && author) touchPaper(author, paper.id);
-        })
-        .finally(() => setSaving((n) => n - 1));
-    },
+    (...args) =>
+      saveResults(...args).then(() => {
+        if (paper && author) touchPaper(author, paper.id);
+      }),
     [saveResults, paper, author, touchPaper],
   );
 
@@ -307,7 +302,6 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
               )}
               <span className="mr-auto flex min-w-0 items-center gap-4 text-sm text-gray-500">
                 {owner ? <Reach paper={paper} /> : <span className="truncate">{t('{name} 共享给你', { name: account.ownerOf(paper.id)?.name ?? '' })}</span>}
-                {saving > 0 && <span className="text-gray-400">{t('保存中…')}</span>}
               </span>
               {owner && mode === 'blocks' && (
                 <button type="button" onClick={() => setEditing((on) => !on)} aria-pressed={!editing} className={TOOL}>
