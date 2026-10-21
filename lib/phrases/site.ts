@@ -3,7 +3,7 @@ import { phrases } from '../i18n';
 /** Japanese and English for the site: what visitors and invited collaborators see, and the owner's buttons on the public pages. */
 export const { t, useT, table } = phrases({
   // A block's tools on its page.
-  '确定删除这个块吗？': { ja: 'このブロックを削除しますか？', en: 'Delete this block?' },
+  再点一次删除: { ja: 'もう一度押すと削除', en: 'Click again to delete' },
   '这篇论文已公开，取消隐藏后这个块会发布到网站。确定吗？': {
     ja: 'この論文は公開中です。このブロックを表示すると、サイトに公開されます。よろしいですか？',
     en: 'This paper is public: unhiding this block publishes it to the site. Continue?',

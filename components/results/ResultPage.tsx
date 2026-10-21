@@ -45,21 +45,27 @@ const InsertButtons: React.FC<{ paperId: string; afterBlockId?: string }> = ({ p
  * A block's tool: its icon, and its words beside it while the pointer is on it or it has the keyboard's focus
  * (or `open`, to show a result such as "Copied"). Where nothing can hover, the icon stays alone with its title.
  */
-const ToolButton: React.FC<{ icon: React.ReactNode; label: string; title?: string; onClick: () => void; open?: boolean; danger?: boolean }> = ({
-  icon,
-  label,
-  title,
-  onClick,
-  open = false,
-  danger = false,
-}) => (
+const ToolButton: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  title?: string;
+  onClick: () => void;
+  onBlur?: () => void;
+  open?: boolean;
+  danger?: boolean;
+  /** Red all over: the next click does what cannot be undone here. */
+  alarm?: boolean;
+}> = ({ icon, label, title, onClick, onBlur, open = false, danger = false, alarm = false }) => (
   <button
     type="button"
     onClick={onClick}
+    onBlur={onBlur}
     title={title ?? label}
     aria-label={label}
-    className={`group/tool inline-flex h-8 items-center rounded-full border border-gray-300 bg-white px-2 text-xs text-gray-600 shadow-sm transition-colors duration-150 ${
-      danger ? 'hover:border-red-300 hover:text-red-700' : 'hover:border-purple-300 hover:text-purple-700'
+    className={`group/tool inline-flex h-8 items-center rounded-full border px-2 text-xs shadow-sm transition-colors duration-150 ${
+      alarm
+        ? 'border-red-300 bg-red-50 text-red-700'
+        : `border-gray-300 bg-white text-gray-600 ${danger ? 'hover:border-red-300 hover:text-red-700' : 'hover:border-purple-300 hover:text-purple-700'}`
     }`}
   >
     {icon}
@@ -128,6 +134,35 @@ const ConvertButton: React.FC<{ paperId: string; block: ResultBlock }> = ({ pape
   );
 };
 
+/** Deletes on a second click: the first turns the button red and says so, for a few seconds. */
+const DeleteTool: React.FC<{ onDelete: () => void }> = ({ onDelete }) => {
+  const t = useT();
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return undefined;
+    const timer = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+  return (
+    <ToolButton
+      icon={<Trash2 size={14} />}
+      label={armed ? t('再点一次删除') : t('删除')}
+      danger
+      alarm={armed}
+      open={armed}
+      onBlur={() => setArmed(false)}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onDelete();
+      }}
+    />
+  );
+};
+
 /**
  * What can be done with a block while editing, each tool an icon until pointed at: comment, copy its LaTeX,
  * switch a figure and a table, hide or show it, delete it, edit it. `published`: the paper is public, so showing a
@@ -151,16 +186,7 @@ const BlockTools: React.FC<{ paperId: string; block: ResultBlock; published: boo
           }}
         />
       )}
-      {deleteBlock && (
-        <ToolButton
-          icon={<Trash2 size={14} />}
-          label={t('删除')}
-          danger
-          onClick={() => {
-            if (window.confirm(t('确定删除这个块吗？'))) deleteBlock(paperId, block.id);
-          }}
-        />
-      )}
+      {deleteBlock && <DeleteTool onDelete={() => deleteBlock(paperId, block.id)} />}
       <ToolButton icon={<Pencil size={14} />} label={t(EDIT_LABEL[block.kind])} onClick={() => open({ kind: 'block', paperId, blockId: block.id })} />
     </>
   );
