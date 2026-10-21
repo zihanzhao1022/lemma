@@ -25,6 +25,10 @@ export interface EditModeValue {
   reorderBlocks: (paperId: string, ids: string[]) => void;
   /** Turns a figure or table into the version it kept (ResultBlock.alternate) without opening the editor. */
   switchBlock?: (paperId: string, blockId: string) => void;
+  /** Hides a block of a results paper from readers, or shows it again, without the editor. */
+  hideBlock?: (paperId: string, blockId: string, hidden: boolean) => void;
+  /** Deletes a block of a results paper without the editor; the blocks after it are numbered again. */
+  deleteBlock?: (paperId: string, blockId: string) => void;
   /** Uploads files dropped on a paper's page to its attachments, after showing what they will do. */
   uploadFiles?: (paperId: string, files: PickedFile[]) => void;
   /**

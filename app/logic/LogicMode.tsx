@@ -463,7 +463,7 @@ const LogicMode: React.FC<Props> = ({ paper, onSave, top, visible, onPresent }) 
                   </button>
                 </header>
                 <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                  <BlockWithTools paperId={paper.id} block={selectedBlock} />
+                  <BlockWithTools paperId={paper.id} block={selectedBlock} published={!paper.hidden} />
                 </div>
                 <div className="space-y-3 border-t border-black/[0.06] px-4 py-3">
                   {picker ? (

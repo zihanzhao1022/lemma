@@ -38,13 +38,48 @@
   pointer-events: auto;
 }
 
+/* A block's tools, over the top edge of its outline, like the insert buttons under it. */
+.result-block-tools,
+.result-block-badge {
+  position: absolute;
+  top: -12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  background: white;
+  transform: translateY(-50%);
+}
+
+.result-block-tools {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.result-block--editable:hover > .result-block-tools,
+.result-block--editable:focus-within > .result-block-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The tools take the badge's place while they show. */
+.result-block--editable:hover > .result-block-badge,
+.result-block--editable:focus-within > .result-block-badge {
+  opacity: 0;
+}
+
+.result-block-tools button:focus-visible,
 .result-block-insert button:focus-visible {
   outline: 2px solid #9333ea;
   outline-offset: 2px;
 }
 
 @media (hover: none) {
-  .result-block-insert {
+  .result-block-insert,
+  .result-block-tools {
     opacity: 1;
     pointer-events: auto;
   }

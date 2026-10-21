@@ -378,6 +378,9 @@ export const { t, useT, table } = phrases({
   // Opening a .zip, and importing a paper from one.
   '导入完成，{n} 个块都编译好了': { ja: '取り込みが終わり、{n} 個のブロックをすべてコンパイルしました', en: 'Imported; all {n} blocks compiled' },
   '已解压：{names}': { ja: '展開しました：{names}', en: 'Opened: {names}' },
+  // Blocks deleted from the page, without the editor.
+  '正在删除并更新编号…': { ja: '削除して番号を更新しています…', en: 'Deleting and renumbering…' },
+  已删除这个块: { ja: 'ブロックを削除しました', en: 'Block deleted' },
   // Blocks changed by Claude Code (Lemma's MCP server), compiled once the paper is open.
   '正在编译在别处改过的 {n} 个块…': { ja: '別の場所で変更された {n} 個のブロックをコンパイルしています…', en: 'Compiling {n} blocks changed elsewhere…' },
   '{n} 个块已经重新编译': { ja: '{n} 個のブロックをコンパイルし直しました', en: '{n} blocks compiled again' },

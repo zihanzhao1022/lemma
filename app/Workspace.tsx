@@ -11,6 +11,7 @@ import { ItemModal } from '../editor/components/ItemModal';
 import { usePresence } from '../editor/presence';
 import { loadAttachments } from '../editor/results/actions';
 import { hashText, staleBlocks } from '../editor/results/numbering';
+import { resultsCommitMessage } from '../editor/results/ops';
 import { UploadPlan, planUpload } from '../editor/results/uploads';
 import { describeSaveError } from '../editor/backend';
 import { findPaper } from '../lib/results';
@@ -53,7 +54,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const t = useT();
   const account = useAccount()!;
   const { slug } = useParams();
-  const { access, saveResults, saveContentOp, reorderBlocks, switchBlock: switchToKept, uploadFiles: uploadToPaper, isRenumbering, compileStale, content } = list;
+  const { access, saveResults, saveContentOp, reorderBlocks, deleteBlock: deleteFromPaper, switchBlock: switchToKept, uploadFiles: uploadToPaper, isRenumbering, compileStale, content } = list;
   // Shared papers come from several owners, whose slugs may repeat: the route says which one.
   const paper = (paperId ? content.results.find((item) => item.id === paperId) : undefined) ?? findPaper(content.results, slug);
   const shown = useMemo(() => ({ ...content, results: paper ? [paper] : [] }), [content, paper]);
@@ -169,6 +170,27 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     [busy, setToast],
   );
 
+  const hideBlock = useCallback(
+    (paperId: string, blockId: string, hidden: boolean) => {
+      const item = contentRef.current.results.find((candidate) => candidate.id === paperId);
+      if (!item || busy(paperId)) return;
+      counted(
+        { kind: 'setBlockHidden', paperId, blockId, hidden },
+        [],
+        [],
+        resultsCommitMessage(hidden ? 'hide block in' : 'unhide block in', item.title),
+        `content: update result "${item.title}"`,
+      ).catch((error: unknown) => setToast({ message: () => describeSaveError(error) }));
+    },
+    [busy, counted, setToast],
+  );
+  const deleteBlock = useCallback(
+    (paperId: string, blockId: string) => {
+      if (!busy(paperId)) deleteFromPaper(paperId, blockId);
+    },
+    [busy, deleteFromPaper],
+  );
+
   const value = useMemo<EditModeValue>(
     () => ({
       editing: owner && editing,
@@ -179,10 +201,10 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
       login: noop,
       reorder: noop,
       reorderBlocks,
-      ...(owner ? { switchBlock, uploadFiles } : {}),
+      ...(owner ? { switchBlock, uploadFiles, hideBlock, deleteBlock } : {}),
       prepare,
     }),
-    [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, prepare],
+    [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, hideBlock, deleteBlock, prepare],
   );
 
   // The writing view fills the window under the paper's bar; the page itself stops scrolling meanwhile.

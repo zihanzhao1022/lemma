@@ -375,6 +375,53 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   );
 
   /**
+   * Deletes a block without the editor: gone from the page at once, then the blocks after it numbered again and
+   * all of it saved in the queue, like a drag. A block after it that no longer compiles keeps the block.
+   */
+  const deleteBlock = useCallback(
+    (paperId: string, blockId: string) => {
+      if (!backend || loadState.state !== 'private') return;
+      const op: ResultsOp = { kind: 'deleteBlock', paperId, blockId };
+      pending.current.push(op);
+      busy.current.add(paperId);
+      setContent((current) => ({ ...current, results: applyResultsOp(current.results, op) }));
+      callbacks.current.onToast({ message: () => t('正在删除并更新编号…') });
+      const done = () => {
+        pending.current = pending.current.filter((queued) => queued !== op);
+        busy.current.delete(paperId);
+      };
+      enqueue(async () => {
+        const gone = latest.current.find((item) => item.id === paperId)?.blocks.find((block) => block.id === blockId);
+        const paper = applyResultsOp(latest.current, op).find((item) => item.id === paperId);
+        if (!paper || !gone) {
+          done();
+          show(latest.current);
+          return;
+        }
+        const rebuilt = await rebuildPaper(paper, backend.readFile);
+        const failed = rebuilt.failed;
+        if (failed) throw new PhraseError(() => t('{problem}。先修好再删除。', { problem: describeFailure(paper.blocks, failed, 'delete') }));
+        const pdfs = [gone.output, gone.alternate?.output].flatMap((output) => (output ? [output.pdf] : []));
+        const result = await backend.save(
+          withOutputs(paperId, [op], rebuilt),
+          rebuilt.writes,
+          [...pdfs, ...rebuilt.deletes],
+          resultsCommitMessage('delete block in', paper.title),
+          `content: update result "${paper.title}"`,
+        );
+        done();
+        settle(result);
+        if (!result.publicError) callbacks.current.onToast({ message: () => t('已删除这个块') });
+      }).catch((error: unknown) => {
+        done();
+        show(latest.current);
+        callbacks.current.onToast({ message: () => describeSaveError(error) });
+      });
+    },
+    [backend, loadState.state, setContent, enqueue, settle, show],
+  );
+
+  /**
    * Turns a figure or table into its kept version (ResultBlock.alternate) without the editor. When that
    * version was compiled before, the page shows its PDF at once and renumbering and saving follow in the
    * queue, like a drag; otherwise it shows once compiled and saved. `fix` opens the editor on that version
@@ -596,5 +643,5 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [collaborator, loadState, backend, roles, siteBehind, syncSite, approveEdits, siteAccess, saveSiteViewers],
   );
 
-  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace };
+  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, deleteBlock, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace };
 }

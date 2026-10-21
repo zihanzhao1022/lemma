@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeftRight, Check, Copy, ListTree, MessageSquare, MessageSquarePlus, X } from 'lucide-react';
+import { ArrowLeftRight, Check, Copy, Eye, EyeOff, ListTree, MessageSquare, MessageSquarePlus, Pencil, Trash2, X } from 'lucide-react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { exportPaperTex, exportTex } from '../../editor/results/texNames';
 import { N_, Translate } from '../../lib/i18n';
@@ -41,9 +41,37 @@ const InsertButtons: React.FC<{ paperId: string; afterBlockId?: string }> = ({ p
   );
 };
 
-/** The look of the buttons beside a block's round edit button. */
-const TOOL =
-  'inline-flex items-center gap-1 h-8 px-2.5 rounded-full border border-gray-300 bg-white text-xs text-gray-600 shadow-sm hover:border-purple-300 hover:text-purple-700';
+/**
+ * A block's tool: its icon, and its words beside it while the pointer is on it or it has the keyboard's focus
+ * (or `open`, to show a result such as "Copied"). Where nothing can hover, the icon stays alone with its title.
+ */
+const ToolButton: React.FC<{ icon: React.ReactNode; label: string; title?: string; onClick: () => void; open?: boolean; danger?: boolean }> = ({
+  icon,
+  label,
+  title,
+  onClick,
+  open = false,
+  danger = false,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={title ?? label}
+    aria-label={label}
+    className={`group/tool inline-flex h-8 items-center rounded-full border border-gray-300 bg-white px-2 text-xs text-gray-600 shadow-sm transition-colors duration-150 ${
+      danger ? 'hover:border-red-300 hover:text-red-700' : 'hover:border-purple-300 hover:text-purple-700'
+    }`}
+  >
+    {icon}
+    <span
+      className={`overflow-hidden whitespace-nowrap transition-all duration-150 motion-reduce:transition-none ${
+        open ? 'ml-1 max-w-[10rem] opacity-100' : 'max-w-0 opacity-0 group-hover/tool:ml-1 group-hover/tool:max-w-[10rem] group-hover/tool:opacity-100 group-focus-visible/tool:ml-1 group-focus-visible/tool:max-w-[10rem] group-focus-visible/tool:opacity-100'
+      }`}
+    >
+      {label}
+    </span>
+  </button>
+);
 
 /** Copies LaTeX to the clipboard without opening an editor; `pill` matches the labelled edit buttons beside it. */
 const CopyButton: React.FC<{ text: () => string; label: string; title: string; pill?: boolean; className?: string }> = ({
@@ -66,15 +94,13 @@ const CopyButton: React.FC<{ text: () => string; label: string; title: string; p
       () => setState('failed'),
     );
   };
+  const icon = state === 'copied' ? <Check size={14} /> : <Copy size={14} />;
+  const words = { idle: label, copied: t('已复制'), failed: t('复制失败') }[state];
+  if (!pill) return <ToolButton icon={icon} label={words} title={title} onClick={copy} open={state !== 'idle'} />;
   return (
-    <button
-      type="button"
-      onClick={copy}
-      title={title}
-      className={`${pill ? PILL : TOOL} ${className}`}
-    >
-      {state === 'copied' ? <Check size={14} /> : <Copy size={14} />}
-      {{ idle: label, copied: t('已复制'), failed: t('复制失败') }[state]}
+    <button type="button" onClick={copy} title={title} className={`${PILL} ${className}`}>
+      {icon}
+      {words}
     </button>
   );
 };
@@ -93,15 +119,50 @@ const ConvertButton: React.FC<{ paperId: string; block: ResultBlock }> = ({ pape
   if (to === 'table') title = kept ? t('换回之前存下的表格；这张图也会存下，随时可以换回来') : t('把这张图换成表格，保留图题和引用名；这张图会存下，随时可以换回来');
   else title = kept ? t('换回之前存下的图；这张表格也会存下，随时可以换回来') : t('把这张表格换成图，保留图题和引用名；这张表格会存下，随时可以换回来');
   return (
-    <button
-      type="button"
-      onClick={() => (kept && switchBlock ? switchBlock(paperId, block.id) : open({ kind: 'block', paperId, blockId: block.id, convertTo: to }))}
+    <ToolButton
+      icon={<ArrowLeftRight size={14} />}
+      label={to === 'table' ? t('转为表格') : t('转为图')}
       title={title}
-      className={TOOL}
-    >
-      <ArrowLeftRight size={14} />
-      {to === 'table' ? t('转为表格') : t('转为图')}
-    </button>
+      onClick={() => (kept && switchBlock ? switchBlock(paperId, block.id) : open({ kind: 'block', paperId, blockId: block.id, convertTo: to }))}
+    />
+  );
+};
+
+/**
+ * What can be done with a block while editing, each tool an icon until pointed at: comment, copy its LaTeX,
+ * switch a figure and a table, hide or show it, delete it, edit it. `published`: the paper is public, so showing a
+ * hidden block publishes it.
+ */
+const BlockTools: React.FC<{ paperId: string; block: ResultBlock; published: boolean; onComment?: () => void }> = ({ paperId, block, published, onComment }) => {
+  const { open, hideBlock, deleteBlock } = useEditMode();
+  const t = useT();
+  return (
+    <>
+      {onComment && <ToolButton icon={<MessageSquarePlus size={14} />} label={t('批注')} title={t('批注这一块')} onClick={onComment} />}
+      {block.source && <CopyButton text={() => exportTex(block.source ?? '')} label={t('复制 LaTeX')} title={t('复制 LaTeX 代码（开头注明需要的宏包）')} />}
+      <ConvertButton paperId={paperId} block={block} />
+      {hideBlock && (
+        <ToolButton
+          icon={block.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
+          label={block.hidden ? t('取消隐藏') : t('隐藏')}
+          onClick={() => {
+            if (block.hidden && published && !window.confirm(t('这篇论文已公开，取消隐藏后这个块会发布到网站。确定吗？'))) return;
+            hideBlock(paperId, block.id, !block.hidden);
+          }}
+        />
+      )}
+      {deleteBlock && (
+        <ToolButton
+          icon={<Trash2 size={14} />}
+          label={t('删除')}
+          danger
+          onClick={() => {
+            if (window.confirm(t('确定删除这个块吗？'))) deleteBlock(paperId, block.id);
+          }}
+        />
+      )}
+      <ToolButton icon={<Pencil size={14} />} label={t(EDIT_LABEL[block.kind])} onClick={() => open({ kind: 'block', paperId, blockId: block.id })} />
+    </>
   );
 };
 
@@ -138,23 +199,18 @@ interface BlockComments {
   onOpen: (id: string) => void;
 }
 
-const BlockItem: React.FC<{ paperId: string; block: ResultBlock; comments?: BlockComments }> = ({ paperId, block, comments }) => {
+const BlockItem: React.FC<{ paperId: string; block: ResultBlock; published: boolean; comments?: BlockComments }> = ({ paperId, block, published, comments }) => {
   const { editing } = useEditMode();
   const t = useT();
-  const add = comments && (
+  const add = comments && !editing && (
     <button
       type="button"
       onClick={comments.onAdd}
       title={t('批注这一块')}
       aria-label={t('批注这一块')}
-      className={
-        editing
-          ? 'inline-flex h-8 items-center gap-1 rounded-full border border-gray-300 bg-white px-2.5 text-xs text-gray-600 shadow-sm hover:border-purple-300 hover:text-purple-700'
-          : 'absolute right-1 top-1 z-10 rounded-full border border-gray-200 bg-white/90 p-1.5 text-gray-400 opacity-0 shadow-sm transition-opacity hover:text-purple-700 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100'
-      }
+      className="absolute right-1 top-1 z-10 rounded-full border border-gray-200 bg-white/90 p-1.5 text-gray-400 opacity-0 shadow-sm transition-opacity hover:text-purple-700 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
     >
       <MessageSquarePlus size={14} />
-      {editing && t('批注')}
     </button>
   );
   return (
@@ -174,15 +230,16 @@ const BlockItem: React.FC<{ paperId: string; block: ResultBlock; comments?: Bloc
           {comments.count}
         </button>
       )}
-      {!editing && add}
+      {add}
+      {/* While editing, the block's tools over its top edge when the pointer is on it; its being hidden shows always. */}
+      {editing && block.hidden && (
+        <span className="result-block-badge">
+          <HiddenBadge />
+        </span>
+      )}
       {editing && (
-        <div className="flex items-center justify-end gap-2 mb-1 text-xs text-gray-400">
-          {t(KIND_LABEL[block.kind])}
-          {block.hidden && <HiddenBadge />}
-          {add}
-          {block.source && <CopyButton text={() => exportTex(block.source ?? '')} label={t('复制 LaTeX')} title={t('复制 LaTeX 代码（开头注明需要的宏包）')} />}
-          <ConvertButton paperId={paperId} block={block} />
-          <EditButton request={{ kind: 'block', paperId, blockId: block.id }} label={t(EDIT_LABEL[block.kind])} />
+        <div className="result-block-tools" role="group" aria-label={t('这一块的操作')}>
+          <BlockTools paperId={paperId} block={block} published={published} onComment={comments?.onAdd} />
         </div>
       )}
       <BlockView paperId={paperId} block={block} quotes={comments?.quotes} activeQuote={comments?.active} onQuoteClick={comments?.onOpen} />
@@ -240,17 +297,13 @@ function placeOf(blockId: string | undefined, blocks: ResultBlock[], t: Translat
  * A block as the page shows it to whoever edits it, its tools above it, without comments or the buttons that
  * insert blocks: for the paper's other views of its blocks, such as its logic. `tools` go first in the row.
  */
-export const BlockWithTools: React.FC<{ paperId: string; block: ResultBlock; tools?: React.ReactNode }> = ({ paperId, block, tools }) => {
-  const t = useT();
+export const BlockWithTools: React.FC<{ paperId: string; block: ResultBlock; tools?: React.ReactNode; published?: boolean }> = ({ paperId, block, tools, published = false }) => {
   return (
     <div className={`relative${block.hidden ? ' opacity-50' : ''}`}>
       <div className="mb-1 flex flex-wrap items-center justify-end gap-2 text-xs text-gray-400">
         {tools}
-        {t(KIND_LABEL[block.kind])}
         {block.hidden && <HiddenBadge />}
-        {block.source && <CopyButton text={() => exportTex(block.source ?? '')} label={t('复制 LaTeX')} title={t('复制 LaTeX 代码（开头注明需要的宏包）')} />}
-        <ConvertButton paperId={paperId} block={block} />
-        <EditButton request={{ kind: 'block', paperId, blockId: block.id }} label={t(EDIT_LABEL[block.kind])} />
+        <BlockTools paperId={paperId} block={block} published={published} />
       </div>
       <BlockView paperId={paperId} block={block} />
     </div>
@@ -609,7 +662,7 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
               items={blocks}
               className="space-y-10"
               onReorder={(ids) => reorderBlocks(paper.id, ids)}
-              renderItem={(block) => <BlockItem paperId={paper.id} block={block} comments={blockComments(block.id)} />}
+              renderItem={(block) => <BlockItem paperId={paper.id} block={block} published={!paper.hidden} comments={blockComments(block.id)} />}
             />
             {/* "References": the entries the blocks cite from references.bib, typeset after them. */}
             {paper.references && (
