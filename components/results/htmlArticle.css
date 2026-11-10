@@ -1,0 +1,289 @@
+/* A paper as a web page, set like its template: sizes in points on a sheet the page zooms to fit. */
+.html-sheet {
+  position: relative;
+  margin: 0 auto;
+  background: white;
+  color: #111;
+  line-height: 1.22;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 8px 24px -12px rgba(0, 0, 0, 0.25);
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures;
+}
+
+.html-sheet[data-font='cm'] {
+  font-family: KaTeX_Main, 'Latin Modern Roman', 'CMU Serif', 'Computer Modern', Georgia, serif;
+}
+.html-sheet[data-font='times'] {
+  font-family: 'Times New Roman', Times, Tinos, 'Nimbus Roman', serif;
+}
+.html-sheet[data-font='palatino'] {
+  font-family: Palatino, 'Palatino Linotype', 'TeX Gyre Pagella', 'Book Antiqua', serif;
+}
+.html-sheet[data-font='sans'] {
+  font-family: Helvetica, Arial, 'Nimbus Sans', sans-serif;
+}
+
+.html-text {
+  outline: none;
+  caret-color: #6d28d9;
+}
+
+.html-block {
+  position: relative;
+}
+
+.html-block p {
+  margin: 0;
+  text-indent: 1.5em;
+}
+/* LaTeX does not indent the first paragraph after a heading, nor one after \noindent. */
+.html-block h2 + p,
+.html-block h3 + p,
+.html-block h4 + p,
+.html-block p.noindent,
+.html-block li p:first-child,
+.html-block .html-env p:first-of-type {
+  text-indent: 0;
+}
+
+.html-block h2,
+.html-block h3,
+.html-block h4,
+.html-block h5 {
+  font-weight: bold;
+  text-align: left;
+  hyphens: manual;
+  break-after: avoid;
+  margin: 0;
+}
+.html-block h2 {
+  font-size: 1.2em;
+  margin: 1.1em 0 0.55em;
+}
+.html-block h3 {
+  font-size: 1.1em;
+  margin: 0.9em 0 0.45em;
+}
+.html-block h4 {
+  font-size: 1em;
+  margin: 0.8em 0 0.4em;
+}
+.html-block h5 {
+  font-size: 1em;
+  margin: 0.6em 0 0.2em;
+}
+.html-number {
+  margin-right: 0.9em;
+}
+
+/* IEEE: centred small-caps sections with Roman numerals, italic subsections. */
+.html-sheet[data-template='ieee'] .html-block h2 {
+  text-align: center;
+  font-weight: normal;
+  font-variant: small-caps;
+  font-size: 1em;
+  margin: 0.9em 0 0.45em;
+}
+.html-sheet[data-template='ieee'] .html-block h2 .html-number::after {
+  content: '.';
+}
+.html-sheet[data-template='ieee'] .html-block h2 .html-number {
+  margin-right: 0.4em;
+}
+.html-sheet[data-template='ieee'] .html-block h3 {
+  font-weight: normal;
+  font-style: italic;
+  font-size: 1em;
+}
+.html-sheet[data-template='ieee'] .html-block h3 .html-number::after {
+  content: '.';
+}
+.html-sheet[data-template='ieee'] .html-block h3 .html-number {
+  margin-right: 0.4em;
+}
+
+.html-block figure {
+  margin: 0.9em 0;
+  text-align: center;
+  break-inside: avoid;
+}
+.html-block figure.wide,
+.html-block .html-table.wide {
+  column-span: all;
+}
+.html-block figcaption,
+.html-block .html-caption {
+  font-size: 0.92em;
+  text-align: justify;
+  margin-top: 0.5em;
+}
+.html-block .html-caption-first {
+  margin: 0 0 0.5em;
+}
+.html-sheet[data-template='ieee'] .html-table .html-caption {
+  text-align: center;
+  font-variant: small-caps;
+}
+.html-picture {
+  display: inline-block;
+  max-width: 100%;
+}
+.html-picture canvas,
+.html-picture img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.html-block .html-table {
+  margin: 0.9em 0;
+  break-inside: avoid;
+}
+.html-block table {
+  margin: 0 auto;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  text-align: left;
+  hyphens: manual;
+}
+.html-block td {
+  padding: 0.12em 0.55em;
+  vertical-align: top;
+}
+.html-block tr.above-thick td {
+  border-top: 0.08em solid currentColor;
+}
+.html-block tr.above-thin td {
+  border-top: 0.05em solid currentColor;
+}
+.html-block tr.below-thick td {
+  border-bottom: 0.08em solid currentColor;
+}
+.html-block tr.below-thin td {
+  border-bottom: 0.05em solid currentColor;
+}
+
+.html-equation {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin: 0.6em 0;
+  text-indent: 0;
+}
+.html-equation-number {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.html-block ul,
+.html-block ol {
+  margin: 0.4em 0;
+  padding-left: 1.6em;
+}
+.html-block ul {
+  list-style: disc;
+}
+.html-block ol {
+  list-style: decimal;
+}
+
+.html-env {
+  margin: 0.6em 0;
+}
+.html-env-head {
+  font-weight: bold;
+  margin-right: 0.4em;
+}
+.html-env.theorem .html-env-body {
+  font-style: italic;
+}
+.html-env.proof .html-env-head {
+  font-weight: normal;
+  font-style: italic;
+}
+.html-env.proof > .html-env-body::after {
+  content: '\220E';
+  float: right;
+}
+.html-env.abstract {
+  margin: 0 2.5em 1em;
+  font-size: 0.92em;
+}
+.html-env.abstract > .html-env-head {
+  display: block;
+  text-align: center;
+  margin: 0 0 0.4em;
+}
+.html-env.quote,
+.html-env.quotation {
+  margin: 0.6em 2em;
+}
+.html-env.center {
+  text-align: center;
+}
+.html-env-head,
+.html-env-body p:first-child {
+  display: inline;
+}
+
+.html-atom {
+  cursor: default;
+  border-radius: 2px;
+}
+.html-editing .html-atom:hover {
+  background: rgb(139 92 246 / 0.1);
+}
+.html-atom .katex {
+  font-size: 1.05em;
+  text-indent: 0;
+}
+.html-footnote {
+  font-size: 0.7em;
+  vertical-align: super;
+  line-height: 0;
+}
+.html-raw {
+  color: inherit;
+}
+.html-sc {
+  font-variant: small-caps;
+}
+.html-tt {
+  font-family: KaTeX_Typewriter, 'Latin Modern Mono', Menlo, monospace;
+  font-size: 0.95em;
+}
+.html-sf {
+  font-family: KaTeX_SansSerif, Helvetica, Arial, sans-serif;
+}
+
+.html-references {
+  margin-top: 1.2em;
+}
+.html-references ol {
+  margin: 0;
+  padding-left: 2.2em;
+  font-size: 0.9em;
+  text-align: left;
+  hyphens: manual;
+}
+.html-references ol.author-year {
+  list-style: none;
+  padding-left: 1.2em;
+  text-indent: -1.2em;
+}
+.html-references li + li {
+  margin-top: 0.3em;
+}
+
+.html-hidden {
+  opacity: 0.45;
+}
+.html-fallback {
+  margin: 0.6em 0;
+  text-indent: 0;
+}

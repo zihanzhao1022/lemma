@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ClipboardPaste, Copy, Download, Eye, EyeOff, FolderTree, Loader2, Play, Redo2, Trash2, Undo2, X } from 'lucide-react';
 import PdfView from '../../components/results/PdfView';
+import type { PdfClick } from '../../app/writing/PdfPages';
+import type { SourcePosition, SourceSnapshot } from '../../app/writing/sourceMapping';
+import { blockSourceLocation } from './inverseSearch';
 import { pdfPageSize } from '../../components/results/pdfjs';
 import { N_, useLang, useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/results';
@@ -53,6 +56,7 @@ interface Compiled {
   source: string;
   preview: ReturnType<typeof createBlockPreview>;
   ms: number;
+  mapping?: SourceSnapshot;
 }
 
 interface Props {
@@ -66,13 +70,15 @@ interface Props {
   convertTo?: FloatKind;
   /** The ID a new block gets; a fresh one when omitted. */
   newId?: string;
+  /** Source selected by a double click in the block view. */
+  sourceLocation?: SourcePosition;
   readFile: ReadFile;
   onSave: ResultsSave;
   onClose: () => void;
 }
 
 /** Full-screen LaTeX editor for one block: code on the left, the compiled PDF on the right. */
-const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afterBlockId, convertTo, newId, readFile, onSave, onClose }) => {
+const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afterBlockId, convertTo, newId, sourceLocation, readFile, onSave, onClose }) => {
   const t = useT();
   const existing = blockId === undefined ? undefined : paper.blocks.find((item) => item.id === blockId);
   const [block] = useState<ResultBlock>(() => {
@@ -93,7 +99,7 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
   const [stored, setStored] = useState<Record<string, Uint8Array> | null>(null);
   const [added, setAdded] = useState<Record<string, Uint8Array>>({});
   const [compiled, setCompiled] = useState<Compiled | null>(null);
-  const [lastPdf, setLastPdf] = useState<BlockCompileResult | null>(null);
+  const [lastPdf, setLastPdf] = useState<Compiled | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [problem, setProblem] = useMessage();
   const [saving, setSaving] = useState(false);
@@ -109,8 +115,12 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
   const [dropping, setDropping] = useState(false);
   const [tab, setTab] = useState<'code' | 'preview'>('code');
   const [tableMode, setTableMode] = useState<'visual' | 'latex'>(() =>
-    block.kind === 'table' && parseTable(original, preambleOf(paper)).ok ? 'visual' : 'latex',
+    !sourceLocation && block.kind === 'table' && parseTable(original, preambleOf(paper)).ok ? 'visual' : 'latex',
   );
+  const [sourceTarget, setSourceTarget] = useState<SourcePosition | null>(sourceLocation ?? null);
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const retainedMappings = useRef(new Map<Uint8Array, SourceSnapshot>());
   const [targetLine, setTargetLine] = useState<number | null>(null);
   const tableUndo = useRef<string[]>([]);
   const tableRedo = useRef<string[]>([]);
@@ -172,6 +182,35 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
   }, [targetLine, tableMode, block.kind]);
 
   useEffect(() => {
+    if (!sourceTarget || tab !== 'code' || (block.kind === 'table' && tableMode !== 'latex')) return;
+    editor.current?.reveal(sourceTarget.line, sourceTarget.start, sourceTarget.end);
+    setSourceTarget(null);
+  }, [sourceTarget, tab, tableMode, block.kind]);
+
+  useEffect(() => () => {
+    for (const mapping of retainedMappings.current.values()) mapping.dispose();
+    retainedMappings.current.clear();
+  }, []);
+
+  const documentReady = useCallback((data: Uint8Array) => {
+    if (!retainedMappings.current.has(data)) return;
+    for (const [bytes, mapping] of retainedMappings.current) {
+      if (bytes === data) break;
+      mapping.dispose();
+      retainedMappings.current.delete(bytes);
+    }
+  }, []);
+
+  const fromPdf = (displayed: Compiled, click: PdfClick) => {
+    const found = blockSourceLocation(displayed.source, click);
+    const mapped = found && displayed.mapping?.map('main.tex', found.line, found.start, found.end);
+    const target = mapped || blockSourceLocation(sourceRef.current, click) || { line: 1 };
+    setTab('code');
+    setTableMode('latex');
+    setSourceTarget(target);
+  };
+
+  useEffect(() => {
     let cancelled = false;
     loadAttachments(paper, readFile)
       .then((loaded) => {
@@ -191,14 +230,23 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
       if (!preview || !text.trim()) return null;
       const ticket = ++latest.current;
       setCompiling(true);
+      const mapping = editor.current?.captureSnapshot({ 'main.tex': text });
+      let retained = false;
       try {
         const engine = await getTexEngine();
         const started = performance.now();
         const result = await preview(engine, text);
-        const next = { result, source: text, preview, ms: Math.round(performance.now() - started) };
+        const next = { result, source: text, preview, mapping, ms: Math.round(performance.now() - started) };
         if (ticket === latest.current) {
           setCompiled(next);
-          if (result.ok) setLastPdf(result);
+          if (result.ok) {
+            if (result.pdf && mapping) {
+              retainedMappings.current.get(result.pdf)?.dispose();
+              retainedMappings.current.set(result.pdf, mapping);
+              retained = true;
+            }
+            setLastPdf(next);
+          }
           setProblem(null);
         }
         return next;
@@ -206,6 +254,7 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
         if (ticket === latest.current) setProblem(() => error instanceof Error ? error.message : t('TeX 引擎出错，请重试'));
         return null;
       } finally {
+        if (!retained) mapping?.dispose();
         if (ticket === latest.current) setCompiling(false);
       }
     },
@@ -685,12 +734,12 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
               ))}
             </ul>
           )}
-          {lastPdf?.pdf ? (
+          {lastPdf?.result.pdf ? (
             <div className={shown && !shown.ok ? 'opacity-40' : undefined}>
-              <PdfView data={lastPdf.pdf} width={lastPdf.width} height={lastPdf.height} citationScope={citationScope} className="shadow-sm" />
-              {lastPdf.references && (
+              <PdfView data={lastPdf.result.pdf} width={lastPdf.result.width} height={lastPdf.result.height} citationScope={citationScope} className="shadow-sm" onDoubleClick={(click) => fromPdf(lastPdf, click)} onDocumentReady={documentReady} />
+              {lastPdf.result.references && (
                 <div className="mt-8 border-t border-gray-200 pt-4">
-                  <PdfView {...lastPdf.references} data={lastPdf.references.pdf} citationScope={citationScope} citationTargets className="shadow-sm" />
+                  <PdfView {...lastPdf.result.references} data={lastPdf.result.references.pdf} citationScope={citationScope} citationTargets className="shadow-sm" />
                 </div>
               )}
             </div>

@@ -389,4 +389,7 @@ export const { t, useT, table } = phrases({
   // Blocks changed by Claude Code (Lemma's MCP server), compiled once the paper is open.
   '正在编译在别处改过的 {n} 个块…': { ja: '別の場所で変更された {n} 個のブロックをコンパイルしています…', en: 'Compiling {n} blocks changed elsewhere…' },
   '{n} 个块已经重新编译': { ja: '{n} 個のブロックをコンパイルし直しました', en: '{n} blocks compiled again' },
+  '正在排版整篇论文…': { ja: '論文全体を組版しています…', en: 'Typesetting the whole paper…' },
+  '整篇论文已排好': { ja: '論文全体の組版が終わりました', en: 'The whole paper is typeset' },
+  '整篇论文排版失败：{message}': { ja: '論文全体の組版に失敗しました：{message}', en: 'Could not typeset the whole paper: {message}' },
 });

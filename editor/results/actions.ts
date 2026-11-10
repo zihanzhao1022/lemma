@@ -5,6 +5,7 @@ import { DEFAULT_PREAMBLE } from '../tex/document';
 import { TexEngine, getTexEngine } from '../tex/engine';
 import { bibKeysOf, bibliographyStyle } from './bibtex';
 import { REFERENCES_FILE, compileBlock, compileReferences, describeIssue } from './compile';
+import { rebuildArticle } from './article';
 import { CompileFn, RebuildResult, ReferencesBuilder, rebuild } from './numbering';
 import { ResultsOp } from './ops';
 
@@ -72,7 +73,7 @@ export async function rebuildWith(
 ): Promise<RebuildResult> {
   const engine = await getTexEngine();
   const compile = makeCompileFn(engine, preambleOf(paper), files);
-  return rebuild(
+  const rebuilt = await rebuild(
     paper,
     (block, context) => {
       onCompile?.(block.id);
@@ -80,6 +81,16 @@ export async function rebuildWith(
     },
     { references: makeReferencesBuilder(engine, paper, files), keepGoing },
   );
+  // A save the blocks refuse saves nothing; otherwise the whole paper as readers see it comes along.
+  if (rebuilt.failed && !keepGoing) return rebuilt;
+  const article = await rebuildArticle(engine, paper, files);
+  return {
+    ...rebuilt,
+    writes: [...rebuilt.writes, ...article.writes],
+    deletes: [...rebuilt.deletes, ...article.deletes],
+    ...(article.article === undefined ? {} : { article: article.article }),
+    ...(article.failed ? { articleFailed: article.failed } : {}),
+  };
 }
 
 /** Recompiles the paper's out-of-date blocks with its preamble and attachments. */
@@ -91,6 +102,7 @@ export async function rebuildPaper(paper: ResultPaper, readFile: ReadFile, files
 export function withOutputs(paperId: string, ops: ResultsOp[], rebuilt: RebuildResult): ResultsOp {
   const all = [...ops];
   if (rebuilt.references !== undefined) all.push({ kind: 'setReferences', paperId, references: rebuilt.references });
+  if (rebuilt.article !== undefined) all.push({ kind: 'setArticle', paperId, article: rebuilt.article });
   if (Object.keys(rebuilt.outputs).length > 0) {
     all.push({ kind: 'setOutputs', paperId, outputs: rebuilt.outputs, sources: rebuilt.sources });
   }

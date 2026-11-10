@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ResultBlock } from '../../types';
-import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, markerLine, parseMarks, placeOf, withMarks } from './document';
+import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, markableInputs, markerLine, parseMarks, placeOf, withMarks } from './document';
 
 const blocks: ResultBlock[] = [
   { id: 'blk-a', kind: 'text', source: '\\section{Results}\nOurs keeps the made-up accuracy.' },
@@ -49,6 +49,64 @@ describe('main.tex and the blocks', () => {
 });
 
 describe('position marks', () => {
+  it('marks included document paragraphs while leaving math and table fragments untouched', () => {
+    const body = String.raw`\input{intro}
+\begin{align}
+\input{equations}
+\end{align}
+\begin{tabular}{cc}
+\input{rows}
+\end{tabular}`;
+    expect(markableInputs(body, {
+      'intro.tex': 'A paragraph.',
+      'equations.tex': 'a &= b',
+      'rows.tex': 'A & B \\\\',
+      'unused.tex': 'Not included.',
+    })).toEqual(new Set(['intro.tex']));
+  });
+
+  it('rejects a file used in both text and an unsafe argument, including its descendants', () => {
+    const body = String.raw`\input{shared}
+\input{child}
+\caption{
+\input{shared}
+}`;
+    expect(markableInputs(body, {
+      'shared.tex': '\\input{child}\nShared text.',
+      'child.tex': 'Child text.',
+    })).toEqual(new Set());
+    expect(markableInputs('\\input{shared}', {
+      'shared.tex': 'Shared text.',
+      'example.tex': '$\n\\input{shared}\n$',
+    })).toEqual(new Set());
+  });
+
+  it('recurses through safe inputs and resolves every path from the TeX root', () => {
+    expect(markableInputs('\\input{./parts/intro.tex}', {
+      'parts/intro.tex': '\\include{./sections/methods}\nIntroduction.',
+      'sections/methods.tex': 'Methods.',
+      'parts/sections/methods.tex': 'A different, unused file.',
+    })).toEqual(new Set(['parts/intro.tex', 'sections/methods.tex']));
+  });
+
+  it('leaves preamble and template inputs unchanged, including their descendants', () => {
+    expect(markableInputs('\\input{shared}\n\\input{child}', {
+      'shared.tex': '\\input{child}\nTemplate text.',
+      'child.tex': 'Text.',
+    }, ['\\input{shared}'])).toEqual(new Set());
+  });
+
+  it('ignores input examples in comments and verbatim, and conservatively skips dynamic inputs', () => {
+    const body = String.raw`\input{intro}
+% \caption{\input{intro}}
+\verb|\input{intro}|
+\begin{verbatim}
+\input{intro}
+\end{verbatim}`;
+    expect(markableInputs(body, { 'intro.tex': 'Introduction.' })).toEqual(new Set(['intro.tex']));
+    expect(markableInputs('\\input{intro}\n\\input{\\sectionfile}', { 'intro.tex': 'Introduction.' })).toEqual(new Set());
+  });
+
   it('marks lines of running text and floats, and nothing in braces, math, tables or after a glued comment', () => {
     const body = [
       'A paragraph starts here', // 1: text
@@ -78,6 +136,43 @@ describe('position marks', () => {
     expect(marked[13]).toBe('joined');
     expect(marked[14]).toBe('\\leavevmode\\galleytext{15}(In parentheses) text');
     expect(marked.length).toBe(15);
+  });
+
+  it('marks complete float ranges when their commands share a source line', () => {
+    const source = String.raw`\begin{table*}[t]\centering
+\begin{tabular}{lc}HarmBench & 1 \\\end{tabular}
+\caption{Results.}\label{tab:results}\end{table*}
+\begin{table}\caption{Compact.}\end{table}`;
+    expect(withMarks(source)).toBe(String.raw`\begin{table*}[t]\galleyfloat{1}\centering
+\begin{tabular}{lc}HarmBench & 1 \\\end{tabular}
+\caption{Results.}\label{tab:results}\galleyend{3}\end{table*}
+\begin{table}\galleyfloat{4}\caption{Compact.}\galleyend{4}\end{table}`);
+  });
+
+  it('places a float mark after a placement option on following lines without changing line numbers', () => {
+    const source = String.raw`\begin{table*} % a placement option follows
+% keep this comment
+ [t
+ p]\centering
+\caption{HarmBench results.}
+\end{table*}`;
+    const marked = withMarks(source, 2).split('\n');
+    expect(marked[0]).toBe('\\begin{table*} % a placement option follows');
+    expect(marked[3]).toBe(' p]\\galleyfloatat{2}{1}\\centering');
+    expect(marked[5]).toBe('\\galleyendat{2}{6}\\end{table*}');
+    expect(marked).toHaveLength(6);
+  });
+
+  it('ignores closing float examples in comments and verbatim', () => {
+    const source = String.raw`\begin{table}
+% \end{table}
+\verb|\end{table}|
+\begin{verbatim}
+\end{table}
+\end{verbatim}
+\end{table}`;
+    expect(withMarks(source).match(/\\galleyend\{/g)).toHaveLength(1);
+    expect(withMarks(source)).toContain('\\galleyend{7}\\end{table}');
   });
 
   it('puts the body where the document says, with the bibliography when asked', () => {
@@ -133,7 +228,28 @@ describe('from the PDF to the source', () => {
   });
 
   it('sends a click on a float to its first line', () => {
-    expect(locate(marks, { page: 1, x: 150, y: 620, pageWidth: 612 })).toEqual({ line: 20, until: 24 });
+    expect(locate(marks, { page: 1, x: 150, y: 620, pageWidth: 612 })).toEqual({ line: 20, until: 24, scope: 'float' });
+  });
+
+  it('keeps a full-width float and a same-line float as separate containing scopes', () => {
+    const floats: Mark[] = [
+      { kind: 'B', line: 2, page: 1, x: 72, y: 700, width: 468 },
+      { kind: 'E', line: 12, page: 1, x: 72, y: 600, width: 468 },
+      { kind: 'B', line: 14, page: 1, x: 72, y: 550, width: 220 },
+      { kind: 'E', line: 14, page: 1, x: 72, y: 450, width: 220 },
+    ];
+    expect(locate(floats, { page: 1, x: 450, y: 690, pageWidth: 612 })).toEqual({ line: 2, until: 12, scope: 'float' });
+    expect(locate(floats, { page: 1, x: 150, y: 460, pageWidth: 612 })).toEqual({ line: 14, until: 14, scope: 'float' });
+  });
+
+  it('does not give an unclosed float the end mark of a later float', () => {
+    const floats: Mark[] = [
+      { kind: 'B', line: 2, page: 1, x: 72, y: 700, width: 220 },
+      { kind: 'B', line: 14, page: 1, x: 72, y: 550, width: 220 },
+      { kind: 'E', line: 20, page: 1, x: 72, y: 450, width: 220 },
+    ];
+    expect(locate(floats, { page: 1, x: 150, y: 650, pageWidth: 612 })).toBeNull();
+    expect(locate(floats, { page: 1, x: 150, y: 500, pageWidth: 612 })).toEqual({ line: 14, until: 20, scope: 'float' });
   });
 
   it('finds the clicked word near the line, not in command names, across hyphens and ligatures', () => {

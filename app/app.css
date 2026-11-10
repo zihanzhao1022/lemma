@@ -216,6 +216,21 @@ body {
   }
 }
 
+/* The caret of typing on the PDF: steady for a moment after it moves, then blinking. */
+.writing-caret {
+  animation: writing-blink 1.1s steps(1) 0.5s infinite;
+}
+@keyframes writing-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .writing-caret {
+    animation: none;
+  }
+}
+
 /* The wordmark, set like the TeX and LaTeX logos but looser: a small raised E tucked after the L (in the mark's
    violet), the first M lifted a little, the second dropped below the line, a small A raised higher still. */
 .lemma-wordmark {

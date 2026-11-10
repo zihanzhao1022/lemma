@@ -6,6 +6,7 @@ import { Session } from '../../lib/session';
 import { FloatKind, ResearchSpace, ResultPaper, ResultsSiteAccess, SiteContent } from '../../types';
 import { describeSaveError } from '../backend';
 import { ContentOp } from '../ops';
+import { articleHash } from './article';
 import { attachmentPath, loadAttachments, putFiles, rebuildPaper, rebuildWith, withOutputs } from './actions';
 import { GENERIC_PUBLIC_MESSAGE, ResultsBackend, ResultsSaveResult } from './backend';
 import type { ResultsSave } from './BlockEditor';
@@ -748,17 +749,30 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
       if (!backend || loadState.state !== 'private' || compiling.current.has(paperId)) return;
       const paper = latest.current.find((item) => item.id === paperId);
       const stale = paper ? staleBlocks(paper) : [];
-      if (!paper || stale.length === 0) return;
+      // The article readers see is compiled again too when what it prints changed (a hidden block, an older paper).
+      const article = paper ? paper.article?.inputHash !== articleHash(paper) : false;
+      if (!paper || (stale.length === 0 && !article)) return;
       compiling.current.add(paperId);
-      callbacks.current.onToast({ message: () => t('正在编译在别处改过的 {n} 个块…', { n: stale.length }) });
+      callbacks.current.onToast({
+        message: () => (stale.length > 0 ? t('正在编译在别处改过的 {n} 个块…', { n: stale.length }) : t('正在排版整篇论文…')),
+      });
       (async () => {
         const rebuilt = await rebuildWith(paper, await loadAttachments(paper, backend.readFile), { keepGoing: true });
-        if (Object.keys(rebuilt.outputs).length > 0 || rebuilt.references !== undefined) {
+        if (Object.keys(rebuilt.outputs).length > 0 || rebuilt.references !== undefined || rebuilt.article !== undefined) {
           const message = resultsCommitMessage('compile', paper.title);
           settle(await enqueue(() => backend.save(withOutputs(paperId, [], rebuilt), rebuilt.writes, rebuilt.deletes, message, `content: update result "${paper.title}"`)));
         }
         const failed = rebuilt.failed;
-        callbacks.current.onToast({ message: () => (failed ? describeFailure(paper.blocks, failed) : t('{n} 个块已经重新编译', { n: stale.length })) });
+        callbacks.current.onToast({
+          message: () =>
+            failed
+              ? describeFailure(paper.blocks, failed)
+              : stale.length > 0
+                ? t('{n} 个块已经重新编译', { n: stale.length })
+                : rebuilt.articleFailed
+                  ? t('整篇论文排版失败：{message}', { message: rebuilt.articleFailed })
+                  : t('整篇论文已排好'),
+        });
       })()
         .catch((error: unknown) => callbacks.current.onToast({ message: () => describeSaveError(error) }))
         .finally(() => compiling.current.delete(paperId));

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } fro
 import { useT } from '../../lib/phrases/site';
 import { publicFilePath } from '../../lib/results';
 import { ResultBlock } from '../../types';
+import { blockSourceLocation } from '../../editor/results/inverseSearch';
+import { useEditMode } from '../EditMode';
 import { readsPrivately, useResultsAccess } from './access';
 import { findQuote } from './comments/commentText';
 import { Box, layerText, quoteBoxes } from './comments/textLayer';
@@ -30,6 +32,7 @@ interface Props {
 
 /** A block's compiled PDF: read privately by the signed-in editor, or from the site for visitors. */
 const BlockView: React.FC<Props> = ({ paperId, block, references = false, quotes, activeQuote, onQuoteClick }) => {
+  const { editing, open } = useEditMode();
   const access = useResultsAccess();
   const t = useT();
   const output = block.output;
@@ -81,6 +84,8 @@ const BlockView: React.FC<Props> = ({ paperId, block, references = false, quotes
       }
     }
     const target = event.target instanceof Element ? event.target : null;
+    // Keep figure text available for double-click source navigation; its picture still opens enlarged.
+    if (editing && !references && target?.closest('.textLayer span')) return;
     if (zoomable && target?.closest('.resultsPdfPage') && !target.closest('.resultsPdfLink')) setZoomed('page');
   };
 
@@ -120,6 +125,9 @@ const BlockView: React.FC<Props> = ({ paperId, block, references = false, quotes
           citationTargets={references}
           onTextLayer={setLayer}
           onPictures={findsPictures ? setPictures : undefined}
+          onDoubleClick={editing && !references ? (click) => {
+            open({ kind: 'block', paperId, blockId: block.id, sourceLocation: blockSourceLocation(block.source ?? '', click) ?? { line: 1 } });
+          } : undefined}
         >
           {marks.map((mark) =>
             mark.boxes.map((box, index) => (

@@ -269,6 +269,18 @@ export interface ResearchSpace {
   ideas: Record<string, string>;
 }
 
+/** The paper typeset as one document, as its page shows it, with where each block landed in it. */
+export interface ResultArticle {
+  /** Repository path, e.g. "results/res-abc/article-1a2b3c4d.pdf"; published copies live under public/. */
+  pdf: string;
+  /** Hash of what it was compiled from (editor/results/article.ts); a different hash means it is out of date. */
+  inputHash: string;
+  /** Each shown block's lines in the article's main.tex, its marker line first, and the title of its first heading. */
+  blocks: { id: string; from: number; to: number; heading?: string }[];
+  /** Position marks: kind, main.tex line, page, x, y, width in PDF points, and the input file when not main.tex. */
+  marks: ([string, number, number, number, number, number] | [string, number, number, number, number, number, number])[];
+}
+
 export interface ResultPaper extends Hideable {
   id: string;
   /** Address of the paper's page: #/results/<slug>. */
@@ -300,6 +312,8 @@ export interface ResultPaper extends Hideable {
    */
   pendingReview?: string[];
   blocks: ResultBlock[];
+  /** The whole paper typeset as one document, which its page shows; set by the first save that compiles it. */
+  article?: ResultArticle;
   /** Set once the paper has references.bib and its blocks cite entries of it; shown after the blocks. */
   references?: ResultReferences;
   /** The paper's slides for talks and group meetings; private only. */
@@ -422,6 +436,8 @@ export type EditRequest =
       convertTo?: FloatKind;
       /** The ID a new block gets, so that whoever asked for it can find it once it is saved. */
       newId?: string;
+      /** Open the block's LaTeX at the text double-clicked in its PDF. */
+      sourceLocation?: { line: number; start?: number; end?: number };
     }
   /** A results paper's preamble and attachments. */
   | { kind: 'paperSettings'; paperId: string }

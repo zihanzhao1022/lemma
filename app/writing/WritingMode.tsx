@@ -14,10 +14,19 @@ import { parseAuxCitations, parseAuxLabels, parseErrors } from '../../editor/tex
 import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper } from '../../types';
-import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, parseMarks, placeOf } from './document';
+import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, locate, markableInputs, parseMarks, placeOf, withMarks } from './document';
 import { SHADOWED, attachedKey, attachedName, editableText, isLatex } from './files';
-import PdfPages, { PdfClick, PdfPagesHandle } from './PdfPages';
+import type { Spot } from './pageAlign';
+import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSince } from './pageEdits';
+import { graphicsOf, replaceGraphic } from './pageImages';
+import { RegionMap, atomRange, caretToSpot, clickToCaret, lineAt, lineStarts, mapRegion } from './pageMap';
+import type { PageText } from './pageRegions';
+import PdfPages, { CaretSpot, PageClick, PdfClick, PdfPagesHandle } from './PdfPages';
+import { printedUnits } from './printed';
 import SourceEditor, { SourceEditorHandle, SourceFile } from './SourceEditor';
+import PicturePicker, { samePicture } from './PicturePicker';
+import type { SourceSnapshot } from './sourceMapping';
+import { inverseSearch } from './sourceSearch';
 
 const MAIN = 'main.tex';
 const PREAMBLE = 'preamble.tex';
@@ -34,8 +43,26 @@ interface Issue {
 interface Compiled {
   pdf?: Uint8Array;
   marks: Mark[];
+  sources: Texts;
+  fileNames: string[];
+  mapping?: SourceSnapshot;
   issues: Issue[];
   seconds: number;
+  /** The caret of typing on the PDF when the compile started, in `sources`. */
+  caret?: { file: string; offset: number; atom?: { from: number; to: number } };
+}
+
+/**
+ * Typing on the PDF: the caret in the text as it is now, the lines of the region it is in (they bound what the
+ * keys change), and an atom it selected (outlined; the caret then sits right after it).
+ */
+interface PageEdit {
+  file: string;
+  offset: number;
+  from: number;
+  until: number;
+  float: boolean;
+  atom?: { from: number; to: number };
 }
 
 const decode = (data: Uint8Array): string => new TextDecoder().decode(data);
@@ -133,8 +160,33 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
   filesRef.current = attachments;
   // What the last run left for the next: the labels and citations it wrote, and BibTeX's output for the citations.
   const carried = useRef<{ aux?: string; bbl?: string; bibKey: string }>({ bibKey: '' });
+  const retainedMappings = useRef(new Map<Uint8Array, SourceSnapshot>());
+  useEffect(() => () => {
+    for (const mapping of retainedMappings.current.values()) mapping.dispose();
+    retainedMappings.current.clear();
+  }, []);
+  // The PDF the pages show: a compile's PDF reaches the screen a moment after the compile ends.
+  const [shownPdf, setShownPdf] = useState<Uint8Array | null>(null);
+  const documentReady = useCallback((data: Uint8Array) => {
+    setShownPdf(data);
+    if (!retainedMappings.current.has(data)) return;
+    for (const [bytes, mapping] of retainedMappings.current) {
+      if (bytes === data) break;
+      mapping.dispose();
+      retainedMappings.current.delete(bytes);
+    }
+  }, []);
   const running = useRef(false);
   const again = useRef(false);
+  const [pageEdit, setPageEdit] = useState<PageEdit | null>(null);
+  const pageEditRef = useRef(pageEdit);
+  pageEditRef.current = pageEdit;
+  // A change typed on the PDF compiles at once; one typed in the code waits for a pause.
+  const urgent = useRef(false);
+  // Another picture for a figure: the graphic's file name (its range in the text as it is now) and where the list opens.
+  const [picker, setPicker] = useState<{ file: string; path: string; from: number; to: number; left: number; top: number } | null>(null);
+  // Pictures added from the computer, stored with the next save.
+  const added = useRef<Record<string, Uint8Array>>({});
 
   // The paper's files, again whenever the paper changes; the texts follow unless the owner has unsaved work.
   useEffect(() => {
@@ -142,7 +194,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     loadAttachments(paper, readFile).then(
       (files) => {
         if (cancelled) return;
-        setAttachments(files);
+        setAttachments({ ...files, ...added.current });
         const fresh = textsOf(paper, files);
         const current = textsRef.current;
         if (current && saved.current && !sameTexts(current, saved.current)) return;
@@ -170,12 +222,16 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     }
     running.current = true;
     setCompiling(true);
+    let pendingMapping: SourceSnapshot | undefined;
     try {
       do {
         again.current = false;
         const snapshot = textsRef.current;
         const files = filesRef.current;
         if (!snapshot || !files) break;
+        const edit = pageEditRef.current;
+        const caret = edit ? { file: edit.file, offset: edit.offset, ...(edit.atom ? { atom: edit.atom } : {}) } : undefined;
+        pendingMapping = editor.current?.captureSnapshot(snapshot);
         const started = performance.now();
         const engine = await getTexEngine();
         const body = snapshot[MAIN] ?? '';
@@ -187,6 +243,17 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         const doc = fullDocument(preamble, body, cites ? { style, file: REFERENCES_FILE } : null);
         // The attachments as they are being edited.
         const inputs: Record<string, string | Uint8Array> = { ...files, ...(bib !== undefined ? { [REFERENCES_FILE]: encode(bib) } : {}), ...changedFiles(snapshot, saved.current ?? {}) };
+        const fileNames = [MAIN];
+        const texFiles: Record<string, string> = {};
+        for (const [key, source] of Object.entries(snapshot)) {
+          const name = attachedName(key);
+          if (!name || !name.endsWith('.tex') || SHADOWED.includes(name)) continue;
+          texFiles[name] = source;
+        }
+        for (const name of markableInputs(body, texFiles, [preamble])) {
+          fileNames.push(attachedKey(name));
+          inputs[name] = withMarks(texFiles[name], fileNames.length - 1);
+        }
         const state = carried.current;
         const bibKey = JSON.stringify([keys, bib, style]);
         const bibtex = cites && (bibKey !== state.bibKey || state.bbl === undefined);
@@ -216,27 +283,37 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         if (!out.pdf && issues.length === 0) issues.push({ message: out.reason ?? t('没有生成 PDF') });
         const seconds = (performance.now() - started) / 1000;
         // A run without a PDF keeps the last one on screen.
+        const mapping = pendingMapping;
+        if (out.pdf && mapping) retainedMappings.current.set(out.pdf, mapping);
+        else mapping?.dispose();
+        pendingMapping = undefined;
         setCompiled((previous) => ({
+          sources: out.pdf ? snapshot : previous?.sources ?? {},
+          fileNames: out.pdf ? fileNames : previous?.fileNames ?? [MAIN],
+          mapping: out.pdf ? mapping : previous?.mapping,
           pdf: out.pdf ?? previous?.pdf,
           marks: out.pdf ? parseMarks(out.written?.['main.gpos'] ?? '') : previous?.marks ?? [],
           issues,
           seconds,
+          caret: out.pdf ? caret : previous?.caret,
         }));
       } while (again.current);
     } catch (error) {
       setProblem(() => describeSaveError(error));
     } finally {
+      pendingMapping?.dispose();
       running.current = false;
       setCompiling(false);
     }
   }, [paper, setProblem, t]);
 
-  // Compiles when the view opens and a moment after typing stops.
+  // Compiles when the view opens, at once after typing on the PDF, and a moment after typing in the code stops.
   const first = useRef(true);
   useEffect(() => {
     if (!visible || !texts || !attachments) return undefined;
-    const timer = window.setTimeout(() => void compile(), first.current ? 0 : 1200);
+    const timer = window.setTimeout(() => void compile(), first.current || urgent.current ? 0 : 1200);
     first.current = false;
+    urgent.current = false;
     return () => window.clearTimeout(timer);
   }, [visible, texts, attachments, compile]);
 
@@ -263,6 +340,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       return next;
     });
   const tree = useMemo(() => fileTree(Object.keys(attachments ?? {}).filter((name) => name !== REFERENCES_FILE)), [attachments]);
+  // The pictures a figure can show.
+  const attachmentNames = useMemo(() => Object.keys(attachments ?? {}).filter((name) => IMAGE_TYPES.includes(extensionOf(name))).sort(), [attachments]);
 
   const dirty = texts !== null && saved.current !== null && !sameTexts(texts, saved.current);
 
@@ -281,8 +360,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       for (const block of changes.deleted) ops.push({ kind: 'deleteBlock', paperId: paper.id, blockId: block.id });
       if (changes.order) ops.push({ kind: 'reorderBlocks', paperId: paper.id, ids: changes.order });
       const writes: FileWrite[] = [];
-      // The bibliography and the attachments edited here, stored again; the blocks that use them compile anew.
-      const edited = changedFiles(current, saved.current);
+      // The bibliography and the attachments edited or added here, stored; the blocks that use them compile anew.
+      const edited = { ...changedFiles(current, saved.current), ...added.current };
       if (Object.keys(edited).length > 0) {
         const uploads = await putFiles(paper.id, edited);
         ops.push(...uploads.ops);
@@ -299,6 +378,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       const deletes = [...changes.deleted.flatMap((block) => [block.output, block.alternate?.output].flatMap((output) => (output ? [output.pdf] : []))), ...rebuilt.deletes];
       await onSave(withOutputs(paper.id, ops, rebuilt), [...writes, ...rebuilt.writes], deletes, resultsCommitMessage('write', paper.title), `content: update result "${paper.title}"`);
       saved.current = current;
+      added.current = {};
       setTexts({ ...current });
     } catch (error) {
       setProblem(() => describeSaveError(error));
@@ -338,13 +418,247 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     if (place) pdf.current?.show(place.page, place.y);
   };
 
+  /* ------------------------------------------------------------------ typing on the PDF */
+
+  const leavePage = useCallback(() => setPageEdit(null), []);
+
+  /** The text of the pages a region at `line` reads: its mark's page and the one after (a paragraph may go on there). */
+  const regionPages = useCallback(async (marks: Mark[], file: number, line: number): Promise<(PageText | undefined)[]> => {
+    const start = marks.filter((mark) => (mark.file ?? 0) === file && mark.kind !== 'E' && mark.line <= line).sort((a, b) => b.line - a.line)[0];
+    const pages: (PageText | undefined)[] = [];
+    if (!start || !pdf.current) return pages;
+    for (const page of [start.page, start.page + 1]) pages[page - 1] = await pdf.current.pageText(page);
+    return pages;
+  }, []);
+
+  /** A line of a file's compiled source, in the text as it is now (the same line when nothing changed). */
+  const lineNow = (current: Compiled, file: string, line: number): number | null => {
+    const then = current.sources[file];
+    const now = editor.current?.text(file) ?? textsRef.current?.[file];
+    if (then === undefined || now == null) return null;
+    if (then === now) return line;
+    return current.mapping?.map(file, line)?.line ?? null;
+  };
+
+  /** An offset in a file's compiled source, in the text as it is now. */
+  const offsetNow = (current: Compiled, file: string, offset: number): number | null => {
+    const then = current.sources[file];
+    const now = editor.current?.text(file) ?? textsRef.current?.[file];
+    if (then === undefined || now == null) return null;
+    if (then === now) return offset;
+    const line = lineAt(then, offset);
+    const mapped = current.mapping?.map(file, line, offset - lineStarts(then)[line - 1]);
+    if (!mapped || mapped.start === undefined) return null;
+    return (lineStarts(now)[mapped.line - 1] ?? 0) + mapped.start;
+  };
+
+  /** A click on a float's picture: the list of the paper's pictures, to put another in its place. */
+  const pickPicture = async (current: Compiled, file: string, index: number, map: RegionMap, click: PageClick) => {
+    const source = current.sources[file] ?? '';
+    const graphics = graphicsOf(source, map.from, map.to);
+    if (graphics.length === 0) return;
+    let chosen = graphics[0];
+    if (graphics.length > 1) {
+      // Several pictures in one float: the one under the click, the n-th drawn being the n-th in the code.
+      const begin = current.marks.find((mark) => mark.kind === 'B' && mark.line === map.region.from && (mark.file ?? 0) === index);
+      const end = current.marks.find((mark) => mark.kind === 'E' && mark.line === map.region.until && (mark.file ?? 0) === index);
+      const boxes = ((await pdf.current?.pictures(click.page)) ?? []).filter(
+        (box) => !begin || !end || (box.left >= begin.x - 4 && box.right <= begin.x + begin.width + 4 && box.top <= begin.y + 4 && box.bottom >= end.y - 4),
+      );
+      const under = boxes.findIndex((box) => click.x >= box.left - 2 && click.x <= box.right + 2 && click.y >= box.bottom - 2 && click.y <= box.top + 2);
+      if (under < 0) return;
+      if (boxes.length === graphics.length) chosen = graphics[under];
+    }
+    const from = offsetNow(current, file, chosen.from);
+    const to = offsetNow(current, file, chosen.to);
+    if (from === null || to === null) return;
+    setPicker({ file, path: chosen.path, from, to, left: Math.max(8, Math.min(click.clientX, window.innerWidth - 280)), top: Math.max(8, Math.min(click.clientY + 12, window.innerHeight - 360)) });
+  };
+
+  const choosePicture = (choice: NonNullable<typeof picker>, name: string) => {
+    setPicker(null);
+    if (editor.current?.change(choice.file, choice.from, choice.to, replaceGraphic(choice.path, name), 'input.type')) urgent.current = true;
+  };
+
+  /** A picture from the computer: added to the paper's attachments, beside the one it replaces, and put in its place. */
+  const uploadPicture = async (choice: NonNullable<typeof picker>, chosen: File) => {
+    const data = new Uint8Array(await chosen.arrayBuffer());
+    const current = attachmentNames.find((name) => samePicture(name, choice.path));
+    const folder = current?.includes('/') ? current.slice(0, current.lastIndexOf('/') + 1) : '';
+    // LaTeX file names cannot hold spaces.
+    const base = chosen.name.replace(/\s+/g, '-');
+    const dot = base.lastIndexOf('.');
+    let name = `${folder}${base}`;
+    for (let n = 2; attachments?.[name] !== undefined || added.current[name] !== undefined; n += 1) name = `${folder}${base.slice(0, dot)}-${n}${base.slice(dot)}`;
+    added.current = { ...added.current, [name]: data };
+    setAttachments((files) => ({ ...(files ?? {}), [name]: data }));
+    choosePicture(choice, name);
+  };
+
+  const onPageClick = async (click: PageClick) => {
+    const current = compiled;
+    if (!current?.pdf) return leavePage();
+    const located = locate(current.marks, click);
+    if (!located) return leavePage();
+    const index = located.file ?? 0;
+    const file = current.fileNames[index] ?? MAIN;
+    const source = current.sources[file];
+    if (source === undefined) return leavePage();
+    const map = mapRegion(source, current.marks, await regionPages(current.marks, index, located.line), index, located.line);
+    const caret = map && click.item >= 0 ? clickToCaret(map, click.item, click.offset, click.side) : null;
+    if (!map || !caret) {
+      leavePage();
+      // Not on text the source prints: in a float, that is its picture.
+      if (map?.region.float) await pickPicture(current, file, index, map, click);
+      return;
+    }
+    // A click on an atom (math, a citation) selects it, with the caret right after it.
+    const atom = 'atom' in caret ? caret.atom : undefined;
+    const offset = offsetNow(current, file, atom ? atom.to : 'offset' in caret ? caret.offset : 0);
+    const atomFrom = atom ? offsetNow(current, file, atom.from) : null;
+    const from = lineNow(current, file, map.region.from);
+    const until = map.region.until === Number.MAX_SAFE_INTEGER ? map.region.until : lineNow(current, file, map.region.until);
+    if (offset === null || from === null || until === null || (atom && atomFrom === null)) return leavePage();
+    const edit: PageEdit = { file, offset, from, until, float: map.region.float, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
+    setPageEdit(edit);
+    pageEditRef.current = edit;
+    if (active !== file) openFile(file);
+    editor.current?.follow(file, offset);
+  };
+
+  // Where to draw the caret: in the PDF on screen, for the source it was compiled from.
+  const [caretSpot, setCaretSpot] = useState<CaretSpot | null>(null);
+  const [atomSpots, setAtomSpots] = useState<[Spot, Spot] | null>(null);
+  // What was typed since the PDF on screen, shown at its caret until TeX has set it.
+  const [pending, setPending] = useState('');
+  useEffect(() => {
+    const edit = pageEdit;
+    const current = compiled;
+    if (!edit || !current?.pdf) {
+      setCaretSpot(null);
+      setAtomSpots(null);
+      setPending('');
+      return undefined;
+    }
+    const source = current.sources[edit.file];
+    // The caret now when nothing changed since that compile; else the caret the compile started with.
+    const fresh = source !== undefined && source === textsRef.current?.[edit.file];
+    const caret = fresh ? edit : current.caret?.file === edit.file ? current.caret : null;
+    const now = editor.current?.text(edit.file) ?? textsRef.current?.[edit.file] ?? '';
+    // While a newer PDF is on its way to the screen, what shows stays.
+    if (shownPdf === current.pdf) setPending(!fresh && caret && !caret.atom && !edit.atom ? typedSince(now, offsetNow(current, edit.file, caret.offset), edit.offset) : '');
+    const index = current.fileNames.indexOf(edit.file);
+    // Until a PDF catches up with the typing and is on screen, the last caret stays.
+    if (!caret || source === undefined || index < 0 || shownPdf !== current.pdf) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const line = lineAt(source, caret.offset);
+      const map = mapRegion(source, current.marks, await regionPages(current.marks, index, line), index, line);
+      if (cancelled) return;
+      setCaretSpot(map ? caretToSpot(map, caret.offset) : null);
+      setAtomSpots(map && caret.atom ? atomRange(map, caret.atom.from) : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pageEdit, compiled, texts, regionPages, shownPdf]);
+
+  /** The printed units of the caret's region, in the text as it is now: what the keys can change. */
+  const regionNow = (edit: PageEdit) => {
+    const text = editor.current?.text(edit.file) ?? '';
+    const starts = lineStarts(text);
+    const from = starts[Math.min(edit.from, starts.length) - 1] ?? 0;
+    const to = edit.until < starts.length ? starts[edit.until] - 1 : text.length;
+    return { text, units: printedUnits(text, from, to) };
+  };
+
+  /** Puts the caret at `offset`; `lines` is how many lines the change before it added to the region. */
+  const caretTo = (edit: PageEdit, offset: number, lines = 0) => {
+    const next: PageEdit = { file: edit.file, offset, from: edit.from, until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines), float: edit.float };
+    setPageEdit(next);
+    pageEditRef.current = next;
+    editor.current?.follow(edit.file, offset);
+  };
+
+  const onPageText = (typed: string) => {
+    const edit = pageEditRef.current;
+    if (!edit || !editor.current) return;
+    const paragraph = typed === '\n';
+    // A float (a table, a caption) has no paragraphs.
+    if (paragraph && edit.float) return;
+    const text = editor.current.text(edit.file) ?? '';
+    const insert = paragraph ? '\n\n' : escapeTyped(edit.float ? typed.replace(/\s*\n\s*/g, ' ') : typed, text[edit.offset - 1] ?? '');
+    if (!editor.current.change(edit.file, edit.offset, edit.offset, insert, 'input.type')) return;
+    urgent.current = true;
+    caretTo(edit, edit.offset + insert.length, insert.split('\n').length - 1);
+  };
+
+  const onPageKey = (event: KeyboardEvent) => {
+    const edit = pageEditRef.current;
+    if (!edit || !editor.current) return;
+    const key = event.key.toLowerCase();
+    if ((event.metaKey || event.ctrlKey) && (key === 'z' || key === 'y')) {
+      event.preventDefault();
+      const head = editor.current.history(edit.file, key === 'y' || event.shiftKey ? 'redo' : 'undo');
+      if (head === null) return;
+      urgent.current = true;
+      caretTo(edit, head);
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && key === 's') {
+      event.preventDefault();
+      void save();
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    switch (event.key) {
+      case 'Escape':
+        event.preventDefault();
+        leavePage();
+        return;
+      case 'Backspace':
+      case 'Delete': {
+        event.preventDefault();
+        const { text, units } = regionNow(edit);
+        const removal = event.key === 'Backspace' ? deleteBefore(units, edit.offset) : deleteAfter(units, edit.offset);
+        if (!removal || !editor.current.change(edit.file, removal.from, removal.to, '', event.key === 'Backspace' ? 'delete.backward' : 'delete.forward')) return;
+        urgent.current = true;
+        caretTo(edit, removal.from, -(text.slice(removal.from, removal.to).split('\n').length - 1));
+        return;
+      }
+      case 'ArrowLeft':
+      case 'ArrowRight':
+        event.preventDefault();
+        caretTo(edit, moveCaret(regionNow(edit).units, edit.offset, event.key === 'ArrowLeft' ? -1 : 1));
+        return;
+      case 'ArrowUp':
+      case 'ArrowDown': {
+        event.preventDefault();
+        // The glyph a line above or below (lines are about 1.2 font sizes apart), where a click there would land.
+        const box = pdf.current?.caretBox();
+        const middle = box ? box.top + box.height / 2 : 0;
+        const hit = box ? pdf.current?.hitAt(box.left + 1, event.key === 'ArrowUp' ? middle - box.height * 1.2 : middle + box.height * 1.2) : null;
+        if (hit && hit.item >= 0) void onPageClick(hit);
+        return;
+      }
+      case 'Tab':
+        event.preventDefault();
+        return;
+      default:
+    }
+  };
+
   const fromPdf = (click: PdfClick) => {
-    const found = locate(marks, click);
+    leavePage();
+    if (!compiled?.pdf) return;
+    const found = inverseSearch(compiled.sources, compiled.marks, click, compiled.fileNames);
     if (!found) return;
-    const lines = (textsRef.current?.[MAIN] ?? '').split('\n');
-    const word = findWord(lines, found.line, found.until, click.word, click.context);
-    openFile(MAIN);
-    editor.current?.reveal(MAIN, word?.line ?? found.line, word?.start, word?.end);
+    const mapped = compiled.mapping?.map(found.file, found.line, found.start, found.end);
+    // External reloads invalidate editor maps; find the text again in the reloaded files.
+    const target = mapped ? { file: found.file, ...mapped } : inverseSearch(textsRef.current ?? {}, [], click);
+    if (!target) return;
+    openFile(target.file);
+    editor.current?.reveal(target.file, target.line, target.start, target.end);
   };
 
   // Each level of folders one chevron and gap further in, so a folder's files line up under its icon.
@@ -408,6 +722,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
 
   const bar = 'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1 text-[13px] text-gray-600 transition-colors duration-150 hover:bg-black/[0.05] hover:text-gray-900 disabled:opacity-40';
   const issues = compiled?.issues ?? [];
+  // The pages on screen are the PDF of the text as it is now.
+  const upToDate = !compiling && Boolean(compiled?.pdf) && texts !== null && compiled !== null && sameTexts(texts, compiled.sources);
 
   return (
     <div className={`fixed inset-x-0 bottom-0 z-20 flex bg-white ${visible ? '' : 'hidden'}`} style={{ top }}>
@@ -507,8 +823,22 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
               {t('{n} 个问题', { n: issues.length })}
             </button>
           )}
-          <span className="ml-1 whitespace-nowrap text-xs text-gray-400">{compiling ? t('编译中…') : compiled ? t('{s} 秒', { s: compiled.seconds.toFixed(1) }) : ''}</span>
-          <span className="ml-auto hidden truncate text-xs text-gray-400 xl:inline">{t('双击 PDF 里的文字，跳到它的代码')}</span>
+          <span className="ml-1 inline-flex items-center gap-1.5 whitespace-nowrap text-xs" title={compiled ? t('{s} 秒', { s: compiled.seconds.toFixed(1) }) : undefined}>
+            {compiling ? (
+              <>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-gray-400" />
+                <span className="text-gray-500">{t('核对整篇…')}</span>
+              </>
+            ) : upToDate ? (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="text-emerald-700">{t('和 PDF 一致')}</span>
+              </>
+            ) : compiled ? (
+              <span className="text-gray-400">{t('{s} 秒', { s: compiled.seconds.toFixed(1) })}</span>
+            ) : null}
+          </span>
+          <span className="ml-auto hidden truncate text-xs text-gray-400 xl:inline">{t('单击 PDF 里的文字直接修改，双击跳到它的代码')}</span>
           <span className="ml-auto flex shrink-0 items-center xl:ml-2">
             <button type="button" onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} aria-label={t('缩小')} title={t('缩小')} className={bar}>
               <Minus size={14} />
@@ -543,12 +873,39 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         )}
         <div className="min-h-0 flex-1">
           {compiled?.pdf ? (
-            <PdfPages ref={pdf} data={compiled.pdf} zoom={zoom} onDoubleClick={fromPdf} />
+            <PdfPages
+              ref={pdf}
+              data={compiled.pdf}
+              zoom={zoom}
+              onDoubleClick={fromPdf}
+              onDocumentReady={documentReady}
+              onClick={(click) => void onPageClick(click)}
+              editing={pageEdit !== null}
+              caret={caretSpot}
+              outline={atomSpots}
+              pending={pending}
+              onCaretText={onPageText}
+              onCaretKey={onPageKey}
+              onCaretLeave={leavePage}
+            />
           ) : (
             <p className="flex h-full items-center justify-center bg-[#e9e9ec] text-sm text-gray-500">{compiling || !compiled ? t('正在编译整篇论文…') : t('没有生成 PDF')}</p>
           )}
         </div>
       </section>
+
+      {picker && attachments && (
+        <PicturePicker
+          path={picker.path}
+          left={picker.left}
+          top={picker.top}
+          names={attachmentNames}
+          attachments={attachments}
+          onChoose={(name) => choosePicture(picker, name)}
+          onUpload={(chosen) => void uploadPicture(picker, chosen)}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </div>
   );
 };

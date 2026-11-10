@@ -1,18 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeftRight, Check, Copy, Eye, EyeOff, ListTree, MessageSquare, MessageSquarePlus, Pencil, Trash2, X } from 'lucide-react';
+import { ListTree, MessageSquare, MessageSquarePlus, X } from 'lucide-react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
-import { exportPaperTex, exportTex } from '../../editor/results/texNames';
-import { N_, Translate } from '../../lib/i18n';
+import { exportPaperTex } from '../../editor/results/texNames';
+import { Translate } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/site';
 import { findPaper, shownBlocks } from '../../lib/results';
 import { ResultBlock, ResultPaper } from '../../types';
 import { useContent } from '../ContentContext';
-import { AddButton, EditButton, EditModeContext, HiddenBadge, PILL, useEditMode } from '../EditMode';
+import { EditButton, EditModeContext, HiddenBadge, useEditMode } from '../EditMode';
 import { SortableGroup } from '../SortableGroup';
 import { ResultsAccess, canEditShared, isCollaborator, useResultsAccess } from './access';
 import Authors from './Authors';
+import ArticleView, { ArticleViewHandle } from './ArticleView';
 import BlockView, { QuoteMark } from './BlockView';
+import { BlockReaders, BlockTools, CopyButton, InsertButtons, KIND_LABEL } from './BlockTools';
 import CommentsPanel, { DRAFT, DraftComment } from './comments/CommentsPanel';
 import DropUpload from './DropUpload';
 import { MAX_ENTRIES } from './droppedFiles';
@@ -26,193 +28,8 @@ import './resultPage.css';
 import { Reader, avatarUrl, usePresence } from '../presence';
 import { useReportBlockInView } from './readingPosition';
 
-// Translated where shown.
-const KIND_LABEL = { text: N_('文字'), figure: N_('图'), table: N_('表格') } as const;
-const EDIT_LABEL = { text: N_('编辑文字'), figure: N_('编辑图'), table: N_('编辑表格') } as const;
-
-const InsertButtons: React.FC<{ paperId: string; afterBlockId?: string }> = ({ paperId, afterBlockId }) => {
-  const t = useT();
-  return (
-    <>
-      <AddButton request={{ kind: 'block', paperId, blockKind: 'text', afterBlockId }} text={t('文字')} />
-      <AddButton request={{ kind: 'block', paperId, blockKind: 'figure', afterBlockId }} text={t('图')} />
-      <AddButton request={{ kind: 'block', paperId, blockKind: 'table', afterBlockId }} text={t('表格')} />
-    </>
-  );
-};
-
-/**
- * A block's tool: its icon, and its words beside it while the pointer is on it or it has the keyboard's focus
- * (or `open`, to show a result such as "Copied"). Where nothing can hover, the icon stays alone with its title.
- */
-const ToolButton: React.FC<{
-  icon: React.ReactNode;
-  label: string;
-  title?: string;
-  onClick: () => void;
-  onBlur?: () => void;
-  open?: boolean;
-  danger?: boolean;
-  /** Red all over: the next click does what cannot be undone here. */
-  alarm?: boolean;
-}> = ({ icon, label, title, onClick, onBlur, open = false, danger = false, alarm = false }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    onBlur={onBlur}
-    title={title ?? label}
-    aria-label={label}
-    className={`group/tool inline-flex h-8 items-center rounded-full border px-2 text-xs shadow-sm transition-colors duration-150 ${
-      alarm
-        ? 'border-red-300 bg-red-50 text-red-700'
-        : `border-gray-300 bg-white text-gray-600 ${danger ? 'hover:border-red-300 hover:text-red-700' : 'hover:border-purple-300 hover:text-purple-700'}`
-    }`}
-  >
-    {icon}
-    <span
-      className={`overflow-hidden whitespace-nowrap transition-all duration-150 motion-reduce:transition-none ${
-        open ? 'ml-1 max-w-[10rem] opacity-100' : 'max-w-0 opacity-0 group-hover/tool:ml-1 group-hover/tool:max-w-[10rem] group-hover/tool:opacity-100 group-focus-visible/tool:ml-1 group-focus-visible/tool:max-w-[10rem] group-focus-visible/tool:opacity-100'
-      }`}
-    >
-      {label}
-    </span>
-  </button>
-);
-
-/** Copies LaTeX to the clipboard without opening an editor; `pill` matches the labelled edit buttons beside it. */
-const CopyButton: React.FC<{ text: () => string; label: string; title: string; pill?: boolean; className?: string }> = ({
-  text,
-  label,
-  title,
-  pill = false,
-  className = '',
-}) => {
-  const t = useT();
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  useEffect(() => {
-    if (state === 'idle') return undefined;
-    const timer = setTimeout(() => setState('idle'), 2000);
-    return () => clearTimeout(timer);
-  }, [state]);
-  const copy = () => {
-    navigator.clipboard.writeText(text()).then(
-      () => setState('copied'),
-      () => setState('failed'),
-    );
-  };
-  const icon = state === 'copied' ? <Check size={14} /> : <Copy size={14} />;
-  const words = { idle: label, copied: t('已复制'), failed: t('复制失败') }[state];
-  if (!pill) return <ToolButton icon={icon} label={words} title={title} onClick={copy} open={state !== 'idle'} />;
-  return (
-    <button type="button" onClick={copy} title={title} className={`${PILL} ${className}`}>
-      {icon}
-      {words}
-    </button>
-  );
-};
-
-/**
- * Turns a figure into a table, or a table into a figure: straight to the version kept from an earlier turn,
- * or through the editor, starting the other kind with the caption and label kept. The version shown now is kept.
- */
-const ConvertButton: React.FC<{ paperId: string; block: ResultBlock }> = ({ paperId, block }) => {
-  const { open, switchBlock } = useEditMode();
-  const t = useT();
-  if (block.kind !== 'figure' && block.kind !== 'table') return null;
-  const to = block.kind === 'figure' ? 'table' : 'figure';
-  const kept = block.alternate?.kind === to;
-  let title: string;
-  if (to === 'table') title = kept ? t('换回之前存下的表格；这张图也会存下，随时可以换回来') : t('把这张图换成表格，保留图题和引用名；这张图会存下，随时可以换回来');
-  else title = kept ? t('换回之前存下的图；这张表格也会存下，随时可以换回来') : t('把这张表格换成图，保留图题和引用名；这张表格会存下，随时可以换回来');
-  return (
-    <ToolButton
-      icon={<ArrowLeftRight size={14} />}
-      label={to === 'table' ? t('转为表格') : t('转为图')}
-      title={title}
-      onClick={() => (kept && switchBlock ? switchBlock(paperId, block.id) : open({ kind: 'block', paperId, blockId: block.id, convertTo: to }))}
-    />
-  );
-};
-
-/** Deletes on a second click: the first turns the button red and says so, for a few seconds. */
-const DeleteTool: React.FC<{ onDelete: () => void }> = ({ onDelete }) => {
-  const t = useT();
-  const [armed, setArmed] = useState(false);
-  useEffect(() => {
-    if (!armed) return undefined;
-    const timer = setTimeout(() => setArmed(false), 3000);
-    return () => clearTimeout(timer);
-  }, [armed]);
-  return (
-    <ToolButton
-      icon={<Trash2 size={14} />}
-      label={armed ? t('再点一次删除') : t('删除')}
-      danger
-      alarm={armed}
-      open={armed}
-      onBlur={() => setArmed(false)}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
-          return;
-        }
-        setArmed(false);
-        onDelete();
-      }}
-    />
-  );
-};
-
-/**
- * What can be done with a block while editing, each tool an icon until pointed at: comment, copy its LaTeX,
- * switch a figure and a table, hide or show it, delete it, edit it. `published`: the paper is public, so showing a
- * hidden block publishes it.
- */
-const BlockTools: React.FC<{ paperId: string; block: ResultBlock; published: boolean; onComment?: () => void }> = ({ paperId, block, published, onComment }) => {
-  const { open, hideBlock, deleteBlock } = useEditMode();
-  const t = useT();
-  return (
-    <>
-      {onComment && <ToolButton icon={<MessageSquarePlus size={14} />} label={t('批注')} title={t('批注这一块')} onClick={onComment} />}
-      {block.source && <CopyButton text={() => exportTex(block.source ?? '')} label={t('复制 LaTeX')} title={t('复制 LaTeX 代码（开头注明需要的宏包）')} />}
-      <ConvertButton paperId={paperId} block={block} />
-      {hideBlock && (
-        <ToolButton
-          icon={block.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
-          label={block.hidden ? t('取消隐藏') : t('隐藏')}
-          onClick={() => {
-            if (block.hidden && published && !window.confirm(t('这篇论文已公开，取消隐藏后这个块会发布到网站。确定吗？'))) return;
-            hideBlock(paperId, block.id, !block.hidden);
-          }}
-        />
-      )}
-      {deleteBlock && <DeleteTool onDelete={() => deleteBlock(paperId, block.id)} />}
-      <ToolButton icon={<Pencil size={14} />} label={t(EDIT_LABEL[block.kind])} onClick={() => open({ kind: 'block', paperId, blockId: block.id })} />
-    </>
-  );
-};
-
-/** The others looking at a block, beside it like collaborators' cursors in Overleaf. */
-const BlockReaders: React.FC<{ blockId: string }> = ({ blockId }) => {
-  const presence = usePresence();
-  const t = useT();
-  const here = presence?.viewers.filter((viewer) => viewer.block === blockId && viewer.login !== presence.me?.login) ?? [];
-  if (here.length === 0) return null;
-  return (
-    // In the right margin: the left one holds the drag handles while editing.
-    <div className="absolute z-10 -top-8 right-0 flex gap-1 md:top-0 md:-right-10 md:flex-col" aria-label={t('正在看这一块的人')}>
-      {here.map((viewer) => (
-        <img
-          key={viewer.login}
-          src={avatarUrl(viewer.id, 48)}
-          alt={viewer.login}
-          title={t('@{login} 正在看这里', { login: viewer.login })}
-          className="w-6 h-6 rounded-full ring-2 ring-white bg-gray-200 shadow-sm"
-        />
-      ))}
-    </div>
-  );
-};
+// The web page of a paper, with KaTeX: loaded only for whoever asks for it.
+const HtmlArticle = lazy(() => import('./HtmlArticle'));
 
 /** A block's comments, for its button, its badge and the highlights in its PDF. */
 interface BlockComments {
@@ -481,7 +298,27 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
   const [pinned, setPinned] = useState<boolean | null>(null);
   const [contentColumn, setContentColumn] = useState<HTMLDivElement | null>(null);
   const [commentColumn, setCommentColumn] = useState<HTMLElement | null>(null);
-  const [selected, clearSelected] = useSelectedQuote(readingArea, Boolean(presence));
+  // The whole article in place of the blocks: its pages hold many blocks, which it finds by where they are.
+  const article = useRef<ArticleViewHandle>(null);
+  // The typeset PDF or the web page; each reader's choice, kept in this browser.
+  const [articleView, setArticleView] = useState<'pdf' | 'web'>(() => {
+    try {
+      return typeof window !== 'undefined' && window.localStorage.getItem('lemma.articleView') === 'web' ? 'web' : 'pdf';
+    } catch {
+      return 'pdf';
+    }
+  });
+  const chooseView = (value: 'pdf' | 'web') => {
+    setArticleView(value);
+    try {
+      window.localStorage.setItem('lemma.articleView', value);
+    } catch {
+      // Private windows may refuse; the choice holds until the page closes.
+    }
+  };
+  const blockAt = useRef<((clientX: number, clientY: number) => string | null) | null>(null);
+  blockAt.current = (clientX, clientY) => article.current?.blockAt(clientX, clientY) ?? null;
+  const [selected, clearSelected] = useSelectedQuote(readingArea, Boolean(presence), blockAt);
   useEffect(() => {
     setDraft(null);
     setFocused(null);
@@ -507,8 +344,14 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
   // A heading inside a block is found in its PDF; anything else, or a heading not drawn yet, is the block's top.
   const go = (item: OutlineItem) => {
     setDrawer(false);
+    if (item.heading && article.current?.showHeading(item.blockId, item.heading.index)) return;
     if (!item.heading || !goToHeading(item.blockId, item.heading.index, item.heading.of)) goTo(item.blockId);
   };
+  // Typeset as one article once a save has stored it, or here at once for whoever edits it.
+  const asArticle = Boolean(paper.article) || (editing && Boolean(editMode.saveResults) && access?.state === 'private');
+  // Or as a web page set like its template, for whoever has its code.
+  const canWeb = paper.blocks.some((block) => block.source?.trim());
+  const asWeb = canWeb && articleView === 'web';
   const allThreads = presence?.comments?.paper === paper.id ? presence.comments.threads : [];
   const openThreads = allThreads.filter((thread) => !thread.resolved);
   const columnShown = Boolean(presence) && (draft !== null || (pinned ?? openThreads.length > 0));
@@ -683,26 +526,52 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
           <ResultsUnavailable />
           {!inApp && <Notices paper={paper} access={access} editing={editing} />}
           <div ref={readingArea}>
-            <SortableGroup
-              collection="results"
-              items={blocks}
-              className="space-y-10"
-              onReorder={(ids) => reorderBlocks(paper.id, ids)}
-              renderItem={(block) => <BlockItem paperId={paper.id} block={block} published={!paper.hidden} comments={blockComments(block.id)} />}
-            />
-            {/* "References": the entries the blocks cite from references.bib, typeset after them. */}
-            {paper.references && (
-              <div data-result-block-id="references" className="relative mt-10 scroll-mt-24">
-                <BlockReaders blockId="references" />
-                <BlockView
-                  paperId={paper.id}
-                  block={{ id: 'references', kind: 'text', output: paper.references }}
-                  references
-                  quotes={referencesComments?.quotes}
-                  activeQuote={referencesComments?.active}
-                  onQuoteClick={referencesComments?.onOpen}
-                />
+            {canWeb && (asArticle || asWeb) && (
+              <div className="mb-3 inline-flex rounded-lg bg-gray-100 p-0.5 text-xs" role="group" aria-label={t('文章的显示方式')}>
+                {(['pdf', 'web'] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={articleView === value}
+                    onClick={() => chooseView(value)}
+                    title={value === 'pdf' ? t('LaTeX 排出来的 PDF，和导出的一模一样') : t('按模板排成网页，打字马上生效；断行和分页和 PDF 不同')}
+                    className={`rounded-md px-2.5 py-1 transition-colors ${articleView === value ? 'bg-white text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.12)]' : 'text-gray-500 hover:text-gray-800'}`}
+                  >
+                    {value === 'pdf' ? t('排版') : t('网页')}
+                  </button>
+                ))}
               </div>
+            )}
+            {asWeb ? (
+              <Suspense fallback={<div className="py-12 text-center text-sm text-gray-400">{t('正在排版整篇论文…')}</div>}>
+                <HtmlArticle ref={article} paper={paper} editing={editing} published={!paper.hidden} comments={blockComments} />
+              </Suspense>
+            ) : asArticle ? (
+              <ArticleView ref={article} paper={paper} editing={editing} published={!paper.hidden} comments={blockComments} />
+            ) : (
+              <>
+                <SortableGroup
+                  collection="results"
+                  items={blocks}
+                  className="space-y-10"
+                  onReorder={(ids) => reorderBlocks(paper.id, ids)}
+                  renderItem={(block) => <BlockItem paperId={paper.id} block={block} published={!paper.hidden} comments={blockComments(block.id)} />}
+                />
+                {/* "References": the entries the blocks cite from references.bib, typeset after them. */}
+                {paper.references && (
+                  <div data-result-block-id="references" className="relative mt-10 scroll-mt-24">
+                    <BlockReaders blockId="references" />
+                    <BlockView
+                      paperId={paper.id}
+                      block={{ id: 'references', kind: 'text', output: paper.references }}
+                      references
+                      quotes={referencesComments?.quotes}
+                      activeQuote={referencesComments?.active}
+                      onQuoteClick={referencesComments?.onOpen}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
           {!paper.references && editing && (paper.files ?? []).includes('references.bib') && (

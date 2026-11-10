@@ -5,8 +5,10 @@ import { StreamLanguage, bracketMatching, defaultHighlightStyle, syntaxHighlight
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { Compartment, EditorState } from '@codemirror/state';
+import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state';
 import {
+  Decoration,
+  DecorationSet,
   EditorView,
   drawSelection,
   highlightActiveLine,
@@ -15,6 +17,7 @@ import {
   lineNumbers,
   placeholder as emptyHint,
 } from '@codemirror/view';
+import { SourceSnapshot, SourceSnapshots } from '../../app/writing/sourceMapping';
 import { t } from '../../lib/phrases/results';
 
 const COMMANDS = [
@@ -35,6 +38,10 @@ const ENVIRONMENTS = [
 ];
 
 export interface CodeEditorHandle {
+  /** Capture at compilation start; dispose when its PDF is replaced or the compilation fails. */
+  captureSnapshot: (texts: Record<string, string>) => SourceSnapshot;
+  /** Selects columns `start` to `end` on a 1-based line, centers it and briefly marks it. */
+  reveal: (line: number, start?: number, end?: number) => void;
   /** Moves the cursor to a 1-based line and scrolls it into view. */
   goToLine: (line: number) => void;
   /** Inserts text at the cursor. */
@@ -79,11 +86,27 @@ function completions(names: React.MutableRefObject<{ macros: string[]; colors: s
   };
 }
 
+const flashLine = StateEffect.define<number | null>();
+const flashField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(flashLine)) {
+        if (effect.value === null) return Decoration.none;
+        return Decoration.set([Decoration.line({ class: 'cm-code-flash' }).range(effect.value)]);
+      }
+    }
+    return transaction.docChanged ? value.map(transaction.changes) : value;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 const theme = EditorView.theme({
   '&': { height: '100%', fontSize: '13px' },
   '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', lineHeight: '1.5' },
   '.cm-content': { paddingBottom: '40vh' },
   '&.cm-focused': { outline: 'none' },
+  '.cm-code-flash': { animation: 'writing-flash 1.6s ease-out' },
 });
 
 /** A LaTeX code editor (CodeMirror 6) with highlighting, completion and problem markers. */
@@ -99,6 +122,34 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
   names.current = { macros, colors, labels };
   const readOnly = useRef(new Compartment());
   const hint = useRef(new Compartment());
+  const snapshots = useRef(new SourceSnapshots());
+  const flashTimer = useRef<number | null>(null);
+  // The imperative ref is available before the effect creates its EditorView. Keep navigation
+  // across that gap and effect reinitialization, including StrictMode's first mount replay.
+  const requestedNavigation = useRef<{ line: number; start?: number; end?: number; flash: boolean } | null>(null);
+
+  const clearFlash = () => {
+    if (flashTimer.current === null) return;
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = null;
+    view.current?.dispatch({ effects: flashLine.of(null) });
+  };
+
+  const applyNavigation = () => {
+    const editor = view.current;
+    const request = requestedNavigation.current;
+    if (!editor || !request) return;
+    clearFlash();
+    const target = editor.state.doc.line(Math.max(1, Math.min(request.line, editor.state.doc.lines)));
+    const anchor = request.start === undefined ? target.from : Math.max(target.from, Math.min(target.to, target.from + request.start));
+    const head = request.end === undefined ? anchor : Math.max(anchor, Math.min(target.to, target.from + request.end));
+    editor.dispatch({
+      selection: { anchor, head },
+      effects: [EditorView.scrollIntoView(anchor, { y: 'center' }), ...(request.flash ? [flashLine.of(target.from)] : [])],
+    });
+    editor.focus();
+    if (request.flash) flashTimer.current = window.setTimeout(clearFlash, 1600);
+  };
 
   useEffect(() => {
     if (!host.current) return undefined;
@@ -122,6 +173,7 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
           EditorView.lineWrapping,
           readOnly.current.of([]),
           hint.current.of(placeholder ? emptyHint(placeholder) : []),
+          flashField,
           keymap.of([
             { key: 'Mod-Enter', run: () => (callbacks.current.onRun?.(), true) },
             { key: 'Mod-s', run: () => (callbacks.current.onSave?.(), true), preventDefault: true },
@@ -133,14 +185,21 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
             indentWithTab,
           ]),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) callbacks.current.onChange(update.state.doc.toString());
+            if (update.docChanged) {
+              snapshots.current.update('main.tex', update.changes, update.state.doc);
+              callbacks.current.onChange(update.state.doc.toString());
+            }
           }),
           theme,
         ],
       }),
     });
     view.current = editor;
+    applyNavigation();
     return () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+      flashTimer.current = null;
+      snapshots.current.clear();
       editor.destroy();
       view.current = null;
     };
@@ -156,6 +215,8 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
   useEffect(() => {
     const editor = view.current;
     if (!editor || editor.state.doc.toString() === value) return;
+    // A visual/table undo replaces the whole source; its old positions cannot be followed incrementally.
+    snapshots.current.clear();
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
   }, [value]);
 
@@ -173,12 +234,18 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
   }, [problems]);
 
   useImperativeHandle(ref, () => ({
+    captureSnapshot: (texts) => {
+      const documents = new Map<string, EditorState['doc']>();
+      if (view.current) documents.set('main.tex', view.current.state.doc);
+      return snapshots.current.capture(texts, documents);
+    },
+    reveal: (line, start, end) => {
+      requestedNavigation.current = { line, start, end, flash: true };
+      applyNavigation();
+    },
     goToLine: (line) => {
-      const editor = view.current;
-      if (!editor) return;
-      const target = editor.state.doc.line(Math.max(1, Math.min(line, editor.state.doc.lines)));
-      editor.dispatch({ selection: { anchor: target.from }, effects: EditorView.scrollIntoView(target.from, { y: 'center' }) });
-      editor.focus();
+      requestedNavigation.current = { line, flash: false };
+      applyNavigation();
     },
     insert: (text) => {
       const editor = view.current;

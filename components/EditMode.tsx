@@ -1,3 +1,4 @@
+import type { ResultsSave } from '../editor/results/BlockEditor';
 import React, { Suspense, createContext, lazy, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { PickedFile } from './results/droppedFiles';
 import { Message, say, useMessage } from '../lib/i18n';
@@ -36,6 +37,8 @@ export interface EditModeValue {
    * and the dialogs' code, so the first compile does not wait for them.
    */
   prepare?: (paperId: string) => void;
+  /** Saves a change to a results paper made on its page itself, such as text typed on its article. */
+  saveResults?: ResultsSave;
 }
 
 const noop = (): void => {};

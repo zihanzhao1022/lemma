@@ -1,4 +1,4 @@
-import { ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck } from '../../types';
+import { ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck } from '../../types';
 import { ContentOp, applyListOp } from '../ops';
 
 /** What the paper form edits. Blocks, preamble, attachments and visibility change through their own operations. */
@@ -37,6 +37,8 @@ export type ResultsOp =
   | { kind: 'setOutputs'; paperId: string; outputs: Record<string, ResultBlockOutput>; sources: Record<string, string> }
   /** The paper's typeset bibliography, or null to drop it (no references.bib, or nothing cited). */
   | { kind: 'setReferences'; paperId: string; references: ResultReferences | null }
+  /** The paper typeset as one document, or null to drop it (no block shows). */
+  | { kind: 'setArticle'; paperId: string; article: ResultArticle | null }
   | { kind: 'batch'; ops: ResultsOp[] };
 
 function updatePaper(papers: ResultPaper[], id: string, change: (paper: ResultPaper) => ResultPaper): ResultPaper[] {
@@ -157,6 +159,12 @@ export function applyResultsOp(papers: ResultPaper[], op: ResultsOp): ResultPape
         const { references: _references, ...rest } = paper;
         return rest;
       });
+    case 'setArticle':
+      return updatePaper(papers, op.paperId, (paper) => {
+        if (op.article) return { ...paper, article: op.article };
+        const { article: _article, ...rest } = paper;
+        return rest;
+      });
     case 'batch':
       return op.ops.reduce(applyResultsOp, papers);
   }
@@ -190,6 +198,7 @@ export function referencedPaths(papers: ResultPaper[]): Set<string> {
       if (block.alternate?.output) paths.add(block.alternate.output.pdf);
     }
     if (paper.references) paths.add(paper.references.pdf);
+    if (paper.article) paths.add(paper.article.pdf);
     for (const name of paper.files ?? []) paths.add(`results/${paper.id}/files/${name}`);
   }
   return paths;

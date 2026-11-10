@@ -10,6 +10,7 @@ import { PresenceContext } from '../components/presence';
 import { ItemModal } from '../editor/components/ItemModal';
 import { usePresence } from '../editor/presence';
 import { loadAttachments } from '../editor/results/actions';
+import { articleHash } from '../editor/results/article';
 import { hashText, staleBlocks } from '../editor/results/numbering';
 import { resultsCommitMessage } from '../editor/results/ops';
 import { UploadPlan, planUpload } from '../editor/results/uploads';
@@ -124,9 +125,11 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   useEffect(() => {
     if (!owner || !paper || access.state !== 'private' || isRenumbering(paper.id)) return;
     const stale = staleBlocks(paper);
-    if (stale.length === 0) return;
+    // The article readers see is typeset again too when what it prints changed.
+    const article = articleHash(paper);
+    if (stale.length === 0 && paper.article?.inputHash === article) return;
     const sources = stale.map((id) => paper.blocks.find((block) => block.id === id)?.source ?? '');
-    const key = hashText([paper.id, paper.preamble ?? '', ...sources].join('\n'));
+    const key = hashText([paper.id, paper.preamble ?? '', article, ...sources].join('\n'));
     if (tried.current.has(key)) return;
     tried.current.add(key);
     compileStale(paper.id);
@@ -175,9 +178,12 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
         [],
         resultsCommitMessage(hidden ? 'hide block in' : 'unhide block in', item.title),
         `content: update result "${item.title}"`,
-      ).catch((error: unknown) => setToast({ message: () => describeSaveError(error) }));
+      )
+        // What readers see of the paper changed: its article is typeset again.
+        .then(() => compileStale(paperId))
+        .catch((error: unknown) => setToast({ message: () => describeSaveError(error) }));
     },
-    [busy, counted, setToast],
+    [busy, counted, setToast, compileStale],
   );
   const deleteBlock = useCallback(
     (paperId: string, blockId: string) => {
@@ -198,8 +204,9 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
       reorderBlocks,
       ...(owner ? { switchBlock, uploadFiles, hideBlock, deleteBlock } : {}),
       prepare,
+      saveResults: counted,
     }),
-    [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, hideBlock, deleteBlock, prepare],
+    [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, hideBlock, deleteBlock, prepare, counted],
   );
 
   // The writing view fills the window under the paper's bar; the page itself stops scrolling meanwhile.
@@ -355,6 +362,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                 <BlockEditor
                   paper={target}
                   blockId={request.blockId}
+                  sourceLocation={request.sourceLocation}
                   blockKind={request.blockKind}
                   afterBlockId={request.afterBlockId}
                   convertTo={request.convertTo}

@@ -103,10 +103,17 @@ export interface SelectedQuote {
 }
 
 const layerOf = (node: Node): HTMLElement | null =>
-  (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest<HTMLElement>('.textLayer') ?? null;
+  (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest<HTMLElement>('.textLayer, [data-quote-layer]') ?? null;
 
-/** Watches the selection: text selected inside one block's PDF in `area` can be commented on. */
-export function useSelectedQuote(area: { readonly current: HTMLElement | null }, enabled: boolean): [SelectedQuote | null, () => void] {
+/**
+ * Watches the selection: text selected inside one block's PDF in `area` can be commented on. A page of the whole
+ * article holds many blocks: `blockAt` says which one is at a point of the window.
+ */
+export function useSelectedQuote(
+  area: { readonly current: HTMLElement | null },
+  enabled: boolean,
+  blockAt?: { readonly current: ((clientX: number, clientY: number) => string | null) | null },
+): [SelectedQuote | null, () => void] {
   const [selected, setSelected] = useState<SelectedQuote | null>(null);
   useEffect(() => {
     if (!enabled) return undefined;
@@ -117,7 +124,11 @@ export function useSelectedQuote(area: { readonly current: HTMLElement | null },
       if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !root) return setSelected(null);
       const range = selection.getRangeAt(0);
       const element = layerOf(range.startContainer);
-      const block = element?.closest<HTMLElement>('[data-result-block-id]')?.dataset.resultBlockId;
+      const first = range.getClientRects()[0];
+      const block =
+        element?.closest<HTMLElement>('[data-result-block-id]')?.dataset.resultBlockId ??
+        (first ? blockAt?.current?.(first.left + Math.min(2, first.width / 2), first.top + first.height / 2) : null) ??
+        undefined;
       if (!element || !block || element !== layerOf(range.endContainer) || !root.contains(element)) return setSelected(null);
       const layer = layerText(element);
       let start = boundaryIndex(layer, range.startContainer, range.startOffset);
@@ -138,7 +149,7 @@ export function useSelectedQuote(area: { readonly current: HTMLElement | null },
       clearTimeout(timer);
       document.removeEventListener('selectionchange', schedule);
     };
-  }, [area, enabled]);
+  }, [area, enabled, blockAt]);
   const clear = useCallback(() => {
     window.getSelection()?.removeAllRanges();
     setSelected(null);

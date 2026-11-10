@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { PDFDocumentLoadingTask, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentLoadingTask, PageViewport, RenderTask } from 'pdfjs-dist';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import type { PdfClick } from '../../app/writing/PdfPages';
+import { pdfClickWord, pdfTextAt, selectedPdfWord } from '../../app/writing/pdfText';
 import { useT } from '../../lib/phrases/site';
 import { loadPdfjs, openPdf } from './pdfjs';
 import { renderPdfLinks } from './pdfLinks';
@@ -36,6 +39,10 @@ interface Props {
   citationTargets?: boolean;
   /** Called with the selectable text layer each time the page is drawn. */
   onTextLayer?: (layer: HTMLElement) => void;
+  /** A double click on selectable PDF text, in the original page's coordinates. */
+  onDoubleClick?: (click: PdfClick) => void;
+  /** The new PDF's layers and callbacks have replaced the previous document on screen. */
+  onDocumentReady?: (data: Uint8Array) => void;
   /** The largest scale to draw at; an enlarged figure fills the space it is given. */
   maxScale?: number;
   /** Draw only this part of the page (an enlarged picture), without its text and links. */
@@ -57,6 +64,8 @@ const PdfView: React.FC<Props> = ({
   citationScope,
   citationTargets = false,
   onTextLayer,
+  onDoubleClick,
+  onDocumentReady,
   maxScale = PDF_SCALE,
   region,
   onPictures,
@@ -70,6 +79,18 @@ const PdfView: React.FC<Props> = ({
   errorRef.current = onError;
   const textLayerRef = useRef(onTextLayer);
   textLayerRef.current = onTextLayer;
+  const doubleClickRef = useRef(onDoubleClick);
+  doubleClickRef.current = onDoubleClick;
+  const documentReadyRef = useRef(onDocumentReady);
+  documentReadyRef.current = onDocumentReady;
+  // Keep text geometry paired with the layers on screen while a replacement PDF is loading.
+  const renderedText = useRef<{
+    viewport: PageViewport;
+    items: TextItem[];
+    spans: HTMLElement[];
+    onDoubleClick: Props['onDoubleClick'];
+  } | null>(null);
+  const wantsDoubleClick = onDoubleClick !== undefined;
   const picturesRef = useRef(onPictures);
   picturesRef.current = onPictures;
   const wantsPictures = onPictures !== undefined;
@@ -96,6 +117,7 @@ const PdfView: React.FC<Props> = ({
     let cancelled = false;
     let loading: PDFDocumentLoadingTask | null = null;
     let task: RenderTask | null = null;
+    const handleDoubleClick = doubleClickRef.current;
     setFailed(false);
     (async () => {
       const pdfjs = await loadPdfjs();
@@ -122,13 +144,17 @@ const PdfView: React.FC<Props> = ({
       if (cancelled) return;
       if (region) {
         target.replaceChildren(canvas);
+        renderedText.current = null;
+        if (data) documentReadyRef.current?.(data);
         return;
       }
+      const content = await page.getTextContent();
       const text = document.createElement('div');
       text.className = 'textLayer';
       text.style.setProperty('--scale-factor', String(scale));
       text.style.setProperty('--total-scale-factor', String(scale));
-      await new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: text, viewport }).render();
+      const textLayer = new pdfjs.TextLayer({ textContentSource: content, container: text, viewport });
+      await textLayer.render();
       const destinations = document.createElement('div');
       destinations.className = 'resultsPdfDestinations';
       if (citationScope) {
@@ -200,7 +226,14 @@ const PdfView: React.FC<Props> = ({
       });
       if (!cancelled) {
         target.replaceChildren(canvas, text, destinations, links);
+        renderedText.current = {
+          viewport,
+          items: content.items.filter((item): item is TextItem => 'str' in item),
+          spans: textLayer.textDivs,
+          onDoubleClick: handleDoubleClick,
+        };
         textLayerRef.current?.(text);
+        if (data) documentReadyRef.current?.(data);
         if (citationTargets && citationScope) finishCitationNavigation(citationScope);
       }
       if (wantsPictures && !cancelled) {
@@ -218,11 +251,37 @@ const PdfView: React.FC<Props> = ({
       task?.cancel();
       void loading?.destroy();
     };
-  }, [data, url, scale, available, citationScope, citationTargets, t, region !== undefined, boxLeft, boxTop, boxWidth, boxHeight, wantsPictures]);
+  }, [data, url, scale, available, citationScope, citationTargets, t, region !== undefined, boxLeft, boxTop, boxWidth, boxHeight, wantsPictures, wantsDoubleClick]);
+
+  const doubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const rendered = renderedText.current;
+    // The current prop controls permission; the drawn PDF retains its source-snapshot callback.
+    if (!doubleClickRef.current || region || !rendered?.onDoubleClick) return;
+    const target = event.target;
+    const index = target instanceof Node ? rendered.spans.findIndex((span) => span.contains(target)) : -1;
+    const { viewport, items, spans } = rendered;
+    const box = event.currentTarget.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const [x, y] = viewport.convertToPdfPoint(
+      (event.clientX - box.left) * viewport.width / box.width,
+      (event.clientY - box.top) * viewport.height / box.height,
+    ) as [number, number];
+    // PDF link overlays can cover a number's span. Its PDF geometry still identifies the text underneath.
+    const hit = pdfTextAt(items, x, y, index < 0 ? undefined : index);
+    if (!hit) return;
+    const selected = selectedPdfWord(window.getSelection(), index < 0 ? undefined : spans[index], event.clientX, event.clientY);
+    event.stopPropagation();
+    rendered.onDoubleClick({
+      page: 1, x, y, baseline: hit.baseline,
+      pageWidth: Math.abs(viewport.viewBox[2] - viewport.viewBox[0]),
+      word: pdfClickWord(selected, hit.word), context: hit.context, rowContext: hit.rowContext,
+      contextOffset: hit.contextOffset, rowContextOffset: hit.rowContextOffset,
+    });
+  };
 
   return (
     <div ref={frame} id={citationTargets && citationScope ? referencesId(citationScope) : undefined} className={`w-full ${className}`}>
-      <div className="resultsPdfPage relative mx-auto bg-white" style={{ width: boxWidth * scale, height: boxHeight * scale }}>
+      <div className="resultsPdfPage relative mx-auto bg-white" onDoubleClick={doubleClick} style={{ width: boxWidth * scale, height: boxHeight * scale }}>
         <div ref={layers} className="absolute inset-0" />
         {children}
         {failed && (

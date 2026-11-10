@@ -172,6 +172,7 @@ const CollaboratorRoot: React.FC<Props> = ({ session, onLogout, children }) => {
               <BlockEditor
                 paper={paper}
                 blockId={request.blockId}
+                sourceLocation={request.sourceLocation}
                 blockKind={request.blockKind}
                 afterBlockId={request.afterBlockId}
                 convertTo={request.convertTo}

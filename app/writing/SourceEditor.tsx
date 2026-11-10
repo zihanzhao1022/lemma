@@ -1,6 +1,6 @@
 import React, { useEffect, useImperativeHandle, useRef } from 'react';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands';
 import { StreamLanguage, bracketMatching, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
@@ -20,6 +20,9 @@ import {
 import { newBlockId } from '../../editor/results/actions';
 import { t } from '../../lib/phrases/app';
 import { markerLine, readMarker } from './document';
+import { SourceSnapshot, SourceSnapshots } from './sourceMapping';
+
+export type { SourceSnapshot } from './sourceMapping';
 
 export interface SourceFile {
   name: string;
@@ -30,12 +33,22 @@ export interface SourceFile {
 }
 
 export interface SourceEditorHandle {
+  /** Capture at compilation start; dispose when its PDF is replaced or the compilation fails. */
+  captureSnapshot: (texts: Record<string, string>) => SourceSnapshot;
   /** Opens a file at a line (1-based), selecting columns `start` to `end` of it when given, and marks the line. */
   reveal: (file: string, line: number, start?: number, end?: number) => void;
   /** Starts a new block at the cursor's line (main.tex only); false when it cannot. */
   splitBlock: () => boolean;
   /** The cursor's line in the open file. */
   cursorLine: () => number;
+  /** A file's text as the editor has it now, or null. */
+  text: (file: string) => string | null;
+  /** Replaces [from, to) of a file with `insert`, as typing there would (undoable); false when nothing changed. */
+  change: (file: string, from: number, to: number, insert: string, event: 'input.type' | 'delete.backward' | 'delete.forward') => boolean;
+  /** Undoes or redoes a file's last change; the cursor's offset after it, or null when there was nothing to do. */
+  history: (file: string, direction: 'undo' | 'redo') => number | null;
+  /** Shows a place in a file, the cursor there, without taking the keyboard. */
+  follow: (file: string, offset: number) => void;
 }
 
 interface Props {
@@ -190,6 +203,8 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
   const view = useRef<EditorView | null>(null);
   const states = useRef(new Map<string, EditorState>());
   const shown = useRef(active);
+  const snapshots = useRef(new SourceSnapshots());
+  const flashing = useRef<{ file: string; timer: number } | null>(null);
   const callbacks = useRef({ onChange, onSave, onCompile });
   callbacks.current = { onChange, onSave, onCompile };
   const problemsRef = useRef(problems);
@@ -207,7 +222,10 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
       indentWithTab,
     ]),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) callbacks.current.onChange(shown.current, update.state.doc.toString());
+      if (update.docChanged) {
+        snapshots.current.update(shown.current, update.changes, update.state.doc);
+        callbacks.current.onChange(shown.current, update.state.doc.toString());
+      }
     }),
   ]);
 
@@ -219,11 +237,26 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
     return state.update(setDiagnostics(state, diagnostics)).state;
   };
 
+  const clearFlash = () => {
+    const current = flashing.current;
+    if (!current) return;
+    window.clearTimeout(current.timer);
+    flashing.current = null;
+    const editor = view.current;
+    if (editor && shown.current === current.file) editor.dispatch({ effects: flashLine.of(null) });
+    else {
+      const state = states.current.get(current.file);
+      if (state) states.current.set(current.file, state.update({ effects: flashLine.of(null) }).state);
+    }
+  };
+
   useEffect(() => {
     if (!host.current) return undefined;
     const editor = new EditorView({ parent: host.current });
     view.current = editor;
     return () => {
+      if (flashing.current) window.clearTimeout(flashing.current.timer);
+      snapshots.current.clear();
       editor.destroy();
       view.current = null;
     };
@@ -231,6 +264,8 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
 
   // Every file starts again from what it was given.
   useEffect(() => {
+    clearFlash();
+    snapshots.current.clear();
     states.current = new Map(files.map((file) => [file.name, stateFor(file, hidden, handlers.current)]));
     const first = states.current.get(active);
     if (first && view.current) {
@@ -244,6 +279,7 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
   useEffect(() => {
     const editor = view.current;
     if (!editor || shown.current === active) return;
+    clearFlash();
     states.current.set(shown.current, editor.state);
     const next = states.current.get(active);
     if (!next) return;
@@ -261,10 +297,56 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
     editor.dispatch(setDiagnostics(editor.state, diagnostics));
   }, [problems]);
 
+  /** Puts a file in the editor, keeping the open one's state for later; false when there is no such file. */
+  const showFile = (file: string): boolean => {
+    const editor = view.current;
+    if (!editor) return false;
+    if (shown.current === file) return true;
+    const next = states.current.get(file);
+    if (!next) return false;
+    clearFlash();
+    states.current.set(shown.current, editor.state);
+    shown.current = file;
+    editor.setState(withProblems(file, next));
+    return true;
+  };
+
   useImperativeHandle(ref, () => ({
+    text: (file) => {
+      if (shown.current === file && view.current) return view.current.state.doc.toString();
+      return states.current.get(file)?.doc.toString() ?? null;
+    },
+    change: (file, from, to, insert, event) => {
+      const editor = view.current;
+      if (!editor || !showFile(file)) return false;
+      const before = editor.state.doc;
+      if (from < 0 || to > before.length || from > to) return false;
+      editor.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent: event, scrollIntoView: true });
+      // A change the marker lines refuse leaves the text as it was.
+      return !editor.state.doc.eq(before);
+    },
+    history: (file, direction) => {
+      const editor = view.current;
+      if (!editor || !showFile(file)) return null;
+      const before = editor.state.doc;
+      if (!(direction === 'undo' ? undo : redo)(editor) || editor.state.doc.eq(before)) return null;
+      return editor.state.selection.main.head;
+    },
+    follow: (file, offset) => {
+      const editor = view.current;
+      if (!editor || !showFile(file)) return;
+      const at = Math.max(0, Math.min(offset, editor.state.doc.length));
+      editor.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'nearest', yMargin: 80 }) });
+    },
+    captureSnapshot: (texts) => {
+      const documents = new Map([...states.current].map(([file, state]) => [file, state.doc]));
+      if (view.current) documents.set(shown.current, view.current.state.doc);
+      return snapshots.current.capture(texts, documents);
+    },
     reveal: (file, line, start, end) => {
       const editor = view.current;
       if (!editor) return;
+      clearFlash();
       if (shown.current !== file) {
         states.current.set(shown.current, editor.state);
         const next = states.current.get(file);
@@ -274,14 +356,14 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
       }
       const doc = editor.state.doc;
       const target = doc.line(Math.max(1, Math.min(line, doc.lines)));
-      const anchor = start === undefined ? target.from : Math.min(target.to, target.from + start);
-      const head = end === undefined ? anchor : Math.min(target.to, target.from + end);
+      const anchor = start === undefined ? target.from : Math.max(target.from, Math.min(target.to, target.from + start));
+      const head = end === undefined ? anchor : Math.max(anchor, Math.min(target.to, target.from + end));
       editor.dispatch({
         selection: { anchor, head },
         effects: [EditorView.scrollIntoView(anchor, { y: 'center' }), flashLine.of(target.from)],
       });
       editor.focus();
-      window.setTimeout(() => view.current?.dispatch({ effects: flashLine.of(null) }), 1600);
+      flashing.current = { file, timer: window.setTimeout(clearFlash, 1600) };
     },
     splitBlock: () => {
       const editor = view.current;

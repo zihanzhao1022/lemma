@@ -51,6 +51,7 @@ export function publicView(paper: ResultPaper): ResultPaper {
     ...(paper.references
       ? { references: { pdf: paper.references.pdf, width: paper.references.width, height: paper.references.height } }
       : {}),
+    ...(paper.article ? { article: paper.article } : {}),
   };
 }
 
@@ -72,6 +73,7 @@ export const snapshotFiles = (snapshot: ResultPaper[]): string[] =>
   snapshot.flatMap((paper) => [
     ...paper.blocks.flatMap((block) => (block.output ? [block.output.pdf] : [])),
     ...(paper.references ? [paper.references.pdf] : []),
+    ...(paper.article ? [paper.article.pdf] : []),
   ]);
 
 export interface PublicSyncPlan {

@@ -1,7 +1,7 @@
 import { countersBefore } from '../../lib/headings';
 import { t } from '../../lib/phrases/results';
 import { hasAppendix } from '../../lib/sections';
-import { ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences } from '../../types';
+import { ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences } from '../../types';
 import { WRAPPER_VERSION, stripComments } from '../tex/document';
 import { FileWrite } from './backend';
 
@@ -146,6 +146,10 @@ export interface RebuildResult {
   deletes: string[];
   /** The new bibliography, null when there is none any more; absent when it did not change. */
   references?: ResultReferences | null;
+  /** The new whole-paper article, null when there is none any more; absent when it did not change (article.ts). */
+  article?: ResultArticle | null;
+  /** Why the article could not be compiled again; the blocks are saved all the same. */
+  articleFailed?: string;
   /** The block that failed to compile ("references" for the bibliography); the blocks before it are still rebuilt. */
   failed?: { blockId: string; message: string };
 }
