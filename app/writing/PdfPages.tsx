@@ -9,7 +9,7 @@ import { Hit } from './document';
 import type { Spot } from './pageAlign';
 import { Box, imageBoxes } from './pageImages';
 import { PageText, itemIndex, itemPage } from './pageRegions';
-import { GlyphRun, glyphRuns } from './pdfGlyphs';
+import { GlyphRun, glyphReader, glyphRuns } from './pdfGlyphs';
 import { pdfClickWord, pdfTextAt, selectedPdfWord } from './pdfText';
 
 /** A double click in the PDF: where (see Hit), the word under it and the text of its line. */
@@ -108,16 +108,45 @@ interface DrawnPage {
 }
 
 /** The runs of glyphs a page draws as text, and the operators that drew them on the canvas. */
-async function pageRuns(page: Awaited<ReturnType<PDFDocumentProxy['getPage']>>): Promise<{ runs: GlyphRun[]; drawn: Set<number> }> {
+type PdfPage = Awaited<ReturnType<PDFDocumentProxy['getPage']>>;
+
+const fontsOf = (page: PdfPage) => (name: string) => {
+  try {
+    return page.commonObjs.has(name) ? page.commonObjs.get(name) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+async function pageRuns(page: PdfPage): Promise<{ runs: GlyphRun[]; drawn: Set<number> }> {
   const pdfjs = await loadPdfjs();
   const list = await page.getOperatorList();
-  return glyphRuns(list.fnArray, list.argsArray, pdfjs.OPS, (name) => {
-    try {
-      return page.commonObjs.has(name) ? page.commonObjs.get(name) : undefined;
-    } catch {
-      return undefined;
-    }
+  return glyphRuns(list.fnArray, list.argsArray, pdfjs.OPS, fontsOf(page));
+}
+
+/**
+ * Renders the page on the canvas without the text the runs draw. The canvas works from pdf.js's own operator
+ * list, whose indices differ from getOperatorList's (its optimizer merges operators), so the runs are read from
+ * that list as the canvas reaches each operator. Without access to it, the canvas draws the text as well.
+ */
+async function renderWithoutText(page: PdfPage, canvas: HTMLCanvasElement, viewport: PageViewport): Promise<GlyphRun[]> {
+  const pdfjs = await loadPdfjs();
+  const reader = glyphReader(pdfjs.OPS, fontsOf(page));
+  let task: ReturnType<PdfPage['render']> | null = null;
+  const list = () => (task as unknown as { _internalRenderTask?: { operatorList?: { fnArray: number[]; argsArray: unknown[] } } } | null)?._internalRenderTask?.operatorList;
+  let read = false;
+  task = page.render({
+    canvas,
+    viewport,
+    operationsFilter: (index: number) => {
+      const ops = list();
+      if (!ops || !Array.isArray(ops.fnArray)) return true;
+      read = true;
+      return !reader.readTo(ops.fnArray, ops.argsArray, index);
+    },
   });
+  await task.promise;
+  return read ? reader.runs : (await pageRuns(page)).runs;
 }
 
 /** Runs as pdf.js text items: their text, where they start, and how wide and tall they are, in PDF points. */
@@ -360,16 +389,14 @@ const Page: React.FC<{
       const ratio = window.devicePixelRatio || 1;
       const view = page.getViewport({ scale });
       const base = page.getViewport({ scale: 1 });
-      // Text the PDF sets upright and filled is drawn as SVG in its own fonts; the canvas draws everything else.
-      const { runs, drawn: asText } = await pageRuns(page);
-      if (cancelled) return;
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(view.width * ratio);
       canvas.height = Math.floor(view.height * ratio);
       canvas.style.width = `${view.width}px`;
       canvas.style.height = `${view.height}px`;
       canvas.style.display = 'block';
-      await page.render({ canvas, viewport: page.getViewport({ scale: scale * ratio }), operationsFilter: (index: number) => !asText.has(index) }).promise;
+      // Text the PDF sets upright and filled is drawn as SVG in its own fonts; the canvas draws everything else.
+      const runs = await renderWithoutText(page, canvas, page.getViewport({ scale: scale * ratio }));
       if (cancelled) return;
       const glyphs = glyphLayer(runs, base.width, base.height);
       const { layer: text, spans } = selectionLayer(runs, base.width, base.height, scale);

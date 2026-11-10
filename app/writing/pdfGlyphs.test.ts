@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GlyphOps, glyphRuns } from './pdfGlyphs';
+import { GlyphOps, glyphReader, glyphRuns } from './pdfGlyphs';
 
 const OPS: GlyphOps = {
   save: 10, restore: 11, transform: 12, beginText: 31, endText: 32, setCharSpacing: 33, setWordSpacing: 34, setHScale: 35, setLeading: 36,
@@ -58,5 +58,18 @@ describe('glyphRuns', () => {
     const args = [null, ['g1', 10], [50], [[glyph('a', 1000), glyph('b', 1000)]]];
     const { runs } = glyphRuns(fn, args, OPS, fonts);
     expect(runs[0]).toMatchObject({ scaleX: 0.5, glyphs: [{ x: 0, width: 5 }, { x: 5, width: 5 }] });
+  });
+});
+
+describe('glyphReader', () => {
+  it('reads a list as it grows and answers again for an operator already read', () => {
+    const fn = [OPS.beginText, OPS.setFont, OPS.moveText, OPS.showText, OPS.moveText, OPS.showText];
+    const args: unknown[] = [null, ['g1', 10], [72, 700], [[glyph('a')]], [10, 0], [[glyph('b')]]];
+    const reader = glyphReader(OPS, fonts);
+    expect(reader.readTo(fn.slice(0, 4), args.slice(0, 4), 2)).toBe(false);
+    expect(reader.readTo(fn.slice(0, 4), args.slice(0, 4), 3)).toBe(true);
+    expect(reader.readTo(fn, args, 3)).toBe(true);
+    expect(reader.readTo(fn, args, 5)).toBe(true);
+    expect(reader.runs).toEqual(glyphRuns(fn, args, OPS, fonts).runs);
   });
 });

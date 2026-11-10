@@ -7,6 +7,12 @@
 
 export type Style = 'em' | 'bf' | 'tt' | 'sc' | 'sf' | 'ul' | 'sup' | 'sub';
 
+/** The colour the source set (a CSS colour) and the size (a share of the paper's normal size). */
+export interface Look {
+  color?: string;
+  size?: number;
+}
+
 /** Characters in a row with the same style; each one's source range. */
 export interface TextRun {
   kind: 'text';
@@ -14,18 +20,21 @@ export interface TextRun {
   starts: number[];
   ends: number[];
   styles: Style[];
+  look?: Look;
 }
 
 export type Inline =
   | TextRun
-  | { kind: 'math'; tex: string; display: boolean; from: number; to: number }
+  | { kind: 'math'; tex: string; display: boolean; look?: Look; from: number; to: number }
   | { kind: 'cite'; command: string; keys: string[]; pre?: string; post?: string; from: number; to: number }
   | { kind: 'ref'; command: string; labels: string[]; from: number; to: number }
   | { kind: 'link'; href: string; text: string; from: number; to: number }
   | { kind: 'footnote'; content: Inline[]; from: number; to: number }
   | { kind: 'break'; from: number; to: number }
-  /** A command shown as the text it stands for, not editable here. */
-  | { kind: 'raw'; text: string; from: number; to: number };
+  /** A box \rule draws: its CSS width and height, how far it is raised, its colour. */
+  | { kind: 'rule'; width: string; height: string; raise?: string; color?: string; from: number; to: number }
+  /** A command shown as the text it stands for (and, read further, as `content`), not editable here. */
+  | { kind: 'raw'; text: string; content?: Inline[]; from: number; to: number };
 
 export interface Caption {
   content: Inline[];
@@ -36,6 +45,10 @@ export interface Caption {
 export interface TableCell {
   content: Inline[];
   span: number;
+  /** A paragraph column (p, m, b, X): its text wraps; the others keep to one line. */
+  wrap?: boolean;
+  /** \cellcolor, as a CSS colour. */
+  background?: string;
   align?: 'l' | 'c' | 'r';
   from: number;
   to: number;
@@ -43,6 +56,8 @@ export interface TableCell {
 
 export interface TableRow {
   cells: TableCell[];
+  /** \rowcolor, as a CSS colour. */
+  background?: string;
   /** Rules: booktabs' \toprule and \bottomrule are thick, the others thin. */
   above?: 'thick' | 'thin';
   below?: 'thick' | 'thin';
@@ -62,7 +77,8 @@ export type Element =
   | { kind: 'list'; ordered: boolean; items: { children: Element[]; from: number; to: number }[]; from: number; to: number }
   | { kind: 'equation'; tex: string; numbered: boolean; labels: string[]; from: number; to: number }
   | { kind: 'figure'; wide: boolean; graphics: Graphic[]; caption?: Caption; captionFirst: boolean; labels: string[]; from: number; to: number }
-  | { kind: 'table'; wide: boolean; rows: TableRow[]; caption?: Caption; captionFirst: boolean; labels: string[]; from: number; to: number }
+  /** `fit`: set in \resizebox to the line's width ('scale'), or only shrunk to it (adjustbox's max width). */
+  | { kind: 'table'; wide: boolean; rows: TableRow[]; fit?: 'scale' | 'shrink'; size?: number; caption?: Caption; captionFirst: boolean; labels: string[]; from: number; to: number }
   | { kind: 'environment'; name: string; title?: Inline[]; children: Element[]; labels: string[]; from: number; to: number }
   | { kind: 'appendix'; from: number; to: number }
   | { kind: 'unsupported'; name: string; from: number; to: number };
@@ -84,6 +100,12 @@ export interface Definitions {
   math: Record<string, string>;
   /** \newtheorem names: environment → title ("Theorem"), and the counter it shares. */
   theorems: Record<string, { title: string; counter: string; numbered: boolean }>;
+  /** Every macro defined, with its number of arguments and the default of an optional first one. */
+  macros?: Record<string, { args: number; optional?: string; body: string }>;
+  /** \definecolor and \colorlet colours, as RGB from 0 to 1. */
+  colors?: Record<string, RGB>;
+  /** The paper's normal font size in points (10, 11, 12). */
+  size?: number;
 }
 
 /* ------------------------------------------------------------------ reading LaTeX */
@@ -173,18 +195,17 @@ const SYMBOLS: Record<string, string> = {
 };
 // Commands that print nothing here.
 const SILENT = new Set([
-  'noindent', 'indent', 'centering', 'raggedright', 'raggedleft', 'small', 'footnotesize', 'scriptsize', 'tiny', 'large',
-  'Large', 'LARGE', 'huge', 'Huge', 'normalsize', 'xspace', 'protect', 'relax', 'hfill', 'vfill', 'par', 'medskip',
+  'noindent', 'indent', 'centering', 'raggedright', 'raggedleft', 'xspace', 'protect', 'relax', 'hfill', 'vfill', 'par', 'medskip',
   'smallskip', 'bigskip', 'clearpage', 'newpage', 'pagebreak', 'nopagebreak', 'allowbreak', 'maketitle', 'null', 'unskip',
   'ignorespaces', 'leavevmode', 'sloppy', 'fussy', 'strut', 'nobreak', 'frenchspacing', 'selectfont', 'normalfont',
   'upshape', 'mdseries', 'rmfamily', 'tableofcontents', 'FloatBarrier',
 ]);
 // Commands whose arguments print nothing.
-const SILENT_ARGS: Record<string, number> = { vspace: 1, hspace: 1, color: 1, label: 1, setlength: 2, addtolength: 2, addvspace: 1, phantom: 1, hphantom: 1, vphantom: 1, rule: 2, index: 1, bibliographystyle: 1, nocite: 1, thispagestyle: 1, pagestyle: 1, enlargethispage: 1, linespread: 1, fontsize: 2, newcounter: 1, setcounter: 2, addtocounter: 2, stepcounter: 1 };
+const SILENT_ARGS: Record<string, number> = { vspace: 1, hspace: 1, definecolor: 3, colorlet: 2, label: 1, setlength: 2, addtolength: 2, addvspace: 1, phantom: 1, hphantom: 1, vphantom: 1, index: 1, bibliographystyle: 1, nocite: 1, thispagestyle: 1, pagestyle: 1, enlargethispage: 1, linespread: 1, newcounter: 1, setcounter: 2, addtocounter: 2, stepcounter: 1 };
 const STYLE_OF: Record<string, Style | null> = {
   emph: 'em', textit: 'em', textsl: 'em', textbf: 'bf', texttt: 'tt', textsc: 'sc', textsf: 'sf', underline: 'ul', uline: 'ul',
   textsuperscript: 'sup', textsubscript: 'sub', textrm: null, textnormal: null, textup: null, textmd: null, mbox: null,
-  hbox: null, text: null, makebox: null, fbox: null, hl: null, textcolor: null, colorbox: null, highlight: null,
+  hbox: null, text: null, makebox: null, fbox: null, hl: null, highlight: null,
 };
 const SWITCH_OF: Record<string, Style> = { bfseries: 'bf', itshape: 'em', em: 'em', slshape: 'em', ttfamily: 'tt', scshape: 'sc', sffamily: 'sf', bf: 'bf', it: 'em', tt: 'tt', sc: 'sc' };
 const CITES = new Set(['cite', 'citep', 'citet', 'citealp', 'citealt', 'citeauthor', 'citeyear', 'citeyearpar', 'parencite', 'textcite', 'autocite', 'Cite', 'Citep', 'Citet', 'citenum']);
@@ -192,28 +213,118 @@ const REFS = new Set(['ref', 'eqref', 'autoref', 'cref', 'Cref', 'pageref', 'nam
 const ACCENTS: Record<string, string> = { "'": '́', '`': '̀', '"': '̈', '^': '̂', '~': '̃', '=': '̄', '.': '̇', u: '̆', v: '̌', H: '̋', c: '̧', k: '̨', r: '̊', b: '̱', d: '̣' };
 const ESCAPED = new Set(['%', '&', '$', '#', '_', '{', '}', ' ', ',', ';', ':', '!', '@', '/', '-', '>', '<']);
 
+/* ------------------------------------------------------------------ colours and sizes */
+
+export type RGB = [number, number, number];
+
+// xcolor's base colours.
+const BASE_COLORS: Record<string, RGB> = {
+  red: [1, 0, 0], green: [0, 1, 0], blue: [0, 0, 1], cyan: [0, 1, 1], magenta: [1, 0, 1], yellow: [1, 1, 0], black: [0, 0, 0],
+  white: [1, 1, 1], gray: [0.5, 0.5, 0.5], darkgray: [0.25, 0.25, 0.25], lightgray: [0.75, 0.75, 0.75], brown: [0.75, 0.5, 0.25],
+  lime: [0.75, 1, 0], olive: [0.5, 0.5, 0], orange: [1, 0.5, 0], pink: [1, 0.75, 0.75], purple: [0.75, 0, 0.25], teal: [0, 0.5, 0.5],
+  violet: [0.5, 0, 0.5],
+};
+
+/** A colour given in a model (rgb, RGB, HTML, gray, cmyk), or null. */
+export function colorInModel(model: string, spec: string): RGB | null {
+  const numbers = spec.split(/[\s,]+/).filter(Boolean).map(Number);
+  const unit = (value: number) => Math.min(1, Math.max(0, value));
+  switch (model.trim()) {
+    case 'rgb':
+      return numbers.length === 3 && numbers.every(Number.isFinite) ? (numbers.map(unit) as RGB) : null;
+    case 'RGB':
+      return numbers.length === 3 && numbers.every(Number.isFinite) ? (numbers.map((value) => unit(value / 255)) as RGB) : null;
+    case 'HTML': {
+      const hex = /^\s*#?([0-9a-fA-F]{6})\s*$/.exec(spec)?.[1];
+      return hex ? [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255) as RGB : null;
+    }
+    case 'gray':
+      return numbers.length === 1 && Number.isFinite(numbers[0]) ? [unit(numbers[0]), unit(numbers[0]), unit(numbers[0])] : null;
+    case 'cmyk': {
+      if (numbers.length !== 4 || !numbers.every(Number.isFinite)) return null;
+      const [c, m, y, k] = numbers.map(unit);
+      return [(1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)];
+    }
+    default:
+      return null;
+  }
+}
+
+/** An xcolor expression ("red", "blue!30", "heatred!40!heatredmid", "-red") as RGB, or null. */
+export function colorOf(expression: string, colors: Record<string, RGB> = {}): RGB | null {
+  let text = expression.trim();
+  let complement = false;
+  while (text.startsWith('-')) {
+    complement = !complement;
+    text = text.slice(1).trim();
+  }
+  const parts = text.split('!').map((part) => part.trim());
+  const named = (name: string) => colors[name] ?? BASE_COLORS[name] ?? null;
+  let color = named(parts[0]);
+  if (!color) return null;
+  for (let at = 1; at < parts.length; at += 2) {
+    const share = Number(parts[at]);
+    if (!Number.isFinite(share)) return null;
+    const other = at + 1 < parts.length ? named(parts[at + 1]) : BASE_COLORS.white;
+    if (!other) return null;
+    const p = Math.min(100, Math.max(0, share)) / 100;
+    color = color.map((value, index) => value * p + other[index] * (1 - p)) as RGB;
+  }
+  return complement ? (color.map((value) => 1 - value) as RGB) : color;
+}
+
+export const cssColor = ([r, g, b]: RGB): string => `#${[r, g, b].map((value) => Math.round(value * 255).toString(16).padStart(2, '0')).join('')}`;
+
+/** A colour command's colour: `\color[model]{spec}` or `\color{expression}`, as CSS. */
+const commandColor = (model: string | null, spec: string, definitions: Definitions): string | undefined => {
+  const color = model ? colorInModel(model, spec) : colorOf(spec, definitions.colors);
+  return color ? cssColor(color) : undefined;
+};
+
+// The size commands, as shares of the normal size (LaTeX's at 10pt).
+const SIZES: Record<string, number> = { tiny: 0.5, scriptsize: 0.7, footnotesize: 0.8, small: 0.9, normalsize: 1, large: 1.2, Large: 1.44, LARGE: 1.728, huge: 2.074, Huge: 2.488 };
+
+/** A TeX length as CSS, when it is one CSS can say. */
+const cssLength = (tex: string): string | undefined => {
+  const match = /^\s*(-?[\d.]+)\s*(pt|bp|mm|cm|in|ex|em|pc)\s*$/.exec(tex);
+  if (!match || !Number.isFinite(Number(match[1]))) return undefined;
+  return `${Number(match[1])}${match[2] === 'bp' ? 'pt' : match[2]}`;
+};
+
 export interface Context {
   definitions: Definitions;
   labels: LooseLabel[];
+  /** How many macros deep the text being read is. */
+  depth?: number;
 }
 
 /** Running text from `from` to `to`, as styled runs and atoms. */
-export function parseInline(src: string, from: number, to: number, context: Context, inherited: Style[] = []): Inline[] {
+export function parseInline(src: string, from: number, to: number, context: Context, inherited: Style[] = [], look: Look = {}): Inline[] {
+  return parseRun(src, from, to, context, inherited, look).items;
+}
+
+/** The text a run of inlines shows, read plainly. */
+const shownText = (items: Inline[]): string => items.map((item) => (item.kind === 'text' || item.kind === 'raw' || item.kind === 'link' ? item.text : '')).join('');
+
+/** Running text, and the styles and look in force at its end (a macro's switches go on after it). */
+function parseRun(src: string, from: number, to: number, context: Context, inherited: Style[], inheritedLook: Look): { items: Inline[]; styles: Style[]; look: Look } {
   const out: Inline[] = [];
   let styles = [...inherited];
-  const key = (list: Style[]) => [...new Set(list)].sort().join();
+  let look: Look = { ...inheritedLook };
+  const key = (list: Style[], shown: Look = {}) => `${[...new Set(list)].sort().join()}|${shown.color ?? ''}|${shown.size ?? ''}`;
+  const lookOf = () => (look.color !== undefined || look.size !== undefined ? { look: { ...look } } : {});
   const push = (char: string, start: number, end: number) => {
     const last = out[out.length - 1];
-    if (last?.kind === 'text' && key(last.styles) === key(styles)) {
+    if (last?.kind === 'text' && key(last.styles, last.look) === key(styles, look)) {
       last.text += char;
       last.starts.push(start);
       last.ends.push(end);
-    } else out.push({ kind: 'text', text: char, starts: [start], ends: [end], styles: [...new Set(styles)] });
+    } else out.push({ kind: 'text', text: char, starts: [start], ends: [end], styles: [...new Set(styles)], ...lookOf() });
   };
-  const nested = (inner: { from: number; to: number }, extra: Style | null) => {
-    for (const item of parseInline(src, inner.from, inner.to, context, extra ? [...styles, extra] : styles)) {
+  const nested = (inner: { from: number; to: number }, extra: Style | null, extraLook: Look = {}) => {
+    for (const item of parseInline(src, inner.from, inner.to, context, extra ? [...styles, extra] : styles, { ...look, ...extraLook })) {
       const last = out[out.length - 1];
-      if (item.kind === 'text' && last?.kind === 'text' && key(last.styles) === key(item.styles)) {
+      if (item.kind === 'text' && last?.kind === 'text' && key(last.styles, last.look) === key(item.styles, item.look)) {
         last.text += item.text;
         last.starts.push(...item.starts);
         last.ends.push(...item.ends);
@@ -261,12 +372,13 @@ export function parseInline(src: string, from: number, to: number, context: Cont
       continue;
     }
     if (char === '$' || (char === '\\' && (src[at + 1] === '(' || src[at + 1] === '['))) {
-      const display = src[at + 1] === '$' || src[at + 1] === '[';
+      // $$…$$ and \[…\] are display math; "$[" is inline math that starts with a bracket.
+      const display = char === '$' ? src[at + 1] === '$' : src[at + 1] === '[';
       const open = char === '$' ? (display ? '$$' : '$') : src.slice(at, at + 2);
       const close = open === '$$' ? '$$' : open === '$' ? '$' : open === '\\(' ? '\\)' : '\\]';
       let end = at + open.length;
       while (end < to && !(src.startsWith(close, end) && src[end - 1] !== '\\')) end += 1;
-      out.push({ kind: 'math', tex: src.slice(at + open.length, end), display, from: at, to: Math.min(to, end + close.length) });
+      out.push({ kind: 'math', tex: src.slice(at + open.length, end), display, ...lookOf(), from: at, to: Math.min(to, end + close.length) });
       at = Math.min(to, end + close.length);
       continue;
     }
@@ -351,6 +463,61 @@ export function parseInline(src: string, from: number, to: number, context: Cont
       at = stop;
       continue;
     }
+    if (SIZES[name] !== undefined) {
+      look = { ...look, size: SIZES[name] };
+      at = after(end);
+      continue;
+    }
+    if (name === 'fontsize') {
+      const size = argument(src, end, to);
+      const skip = size ? argument(src, size.end, to) : null;
+      const points = size ? parseFloat(src.slice(size.from, size.to)) : NaN;
+      if (Number.isFinite(points) && points > 0) look = { ...look, size: points / (context.definitions.size ?? 10) };
+      at = skip?.end ?? size?.end ?? end;
+      continue;
+    }
+    if (name === 'color' || name === 'textcolor' || name === 'colorbox' || name === 'cellcolor' || name === 'rowcolor' || name === 'columncolor') {
+      const model = src[skipSpace(src, end, to)] === '[' ? optional(src, end, to) : null;
+      const spec = argument(src, model ? model.end : end, to);
+      if (!spec) {
+        at = after(end);
+        continue;
+      }
+      const color = commandColor(model ? src.slice(model.from, model.to) : null, src.slice(spec.from, spec.to), context.definitions);
+      if (name === 'color') {
+        if (color) look = { ...look, color };
+        at = spec.end;
+        continue;
+      }
+      if (name === 'textcolor' || name === 'colorbox') {
+        const arg = argument(src, spec.end, to);
+        if (!arg) {
+          at = spec.end;
+          continue;
+        }
+        nested(arg, null, name === 'textcolor' && color ? { color } : {});
+        at = arg.end;
+        continue;
+      }
+      // \cellcolor and \rowcolor colour their cell and row, read with the table.
+      at = spec.end;
+      continue;
+    }
+    if (name === 'rule') {
+      const raise = src[skipSpace(src, end, to)] === '[' ? optional(src, end, to) : null;
+      const width = argument(src, raise ? raise.end : end, to);
+      const height = width ? argument(src, width.end, to) : null;
+      if (!width || !height) {
+        at = after(end);
+        continue;
+      }
+      const w = cssLength(src.slice(width.from, width.to));
+      const h = cssLength(src.slice(height.from, height.to));
+      const lift = raise ? cssLength(src.slice(raise.from, raise.to)) : undefined;
+      if (w && h) out.push({ kind: 'rule', width: w, height: h, ...(lift ? { raise: lift } : {}), ...(look.color ? { color: look.color } : {}), from: at, to: height.end });
+      at = height.end;
+      continue;
+    }
     if (SWITCH_OF[name]) {
       styles = [...styles, SWITCH_OF[name]];
       at = after(end);
@@ -375,8 +542,6 @@ export function parseInline(src: string, from: number, to: number, context: Cont
     }
     if (name in STYLE_OF) {
       let stop = end;
-      // \textcolor{red}{…} and \colorbox{…}{…}: the colour is not shown.
-      if (name === 'textcolor' || name === 'colorbox') stop = argument(src, stop, to)?.end ?? stop;
       if (name === 'makebox') stop = optional(src, stop, to)?.end ?? stop;
       const arg = argument(src, stop, to);
       if (!arg) {
@@ -443,18 +608,44 @@ export function parseInline(src: string, from: number, to: number, context: Cont
       continue;
     }
     // A macro of the preamble, or one this does not know: shown as what its arguments say.
+    const macro = context.definitions.macros?.[name];
+    if (macro && (context.depth ?? 0) < 8) {
+      // Read as what it is defined to be, its arguments put in; switches in it (\color) go on after it.
+      let stop = end;
+      const args: string[] = [];
+      if (macro.optional !== undefined) {
+        const option = src[skipSpace(src, stop, to)] === '[' ? optional(src, stop, to) : null;
+        args.push(option ? src.slice(option.from, option.to) : macro.optional);
+        if (option) stop = option.end;
+      }
+      while (args.length < macro.args) {
+        const arg = argument(src, stop, to);
+        if (!arg) break;
+        args.push(src.slice(arg.from, arg.to));
+        stop = arg.end;
+      }
+      if (macro.args === 0 && src[stop] === '{' && src[stop + 1] === '}') stop += 2;
+      const body = macro.body.replace(/#(\d)/g, (_, n: string) => args[Number(n) - 1] ?? '');
+      const read = parseRun(body, 0, body.length, { ...context, labels: [], depth: (context.depth ?? 0) + 1 }, styles, look);
+      styles = read.styles;
+      look = read.look;
+      if (read.items.length > 0) out.push({ kind: 'raw', text: shownText(read.items), content: read.items, from: at, to: stop });
+      at = stop === end ? after(stop) : stop;
+      continue;
+    }
     let stop = src[end] === '[' ? optional(src, end, to)?.end ?? end : end;
-    const parts: string[] = [];
+    let last: { from: number; to: number } | null = null;
     for (let arg = argument(src, stop, to); arg && src[stop] === '{'; arg = argument(src, stop, to)) {
-      parts.push(src.slice(arg.from, arg.to));
+      last = arg;
       stop = arg.end;
     }
     const defined = context.definitions.text[name];
-    const text = defined !== undefined ? plainText(defined) : parts.length > 0 ? plainText(parts[parts.length - 1]) : '';
-    out.push({ kind: 'raw', text, from: at, to: parts.length > 0 ? stop : after(stop) });
-    at = parts.length > 0 ? stop : after(stop);
+    const content = defined === undefined && last ? parseInline(src, last.from, last.to, { ...context, labels: [] }, styles, look) : undefined;
+    const text = defined !== undefined ? plainText(defined) : content ? shownText(content) : '';
+    out.push({ kind: 'raw', text, ...(content ? { content } : {}), from: at, to: last ? stop : after(stop) });
+    at = last ? stop : after(stop);
   }
-  return out;
+  return { items: out, styles, look };
 }
 
 /** Drops the spaces a paragraph starts or ends with. */
@@ -597,6 +788,44 @@ function splitTop(src: string, from: number, to: number, separator: '&' | '\\\\'
 
 const RULE = /^\s*\\(toprule|midrule|bottomrule|hline|cmidrule|cline|specialrule|addlinespace|morecmidrules|hhline|rowcolor)\b\s*(\([^)]*\))?(\[[^\]]*\])?(\{[^}]*\})*\s*/;
 
+/** The columns a tabular's preamble sets: how each aligns, and whether its text wraps (p, m, b, X, tabulary's L C R J). */
+function columnsOf(spec: string): { align: 'l' | 'c' | 'r'; wrap: boolean }[] {
+  const columns: { align: 'l' | 'c' | 'r'; wrap: boolean }[] = [];
+  const group = (from: number) => {
+    let at = from;
+    while (/\s/.test(spec[at] ?? '')) at += 1;
+    if (spec[at] !== '{') return at;
+    let depth = 0;
+    for (; at < spec.length; at += 1) {
+      if (spec[at] === '{') depth += 1;
+      else if (spec[at] === '}' && --depth === 0) return at + 1;
+    }
+    return spec.length;
+  };
+  for (let at = 0; at < spec.length; ) {
+    const char = spec[at];
+    if ('@!<>'.includes(char)) at = group(at + 1);
+    else if (char === '*') {
+      const count = group(at + 1);
+      const body = group(count);
+      const times = Number(spec.slice(spec.indexOf('{', at) + 1, count - 1));
+      const inner = columnsOf(spec.slice(spec.indexOf('{', count) + 1, body - 1));
+      for (let n = 0; n < (Number.isFinite(times) ? Math.min(times, 100) : 0); n += 1) columns.push(...inner);
+      at = body;
+    } else if ('pmb'.includes(char)) {
+      columns.push({ align: 'l', wrap: true });
+      at = group(at + 1);
+    } else if ('XLCRJ'.includes(char)) {
+      columns.push({ align: char === 'C' ? 'c' : char === 'R' ? 'r' : 'l', wrap: true });
+      at += 1;
+    } else if ('lcrS'.includes(char)) {
+      columns.push({ align: char === 'l' ? 'l' : char === 'r' ? 'r' : 'c', wrap: false });
+      at += 1;
+    } else at += 1;
+  }
+  return columns;
+}
+
 function parseTabular(src: string, from: number, to: number, context: Context): { rows: TableRow[] } | null {
   const begin = /\\begin\s*\{(tabular\*?|tabularx|tabulary)\}/.exec(src.slice(from, to));
   if (!begin) return null;
@@ -609,16 +838,31 @@ function parseTabular(src: string, from: number, to: number, context: Context): 
   if (!spec) return null;
   const end = environmentEnd(src, name, spec.end, to);
   if (!end) return null;
-  const aligns = [...src.slice(spec.from, spec.to).replace(/[@>p<m]\{[^}]*\}|\{[^}]*\}|\*\{[^}]*\}/g, '').replace(/[^lcrXL CR]/g, '')].map((char) =>
-    /[cC]/.test(char) ? 'c' : /[rR]/.test(char) ? 'r' : 'l',
-  ) as ('l' | 'c' | 'r')[];
+  const columns = columnsOf(src.slice(spec.from, spec.to));
   const rows: TableRow[] = [];
   let pending: TableRow['above'];
+  // \cellcolor at the start of a cell: its colour, and the cell after it.
+  const cellColor = (inner: { from: number; to: number }): { inner: { from: number; to: number }; background?: string } => {
+    const colored = /^\s*\\cellcolor\b\s*/.exec(src.slice(inner.from, inner.to));
+    if (!colored) return { inner };
+    let stop = inner.from + colored[0].length;
+    const model = src[stop] === '[' ? optional(src, stop, inner.to) : null;
+    if (model) stop = model.end;
+    const spec = argument(src, stop, inner.to);
+    if (!spec) return { inner };
+    const background = commandColor(model ? src.slice(model.from, model.to) : null, src.slice(spec.from, spec.to), context.definitions);
+    return { inner: { from: spec.end, to: inner.to }, ...(background ? { background } : {}) };
+  };
   for (const part of splitTop(src, spec.end, end.start, '\\\\')) {
     let start = part.from;
+    let background: string | undefined;
     // Rules before the row's cells.
     for (let rule = RULE.exec(src.slice(start, part.to)); rule; rule = RULE.exec(src.slice(start, part.to))) {
       const kind = rule[1];
+      if (kind === 'rowcolor') {
+        const color = /\\rowcolor\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}/.exec(rule[0]);
+        if (color) background = commandColor(color[1] ?? null, color[2], context.definitions);
+      }
       if (kind === 'toprule' || kind === 'bottomrule') pending = 'thick';
       else if (kind !== 'addlinespace' && kind !== 'rowcolor') pending = pending ?? 'thin';
       start += rule[0].length;
@@ -633,12 +877,12 @@ function parseTabular(src: string, from: number, to: number, context: Context): 
     let column = 0;
     for (const cell of splitTop(src, start, part.to, '&')) {
       let span = 1;
-      let align = aligns[column];
+      let { align, wrap } = columns[column] ?? { align: undefined, wrap: false };
       let inner = cell;
-      const multi = /^\s*\\multicolumn\s*\{(\d+)\}\s*\{([^}]*)\}\s*/.exec(src.slice(cell.from, cell.to));
+      const multi = /^\s*\\multicolumn\s*\{(\d+)\}\s*\{((?:[^{}]|\{[^{}]*\})*)\}\s*/.exec(src.slice(cell.from, cell.to));
       if (multi) {
         span = Number(multi[1]);
-        align = /c/.test(multi[2]) ? 'c' : /r/.test(multi[2]) ? 'r' : 'l';
+        ({ align, wrap } = columnsOf(multi[2])[0] ?? { align: 'l', wrap: false });
         const arg = argument(src, cell.from + multi[0].length, cell.to);
         if (arg) inner = arg;
       }
@@ -652,10 +896,12 @@ function parseTabular(src: string, from: number, to: number, context: Context): 
         const arg = argument(src, inner.from + made[0].length, inner.to);
         if (arg) inner = arg;
       }
-      cells.push({ content: trimmed(parseInline(src, inner.from, inner.to, context)), span, align, from: inner.from, to: inner.to });
+      const colored = cellColor(inner);
+      inner = colored.inner;
+      cells.push({ content: trimmed(parseInline(src, inner.from, inner.to, context)), span, align, ...(wrap ? { wrap } : {}), ...(colored.background ? { background: colored.background } : {}), from: inner.from, to: inner.to });
       column += span;
     }
-    rows.push({ cells, ...(pending ? { above: pending } : {}) });
+    rows.push({ cells, ...(background ? { background } : {}), ...(pending ? { above: pending } : {}) });
     pending = undefined;
   }
   return { rows };
@@ -782,7 +1028,24 @@ function environment(src: string, name: string, from: number, inner: number, end
     if (!tabular) return { kind: 'unsupported', name, from, to: end.end };
     labels.push(...labelsIn(src, inner, end.start).filter((item) => !labels.includes(item)));
     const tabularAt = /\\begin\s*\{tabular/.exec(src.slice(inner, end.start))?.index ?? 0;
-    return { kind: 'table', wide: name.endsWith('*'), rows: tabular.rows, caption, captionFirst: caption !== undefined && caption.from < inner + tabularAt, labels, from, to: end.end };
+    const before = src.slice(inner, inner + tabularAt).replace(/(^|[^\\])%[^\n]*/g, '$1');
+    // \resizebox{\linewidth}{!}{…} scales the table to the line; \resizebox{\ifdim\width>\linewidth…} and
+    // adjustbox's max width only shrink it.
+    const box = /\\resizebox\*?\s*\{((?:[^{}]|\{[^{}]*\})*)\}/.exec(before)?.[1];
+    const fit =
+      box !== undefined && /\\ifdim\s*\\width\s*>/.test(box)
+        ? 'shrink'
+        : box !== undefined && /\\(linewidth|textwidth|columnwidth|hsize)\b/.test(box)
+          ? 'scale'
+          : /\\(?:begin\s*\{adjustbox\}|adjustbox)\s*\{[^}]*max\s+width\s*=/.test(before)
+            ? 'shrink'
+            : undefined;
+    // The size the table is set in (\small before the tabular), as a share of the normal size.
+    let size: number | undefined;
+    for (const match of before.matchAll(/\\(tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)\b|\\fontsize\s*\{([\d.]+)/g)) {
+      size = match[1] ? SIZES[match[1]] : Number(match[2]) / (context.definitions.size ?? 10);
+    }
+    return { kind: 'table', wide: name.endsWith('*'), rows: tabular.rows, ...(fit ? { fit } : {}), ...(size !== undefined && Number.isFinite(size) ? { size } : {}), caption, captionFirst: caption !== undefined && caption.from < inner + tabularAt, labels, from, to: end.end };
   }
   if (LISTS.has(name)) {
     const items: { children: Element[]; from: number; to: number }[] = [];
@@ -832,9 +1095,11 @@ export function hasUnsupported(elements: Element[]): boolean {
 
 /** Text macros, math macros and theorem environments the preamble defines. */
 export function readDefinitions(preamble: string): Definitions {
-  const definitions: Definitions = { text: {}, math: {}, theorems: {} };
+  const macros: NonNullable<Definitions['macros']> = {};
+  const colors: Record<string, RGB> = {};
+  const definitions: Definitions = { text: {}, math: {}, theorems: {}, macros, colors };
   const src = preamble.replace(/(^|[^\\])%[^\n]*/g, '$1');
-  const pattern = /\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand)\*?\s*\{?\s*\\([A-Za-z@]+)\s*\}?\s*(?:\[(\d)\])?\s*(?:\[[^\]]*\])?\s*\{/g;
+  const pattern = /\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand)\*?\s*\{?\s*\\([A-Za-z@]+)\s*\}?\s*(?:\[(\d)\])?\s*(?:\[([^\]]*)\])?\s*\{/g;
   for (const match of src.matchAll(pattern)) {
     const open = (match.index ?? 0) + match[0].length - 1;
     const end = closing(src, open);
@@ -842,6 +1107,7 @@ export function readDefinitions(preamble: string): Definitions {
     const body = src.slice(open + 1, end - 1);
     definitions.math[`\\${match[1]}`] = body;
     if (!match[2]) definitions.text[match[1]] = body;
+    macros[match[1]] = { args: Number(match[2] ?? 0), ...(match[2] && match[3] !== undefined ? { optional: match[3] } : {}), body };
   }
   for (const match of src.matchAll(/\\def\s*\\([A-Za-z@]+)\s*\{/g)) {
     const open = (match.index ?? 0) + match[0].length - 1;
@@ -849,7 +1115,15 @@ export function readDefinitions(preamble: string): Definitions {
     if (end < 0) continue;
     definitions.math[`\\${match[1]}`] = src.slice(open + 1, end - 1);
     definitions.text[match[1]] = src.slice(open + 1, end - 1);
+    macros[match[1]] = { args: 0, body: src.slice(open + 1, end - 1) };
   }
+  // Colours, in the order they are defined (\colorlet mixes those before it).
+  for (const match of src.matchAll(/\\(?:definecolor\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}\s*\{([^}]*)\}\s*\{([^}]*)\}|colorlet\s*\{([^}]*)\}\s*(?:\[[^\]]*\])?\s*\{([^}]*)\})/g)) {
+    const color = match[1] !== undefined ? colorInModel(match[2], match[3]) : colorOf(match[5], colors);
+    if (color) colors[(match[1] ?? match[4]).trim()] = color;
+  }
+  const size = /\\documentclass\s*\[([^\]]*)\]/.exec(src)?.[1].match(/\b(1[012])pt\b/)?.[1];
+  if (size) definitions.size = Number(size);
   for (const match of src.matchAll(/\\DeclareMathOperator(\*?)\s*\{\s*\\([A-Za-z]+)\s*\}\s*\{([^}]*)\}/g)) {
     definitions.math[`\\${match[2]}`] = match[1] ? `\\operatorname*{${match[3]}}` : `\\operatorname{${match[3]}}`;
   }

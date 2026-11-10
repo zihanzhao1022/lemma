@@ -157,6 +157,13 @@
 .html-block td {
   padding: 0.12em 0.55em;
   vertical-align: top;
+  white-space: nowrap;
+}
+.html-block td.wrap {
+  white-space: normal;
+}
+.html-table-fit table {
+  margin: 0;
 }
 .html-block tr.above-thick td {
   border-top: 0.08em solid currentColor;
@@ -254,6 +261,10 @@
 }
 .html-raw {
   color: inherit;
+}
+.html-rule {
+  display: inline-block;
+  background: currentColor;
 }
 .html-sc {
   font-variant: small-caps;

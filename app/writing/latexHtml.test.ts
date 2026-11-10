@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Context, Element, Inline, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from './latexHtml';
+import { Context, Element, Inline, TextRun, colorOf, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from './latexHtml';
 
 const context = (preamble = ''): Context => ({ definitions: readDefinitions(preamble), labels: [] });
 const blocks = (src: string, preamble = '') => parseBlocks(src, 0, src.length, context(preamble));
@@ -41,6 +41,11 @@ describe('parseInline', () => {
     expect(cite).toMatchObject({ keys: ['a', 'b'], post: 'p.~3', command: 'cite' });
     expect(src.slice(cite!.kind === 'cite' ? cite!.from : 0, cite!.kind === 'cite' ? cite!.to : 0)).toBe('\\cite[p.~3]{a, b}');
     expect(items.find((item) => item.kind === 'math')).toMatchObject({ tex: 'x^2', display: false });
+  });
+
+  it('reads inline math that starts with a bracket', () => {
+    const items = inline('so $[A|F]_b$ runs $m_A$');
+    expect(items.filter((item) => item.kind === 'math').map((item) => item.kind === 'math' && [item.tex, item.display])).toEqual([['[A|F]_b', false], ['m_A', false]]);
   });
 
   it('puts accents on letters', () => {
@@ -123,5 +128,52 @@ describe('readDefinitions', () => {
 describe('plainText', () => {
   it('puts accents on letters, as BibTeX names write them', () => {
     expect(plainText('Wollschl{\\"a}ger and Erd\\H{o}s and Fran\\c{c}ois and \\\'Eva')).toBe('Wollschläger and Erdős and François and Éva');
+  });
+});
+
+describe('colours and sizes', () => {
+  const preamble = '\\documentclass[11pt]{article}\n\\definecolor{hot}{RGB}{242,150,60}\n\\definecolor{sdgray}{gray}{0.4}\n\\newcommand{\\sdstyle}{\\fontsize{7}{8}\\selectfont\\color{sdgray}}\n\\DeclareRobustCommand{\\stR}{\\textcolor{hot}{\\rule{2.4mm}{2.4mm}}}\n\\newcommand{\\todo}[1]{\\textcolor{red}{[#1]}}';
+
+  it('mixes xcolor expressions', () => {
+    const colors = readDefinitions(preamble).colors!;
+    expect(colorOf('hot!50!white', colors)?.map((value) => Math.round(value * 255))).toEqual([249, 203, 158]);
+    expect(colorOf('red!100.0!hot', colors)).toEqual([1, 0, 0]);
+    expect(colorOf('blue!30', colors)?.map((value) => Math.round(value * 100) / 100)).toEqual([0.7, 0.7, 1]);
+    expect(colorOf('nothing!20', colors)).toBeNull();
+  });
+
+  it('colours and sizes text set by a macro of switches, until its group ends', () => {
+    const items = inline('14.67{\\sdstyle$\\pm$1.44} done', preamble);
+    expect(text(items)).toBe('14.67[math]1.44 done');
+    expect(items[1]).toMatchObject({ kind: 'math', look: { color: '#666666', size: 7 / 11 } });
+    expect(items[2]).toMatchObject({ kind: 'text', text: '1.44', look: { color: '#666666', size: 7 / 11 } });
+    expect((items[3] as TextRun).look).toBeUndefined();
+  });
+
+  it('shows a macro with arguments, and a coloured rule, as what they are defined to be', () => {
+    const items = inline('\\stR{} and \\todo{fix}', preamble);
+    expect(items[0]).toMatchObject({ kind: 'raw', content: [{ kind: 'rule', width: '2.4mm', height: '2.4mm', color: '#f2963c' }] });
+    expect(items[2]).toMatchObject({ kind: 'raw', text: '[fix]', content: [{ kind: 'text', text: '[fix]', look: { color: '#ff0000' } }] });
+  });
+
+  it('gives a table its cell and row colours', () => {
+    const src = '\\begin{table}\n\\begin{tabular}{lc}\n\\rowcolor{gray!10} a & b \\\\\n x & \\cellcolor{hot!50!white}22.33{\\scriptsize$\\pm$1.89} \\\\\n\\end{tabular}\n\\end{table}';
+    const table = blocks(src, preamble)[0] as Extract<Element, { kind: 'table' }>;
+    expect(table.rows[0].background).toBe('#f2f2f2');
+    const cell = table.rows[1].cells[1];
+    expect(cell.background).toBe('#f9cb9e');
+    expect(text(cell.content)).toBe('22.33[math]1.89');
+    expect(src.slice(cell.from, cell.to).trim()).toBe('22.33{\\scriptsize$\\pm$1.89}');
+  });
+
+  it('reads how a table is fitted to the line, its size, and which columns wrap', () => {
+    const table = (before: string, spec = 'lp{2cm}c') =>
+      blocks(`\\begin{table}\n${before}{\\begin{tabular}{${spec}}\na & b & c \\\\\n\\multicolumn{2}{p{1cm}}{d} & e \\\\\n\\end{tabular}}\n\\end{table}`)[0] as Extract<Element, { kind: 'table' }>;
+    expect(table('\\small\\resizebox{\\linewidth}{!}')).toMatchObject({ fit: 'scale', size: 0.9 });
+    expect(table('\\resizebox{\\ifdim\\width>\\linewidth\\linewidth\\else\\width\\fi}{!}').fit).toBe('shrink');
+    expect(table('').fit).toBeUndefined();
+    const rows = table('', '@{}l*{2}{p{2cm}}@{}').rows;
+    expect(rows[0].cells.map((cell) => [cell.align, cell.wrap ?? false])).toEqual([['l', false], ['l', true], ['l', true]]);
+    expect(rows[1].cells[0]).toMatchObject({ span: 2, wrap: true });
   });
 });

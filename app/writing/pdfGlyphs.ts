@@ -89,6 +89,23 @@ interface RawGlyph {
 }
 
 export function glyphRuns(fnArray: number[], argsArray: unknown[], ops: GlyphOps, fontOf: (name: string) => FontInfo | undefined): { runs: GlyphRun[]; drawn: Set<number> } {
+  const reader = glyphReader(ops, fontOf);
+  reader.readTo(fnArray, argsArray, fnArray.length - 1);
+  return { runs: reader.runs, drawn: reader.drawn };
+}
+
+export interface GlyphReader {
+  runs: GlyphRun[];
+  drawn: Set<number>;
+  /** Reads the operators up to `last` not read yet; whether `last` is drawn as runs. */
+  readTo(fnArray: number[], argsArray: unknown[], last: number): boolean;
+}
+
+/**
+ * Reads an operator list as it arrives, in order: pdf.js's canvas renders from its own list (merged by its
+ * optimizer, so its indices are not those of getOperatorList), and asks about each operator before drawing it.
+ */
+export function glyphReader(ops: GlyphOps, fontOf: (name: string) => FontInfo | undefined): GlyphReader {
   const runs: GlyphRun[] = [];
   const drawn = new Set<number>();
   interface State {
@@ -168,8 +185,8 @@ export function glyphRuns(fnArray: number[], argsArray: unknown[], ops: GlyphOps
     if (complete) drawn.add(op);
   };
 
-  fnArray.forEach((fn, op) => {
-    const args = (argsArray[op] ?? []) as unknown[];
+  const read = (fn: number, rawArgs: unknown, op: number) => {
+    const args = (rawArgs ?? []) as unknown[];
     switch (fn) {
       case ops.save:
         stack.push({ ...state });
@@ -246,6 +263,14 @@ export function glyphRuns(fnArray: number[], argsArray: unknown[], ops: GlyphOps
         break;
       default:
     }
-  });
-  return { runs, drawn };
+  };
+  let next = 0;
+  return {
+    runs,
+    drawn,
+    readTo(fnArray, argsArray, last) {
+      for (; next <= last && next < fnArray.length; next += 1) read(fnArray[next], argsArray[next], next);
+      return drawn.has(last);
+    },
+  };
 }

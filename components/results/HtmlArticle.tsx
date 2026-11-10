@@ -5,7 +5,7 @@ import { GripVertical, MessageSquare } from 'lucide-react';
 import { ArticleBlock, bodyBlocks } from '../../app/writing/articleBlocks';
 import { bodyOf } from '../../app/writing/document';
 import { Numbering, PaperStyle, citationText, numberPaper, paperStyle, parseBibRecords } from '../../app/writing/htmlPaper';
-import { Context, Element, Graphic, Inline, LooseLabel, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from '../../app/writing/latexHtml';
+import { Context, Element, Graphic, Inline, Look, LooseLabel, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from '../../app/writing/latexHtml';
 import { escapeTyped } from '../../app/writing/pageEdits';
 import { replaceGraphic } from '../../app/writing/pageImages';
 import { lineStarts } from '../../app/writing/pageMap';
@@ -78,6 +78,58 @@ function shifted(items: Inline[], by: number): Inline[] {
         : { ...item, from: item.from + by, to: item.to + by },
   );
 }
+
+const STYLE_CLASS: Record<TextRun['styles'][number], string> = { em: 'italic', bf: 'font-bold', tt: 'html-tt', sc: 'html-sc', sf: 'html-sf', ul: 'underline', sup: '', sub: '' };
+const textClasses = (run: TextRun) => run.styles.map((name) => STYLE_CLASS[name]).join(' ');
+
+/** The colour and size the source set, as CSS. */
+const lookStyle = (look?: Look): React.CSSProperties | undefined =>
+  look ? { ...(look.color ? { color: look.color } : {}), ...(look.size !== undefined && look.size !== 1 ? { fontSize: `${look.size}em` } : {}) } : undefined;
+
+const ruleStyle = (rule: Extract<Inline, { kind: 'rule' }>): React.CSSProperties => ({
+  width: rule.width,
+  height: rule.height,
+  ...(rule.raise ? { verticalAlign: rule.raise } : {}),
+  ...(rule.color ? { background: rule.color } : {}),
+});
+
+/**
+ * A table set in \resizebox to the line's width: scaled to the width it has here, as LaTeX scales it ('shrink':
+ * only made smaller, as adjustbox's max width).
+ */
+const FitTable: React.FC<{ fit?: 'scale' | 'shrink'; children: React.ReactNode }> = ({ fit, children }) => {
+  const box = useRef<HTMLDivElement>(null);
+  const zoom = useRef(1);
+  useLayoutEffect(() => {
+    const element = box.current;
+    const table = element?.firstElementChild as HTMLElement | null;
+    if (!fit || !element || !table) return undefined;
+    const measure = () => {
+      // Both as drawn on screen (the sheet itself may be zoomed); the table's own zoom taken out.
+      const natural = table.getBoundingClientRect().width / zoom.current;
+      const room = element.getBoundingClientRect().width;
+      if (natural <= 0 || room <= 0) return;
+      const next = fit === 'scale' ? room / natural : Math.min(1, room / natural);
+      if (Math.abs(next - zoom.current) < 0.002) return;
+      zoom.current = next;
+      table.style.setProperty('zoom', String(next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observer.observe(table);
+    return () => {
+      observer.disconnect();
+      table.style.removeProperty('zoom');
+      zoom.current = 1;
+    };
+  }, [fit]);
+  return (
+    <div ref={box} className={fit ? 'html-table-fit' : undefined}>
+      {children}
+    </div>
+  );
+};
 
 /** The preamble's \title and \author, read as text; `fields` are their arguments in the preamble's own offsets. */
 function readTitle(preamble: string, context: Context): { title?: TitleField; author?: TitleField; fields: { from: number; to: number }[] } {
@@ -496,6 +548,35 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     }
   };
 
+  /** Content shown inside a command that is not edited here (a macro's text): looks only, no source places. */
+  const shown = (items: Inline[]): React.ReactNode[] =>
+    items.map((item, index) => {
+      switch (item.kind) {
+        case 'text': {
+          const node = (
+            <span key={index} className={textClasses(item) || undefined} style={lookStyle(item.look)}>
+              {item.text}
+            </span>
+          );
+          if (item.styles.includes('sup')) return <sup key={index}>{node}</sup>;
+          if (item.styles.includes('sub')) return <sub key={index}>{node}</sub>;
+          return node;
+        }
+        case 'math':
+          return <span key={index} style={lookStyle(item.look)} dangerouslySetInnerHTML={{ __html: math(item.tex, item.display) }} />;
+        case 'rule':
+          return <span key={index} className="html-rule" style={ruleStyle(item)} />;
+        case 'raw':
+          return <span key={index}>{item.content ? shown(item.content) : item.text}</span>;
+        case 'break':
+          return <br key={index} />;
+        case 'link':
+          return <span key={index}>{item.text}</span>;
+        default:
+          return null;
+      }
+    });
+
   const refText = (command: string, labels: string[]) => {
     const shown = labels.map((label) => numbering.labels[label] ?? '??').join(', ');
     if (command === 'eqref') return `(${shown})`;
@@ -511,9 +592,9 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     items.map((item) => {
       switch (item.kind) {
         case 'text': {
-          const classes = item.styles.map((styleName) => ({ em: 'italic', bf: 'font-bold', tt: 'html-tt', sc: 'html-sc', sf: 'html-sf', ul: 'underline', sup: '', sub: '' })[styleName]).join(' ');
+          const classes = textClasses(item);
           const node = (
-            <span key={`t${item.starts[0]}`} data-run={item.starts[0]} ref={registerRun(item)} className={classes || undefined}>
+            <span key={`t${item.starts[0]}`} data-run={item.starts[0]} ref={registerRun(item)} className={classes || undefined} style={lookStyle(item.look)}>
               {item.text}
             </span>
           );
@@ -530,9 +611,12 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
               data-s={item.from}
               data-e={item.to}
               title={item.tex}
+              style={lookStyle(item.look)}
               dangerouslySetInnerHTML={{ __html: math(item.tex, item.display) }}
             />
           );
+        case 'rule':
+          return <span key={`u${item.from}`} className="html-rule" contentEditable={false} data-s={item.from} data-e={item.to} style={ruleStyle(item)} />;
         case 'cite':
           return (
             <span key={`c${item.from}`} className="html-atom" contentEditable={false} data-s={item.from} data-e={item.to} title={item.keys.join(', ')}>
@@ -564,7 +648,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         case 'raw':
           return (
             <span key={`x${item.from}`} className="html-atom html-raw" contentEditable={false} data-s={item.from} data-e={item.to}>
-              {item.text}
+              {item.content ? shown(item.content) : item.text}
             </span>
           );
       }
@@ -640,19 +724,21 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         return (
           <div key={key} className={`html-table${element.wide ? ' wide' : ''}`}>
             {(element.captionFirst || style.template === 'ieee') && caption(element, true)}
-            <table>
-              <tbody>
-                {element.rows.map((row, rowIndex) => (
-                  <tr key={rowIndex} className={[row.above && `above-${row.above}`, row.below && `below-${row.below}`].filter(Boolean).join(' ') || undefined}>
-                    {row.cells.map((cell) => (
-                      <td key={cell.from} colSpan={cell.span > 1 ? cell.span : undefined} style={{ textAlign: cell.align === 'c' ? 'center' : cell.align === 'r' ? 'right' : 'left' }} data-kind="cell" data-s={cell.from} data-e={cell.to}>
-                        {inline(cell.content)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <FitTable fit={element.fit}>
+              <table style={element.size !== undefined ? { fontSize: `${element.size}em` } : undefined}>
+                <tbody>
+                  {element.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className={[row.above && `above-${row.above}`, row.below && `below-${row.below}`].filter(Boolean).join(' ') || undefined} style={row.background ? { background: row.background } : undefined}>
+                      {row.cells.map((cell) => (
+                        <td key={cell.from} colSpan={cell.span > 1 ? cell.span : undefined} className={cell.wrap ? 'wrap' : undefined} style={{ textAlign: cell.align === 'c' ? 'center' : cell.align === 'r' ? 'right' : 'left', ...(cell.background ? { background: cell.background } : {}) }} data-kind="cell" data-s={cell.from} data-e={cell.to}>
+                          {inline(cell.content)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </FitTable>
             {!element.captionFirst && style.template !== 'ieee' && caption(element, false)}
           </div>
         );
