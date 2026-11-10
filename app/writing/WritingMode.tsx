@@ -5,7 +5,7 @@ import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
 import { IMAGE_TYPES, ReadFile, attachmentPath, extensionOf, loadAttachments, newBlockId, preambleOf, putFiles, rebuildWith, withOutputs } from '../../editor/results/actions';
 import { FileFolder, fileTree } from '../../editor/results/attachmentTree';
-import { bibliographyStyle } from '../../editor/results/bibtex';
+import { bibliographyStyle, packageSetsStyle } from '../../editor/results/bibtex';
 import { REFERENCES_FILE } from '../../editor/results/compile';
 import { citedKeys, describeFailure } from '../../editor/results/numbering';
 import { ResultsOp, applyResultsOp, resultsCommitMessage } from '../../editor/results/ops';
@@ -240,7 +240,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         const keys = citedKeys(body);
         const style = bibliographyStyle({ ...paper, preamble });
         const cites = bib !== undefined && keys.length > 0;
-        const doc = fullDocument(preamble, body, cites ? { style, file: REFERENCES_FILE } : null);
+        const doc = fullDocument(preamble, body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null);
         // The attachments as they are being edited.
         const inputs: Record<string, string | Uint8Array> = { ...files, ...(bib !== undefined ? { [REFERENCES_FILE]: encode(bib) } : {}), ...changedFiles(snapshot, saved.current ?? {}) };
         const fileNames = [MAIN];

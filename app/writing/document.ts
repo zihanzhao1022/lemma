@@ -110,6 +110,8 @@ const VERBATIM = new Set(['verbatim', 'verbatim*', 'Verbatim', 'lstlisting', 'mi
 // A line that starts a word of running text: it would start a paragraph, or go on with one.
 const TEXT_START = /^\s*[\p{L}\p{N}(`'"]/u;
 const FLOAT_BEGIN = /^\s*\\begin\s*\{(figure|table)(\*?)\}/;
+// A heading at a line's start, up to the brace its title opens with.
+const HEADING_START = /^\s*\\(?:section|subsection|subsubsection|paragraph|subparagraph)\*?\s*(?:\[[^\]{}]*\]\s*)?\{/;
 
 /** A placement option can follow a float opening on a later line; the mark must come after that option. */
 function floatContentStart(lines: string[], line: number, offset: number): { line: number; offset: number } {
@@ -158,7 +160,11 @@ export function withMarks(body: string, file = 0): string {
       const top = environments[environments.length - 1];
       const calm = depth === 0 && !math && !glued;
       const insertions = delayed.get(index) ?? [];
-      if (calm && TEXT_ENVIRONMENTS.has(top) && TEXT_START.test(line)) {
+      const heading = calm && TEXT_ENVIRONMENTS.has(top) ? HEADING_START.exec(line) : null;
+      if (heading) {
+        // Inside the title, where the heading's text is set.
+        insertions.push({ offset: heading[0].length, text: mark('text', n) });
+      } else if (calm && TEXT_ENVIRONMENTS.has(top) && TEXT_START.test(line)) {
         insertions.push({ offset: /^\s*/.exec(line)![0].length, text: `\\leavevmode${mark('text', n)}` });
       } else if (calm && TEXT_ENVIRONMENTS.has(top)) {
         const begin = FLOAT_BEGIN.exec(line);
@@ -377,9 +383,20 @@ export interface FullDocument {
   bodyLines: number;
 }
 
-/** The paper as one document: its preamble, every block in order and, when it cites, its bibliography. */
-export function fullDocument(preamble: string, body: string, bibliography: { style: string; file: string } | null): FullDocument {
-  const own = preamble.replace(/\s+$/, '');
+/** Marks at the start of the preamble's \title and \author, as input file `file`, so their text on the page finds its line. */
+export function withTitleMarks(preamble: string, file: number): string {
+  return preamble
+    .split('\n')
+    .map((line, index) => line.replace(/^(\s*\\(?:title|author)\s*(?:\[[^\]{}]*\]\s*)?\{)/, `$1\\leavevmode\\galleytextat{${file}}{${index + 1}}`))
+    .join('\n');
+}
+
+/**
+ * The paper as one document: its preamble, every block in order and, when it cites, its bibliography. `titleFile`
+ * marks the title and the authors (withTitleMarks), the preamble being that input file.
+ */
+export function fullDocument(preamble: string, body: string, bibliography: { style: string | null; file: string } | null, { titleFile }: { titleFile?: number } = {}): FullDocument {
+  const own = (titleFile ? withTitleMarks(preamble, titleFile) : preamble).replace(/\s+$/, '');
   const head = passOptionsLines(own);
   if (!/\\documentclass/.test(stripComments(own))) head.push('\\documentclass{article}');
   const text = body.replace(/\s+$/, '');
@@ -387,7 +404,12 @@ export function fullDocument(preamble: string, body: string, bibliography: { sty
   // as the paper does, when the preamble gives a title the text does not set itself.
   const titled = /\\title\s*(?:\[[^\]]*\]\s*)?\{/.test(stripComments(own)) && !/\\maketitle(?![A-Za-z@])/.test(stripComments(text));
   const before = [...head, own, MARK_SUPPORT, '\\begin{document}', ...(titled ? ['\\maketitle'] : [])];
-  const after = [...(bibliography ? ['\\galleyreferences', `\\bibliographystyle{${bibliography.style}}`, `\\bibliography{${bibliography.file.replace(/\.bib$/, '')}}`] : []), '\\end{document}', ''];
+  // A null style: the template sets it itself (packageSetsStyle).
+  const after = [
+    ...(bibliography ? ['\\galleyreferences', ...(bibliography.style ? [`\\bibliographystyle{${bibliography.style}}`] : []), `\\bibliography{${bibliography.file.replace(/\.bib$/, '')}}`] : []),
+    '\\end{document}',
+    '',
+  ];
   const opening = before.join('\n');
   return {
     main: `${opening}\n${withMarks(text)}\n${after.join('\n')}`,

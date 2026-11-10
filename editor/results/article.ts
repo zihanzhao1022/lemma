@@ -5,7 +5,7 @@
  * edits the paper compiles it in the browser instead, hidden blocks included.
  */
 import { REFERENCES_FILE } from './compile';
-import { bibliographyStyle } from './bibtex';
+import { bibliographyStyle, packageSetsStyle } from './bibtex';
 import { citedKeys, hashText } from './numbering';
 import { DEFAULT_PREAMBLE } from '../tex/document';
 import { Mark, bodyOf, fullDocument, parseMarks } from '../../app/writing/document';
@@ -46,7 +46,7 @@ export async function compileArticle(engine: TexEngine, paper: ResultPaper, file
   const preamble = (paper.preamble ?? DEFAULT_PREAMBLE);
   const keys = citedKeys(body);
   const cites = files[REFERENCES_FILE] !== undefined && keys.length > 0;
-  const doc = fullDocument(preamble, body, cites ? { style: bibliographyStyle(paper), file: REFERENCES_FILE } : null);
+  const doc = fullDocument(preamble, body, cites ? { style: packageSetsStyle(preamble, files) ? null : bibliographyStyle(paper), file: REFERENCES_FILE } : null);
   const pass = (aux: string | undefined, bbl: string | undefined, bibtex: boolean) =>
     engine.compile({
       main: doc.main,
@@ -99,7 +99,8 @@ export interface ArticleCarry {
 }
 
 export type LiveArticle =
-  | { ok: true; pdf: Uint8Array; marks: Mark[]; carry: ArticleCarry }
+  /** `unsettled`: the labels or citations it read were not the ones it wrote; one more run would settle them. */
+  | { ok: true; pdf: Uint8Array; marks: Mark[]; carry: ArticleCarry; unsettled?: boolean }
   | { ok: false; message: string; carry: ArticleCarry };
 
 /**
@@ -112,12 +113,13 @@ export async function compileLive(
   body: string,
   files: Record<string, Uint8Array>,
   carry: ArticleCarry,
+  { titleFile, quick = false }: { titleFile?: number; quick?: boolean } = {},
 ): Promise<LiveArticle> {
   const preamble = paper.preamble ?? DEFAULT_PREAMBLE;
   const keys = citedKeys(body);
   const style = bibliographyStyle(paper);
   const cites = files[REFERENCES_FILE] !== undefined && keys.length > 0;
-  const doc = fullDocument(preamble, body, cites ? { style, file: REFERENCES_FILE } : null);
+  const doc = fullDocument(preamble, body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null, { titleFile });
   const bibKey = JSON.stringify([keys, style]);
   const bibtex = cites && (bibKey !== carry.bibKey || carry.bbl === undefined);
   const pass = (aux: string | undefined, bbl: string | undefined, withBibtex: boolean) =>
@@ -129,11 +131,16 @@ export async function compileLive(
     });
   let out = await pass(carry.aux, cites ? carry.bbl : undefined, bibtex);
   const bbl = cites ? (bibtex ? out.written?.['main.bbl'] : carry.bbl) : undefined;
+  // `quick` shows the first run and leaves settling to the next.
+  let unsettled = false;
   if (out.pdf && out.aux !== undefined && references(out.aux) !== references(carry.aux)) {
-    const next = await pass(out.aux, bbl, false);
-    if (next.pdf) out = next;
+    if (quick) unsettled = true;
+    else {
+      const next = await pass(out.aux, bbl, false);
+      if (next.pdf) out = next;
+    }
   }
   const next = { aux: out.aux ?? carry.aux, bbl, bibKey: cites ? bibKey : '' };
   if (!out.pdf) return { ok: false, message: parseErrors(out.log)[0]?.message ?? out.reason ?? 'no PDF', carry: next };
-  return { ok: true, pdf: out.pdf, marks: parseMarks(out.written?.['main.gpos'] ?? ''), carry: next };
+  return { ok: true, pdf: out.pdf, marks: parseMarks(out.written?.['main.gpos'] ?? ''), carry: next, ...(unsettled ? { unsettled } : {}) };
 }

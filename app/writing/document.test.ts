@@ -138,6 +138,13 @@ describe('position marks', () => {
     expect(marked.length).toBe(15);
   });
 
+  it('marks headings inside their title, after any short title, so a click on one finds its line', () => {
+    const marked = withMarks('\\section{Introduction}\n\\subsection*[Short]{A longer title}\nText.').split('\n');
+    expect(marked[0]).toBe('\\section{\\galleytext{1}Introduction}');
+    expect(marked[1]).toBe('\\subsection*[Short]{\\galleytext{2}A longer title}');
+    expect(marked[2]).toBe('\\leavevmode\\galleytext{3}Text.');
+  });
+
   it('marks complete float ranges when their commands share a source line', () => {
     const source = String.raw`\begin{table*}[t]\centering
 \begin{tabular}{lc}HarmBench & 1 \\\end{tabular}
@@ -192,6 +199,13 @@ describe('position marks', () => {
     // Set in the text already, or no title at all (a commented one does not count): no second one.
     expect(fullDocument('\\title{A}', '\\maketitle\nText.', null).main.match(/\\maketitle/g)).toHaveLength(1);
     expect(fullDocument('\\documentclass{article}\n% \\title{A}', 'Text.', null).main).not.toContain('\\maketitle');
+  });
+
+  it('marks the title and the authors in the preamble when asked, as a file of their own', () => {
+    const doc = fullDocument('\\documentclass{article}\n\\title{A Made-up Study}\n\\author{Ada Example}', 'Text.', null, { titleFile: 1 });
+    expect(doc.main).toContain('\\title{\\leavevmode\\galleytextat{1}{2}A Made-up Study}');
+    expect(doc.main).toContain('\\author{\\leavevmode\\galleytextat{1}{3}Ada Example}');
+    expect(fullDocument('\\title{A}', 'Text.', null).main).toContain('\\title{A}');
   });
 
   it('reads main.gpos in PDF points', () => {

@@ -5,7 +5,7 @@ import { GripVertical, MessageSquare } from 'lucide-react';
 import { ArticleBlock, bodyBlocks } from '../../app/writing/articleBlocks';
 import { bodyOf } from '../../app/writing/document';
 import { Numbering, PaperStyle, citationText, numberPaper, paperStyle, parseBibRecords } from '../../app/writing/htmlPaper';
-import { Context, Element, Graphic, Inline, LooseLabel, TextRun, hasUnsupported, parseBlocks, plainText, readDefinitions } from '../../app/writing/latexHtml';
+import { Context, Element, Graphic, Inline, LooseLabel, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from '../../app/writing/latexHtml';
 import { escapeTyped } from '../../app/writing/pageEdits';
 import { replaceGraphic } from '../../app/writing/pageImages';
 import { lineStarts } from '../../app/writing/pageMap';
@@ -16,7 +16,7 @@ import { ResultPaper } from '../../types';
 import { EditModeContext, HiddenBadge } from '../EditMode';
 import { readsPrivately, useResultsAccess } from './access';
 import type { ArticleComments, ArticleViewHandle } from './ArticleView';
-import { BlockReaders, BlockTools, InsertButtons } from './BlockTools';
+import { BlockMenu, BlockReaders, useBlockMenuClose } from './BlockTools';
 import BlockView from './BlockView';
 import { findQuote } from './comments/commentText';
 import { layerText } from './comments/textLayer';
@@ -56,6 +56,50 @@ function readArticle(text: string, preamble: string): { blocks: PageBlock[]; con
     return { ...block, elements, labels: own.labels, supported: !hasUnsupported(elements) };
   });
   return { blocks, context };
+}
+
+/** Where the preamble's offsets start among the page's: the title and the authors live there, apart from main.tex's. */
+const PRE = 1_000_000_000;
+
+interface TitleField {
+  content: Inline[];
+  /** The argument's inside, in the page's offsets (past PRE). */
+  from: number;
+  to: number;
+}
+
+/** Moves a stretch of inline content's offsets by `by`. */
+function shifted(items: Inline[], by: number): Inline[] {
+  return items.map((item) =>
+    item.kind === 'text'
+      ? { ...item, starts: item.starts.map((at) => at + by), ends: item.ends.map((at) => at + by) }
+      : item.kind === 'footnote'
+        ? { ...item, from: item.from + by, to: item.to + by, content: shifted(item.content, by) }
+        : { ...item, from: item.from + by, to: item.to + by },
+  );
+}
+
+/** The preamble's \title and \author, read as text; `fields` are their arguments in the preamble's own offsets. */
+function readTitle(preamble: string, context: Context): { title?: TitleField; author?: TitleField; fields: { from: number; to: number }[] } {
+  const fields: { from: number; to: number }[] = [];
+  const field = (name: 'title' | 'author'): TitleField | undefined => {
+    const pattern = name === 'title' ? /(^|\n)[ \t]*\\title\s*(?:\[[^\]{}]*\]\s*)?\{/ : /(^|\n)[ \t]*\\author\s*(?:\[[^\]{}]*\]\s*)?\{/;
+    const match = pattern.exec(preamble);
+    if (!match) return undefined;
+    const from = (match.index ?? 0) + match[0].length;
+    let depth = 1;
+    let to = from;
+    for (; to < preamble.length && depth > 0; to += 1) {
+      if (preamble[to] === '\\') to += 1;
+      else if (preamble[to] === '{') depth += 1;
+      else if (preamble[to] === '}') depth -= 1;
+    }
+    to -= 1;
+    fields.push({ from, to });
+    const own: Context = { definitions: context.definitions, labels: [] };
+    return { content: shifted(parseInline(preamble, from, to, own), PRE), from: from + PRE, to: to + PRE };
+  };
+  return { title: field('title'), author: field('author'), fields };
 }
 
 /* ------------------------------------------------------------------ pictures */
@@ -122,7 +166,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   // Typing needs the private files and a way to save.
   const live = editing && canSave && access?.state === 'private';
   const article = useArticleText(paper, live, { delay: 2000 });
-  const { model, files, tick, bump, problem, attachmentNames, saveState, save, saveSoon, change, flushed, addPicture } = article;
+  const { model, preamble: preambleModel, history, files, tick, problem, attachmentNames, saveState, save, saveSoon, change, flushed, addPicture } = article;
 
   // Whoever only reads (a collaborator who may not edit) still needs the pictures and the bibliography.
   const [readFiles, setReadFiles] = useState<Record<string, Uint8Array> | null>(null);
@@ -142,7 +186,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /* ------------------------------------------------------------------ reading the text */
 
   const source = live && model.current ? model.current.text : bodyOf(paper.blocks.filter((block) => block.source?.trim()));
-  const preamble = paper.preamble ?? '';
+  const preamble = live && preambleModel.current ? preambleModel.current.text : paper.preamble ?? '';
   const bibStyle = bibliographyStyle(paper);
   const style = useMemo<PaperStyle>(() => paperStyle(preamble, bibStyle), [preamble, bibStyle]);
   const bibText = attachments?.[REFERENCES_FILE] ? new TextDecoder().decode(attachments[REFERENCES_FILE]) : '';
@@ -156,6 +200,8 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     return counters;
   }, [read]);
   const numbering = useMemo<Numbering>(() => numberPaper(read.blocks, style, bib, bibStyle, theoremCounters), [read, style, bib, bibStyle, theoremCounters]);
+  // The title and the authors the preamble sets, as \maketitle prints them; their offsets are the preamble's, past PRE.
+  const titlePage = useMemo(() => readTitle(preamble, read.context), [preamble, read]);
   const blockOf = useMemo(() => new Map(paper.blocks.map((block) => [block.id, block])), [paper.blocks]);
   const hidden = useMemo(() => new Set(paper.blocks.filter((block) => block.hidden).map((block) => block.id)), [paper.blocks]);
   const shownBlocks = read.blocks.filter((block) => editing || !hidden.has(block.id));
@@ -299,11 +345,19 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     return offset >= from && offset <= to;
   }), [read, source]);
 
-  /** Whether removing source[from, to) leaves the LaTeX whole: within one block, braces and math balanced. */
+  /** Whether removing source[from, to) leaves the LaTeX whole: within one block (or title line), braces and math balanced. */
   const removable = (from: number, to: number) => {
-    const first = blockAtOffset(from);
-    if (!first || first !== blockAtOffset(to)) return false;
-    const cut = source.slice(from, to).replace(/\\[\\{}$%&#_]/g, '');
+    let cut: string;
+    if (from >= PRE) {
+      const field = titlePage.fields.find((item) => from - PRE >= item.from && to - PRE <= item.to);
+      if (!field) return false;
+      cut = preamble.slice(from - PRE, to - PRE);
+    } else {
+      const first = blockAtOffset(from);
+      if (!first || first !== blockAtOffset(to)) return false;
+      cut = source.slice(from, to);
+    }
+    cut = cut.replace(/\\[\\{}$%&#_]/g, '');
     let depth = 0;
     for (const char of cut) {
       if (char === '{') depth += 1;
@@ -315,10 +369,22 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
 
   const replace = (from: number, to: number, insertText: string, kind?: string) => {
     if (from !== to && !removable(from, to)) return;
+    if (from >= PRE) {
+      // The title and the authors are the preamble's.
+      change(from - PRE, to - PRE, insertText, kind, 'preamble');
+      caretAfter.current = from + insertText.length;
+      return;
+    }
     // Joining two paragraphs leaves a space between them, not nothing.
     const insert = !insertText && /^\s*\n[ \t]*\n\s*$/.test(source.slice(from, to)) ? ' ' : insertText;
     change(from, to, insert, kind);
     caretAfter.current = from + insert.length;
+  };
+  /** The character before an offset, of whichever text it is in. */
+  const charBefore = (offset: number) => (offset >= PRE ? preamble[offset - PRE - 1] : source[offset - 1]) ?? '';
+  const undo = (redo: boolean) => {
+    const head = history(redo);
+    if (head) caretAfter.current = head.part === 'preamble' ? head.offset + PRE : head.offset;
   };
 
   /** The element the selection is in: a paragraph, a caption, a table cell, a heading or a list item. */
@@ -340,11 +406,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       const where = placeOf(range.startContainer);
       const type = event.inputType;
       if (type === 'historyUndo' || type === 'historyRedo') {
-        const head = type === 'historyUndo' ? model.current?.undo() : model.current?.redo();
-        if (head === null || head === undefined) return;
-        bump();
-        saveSoon();
-        caretAfter.current = head;
+        undo(type === 'historyRedo');
         return;
       }
       if (type === 'insertParagraph' || type === 'insertLineBreak') {
@@ -356,7 +418,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         const typed = event.data ?? event.dataTransfer?.getData('text/plain') ?? '';
         if (!typed) return;
         const flat = where === 'paragraph' || where === 'item' ? typed : typed.replace(/\s*\n\s*/g, ' ');
-        replace(start, end, escapeTyped(flat, source[start - 1] ?? ''), 'type');
+        replace(start, end, escapeTyped(flat, charBefore(start)), 'type');
         return;
       }
       if (type.startsWith('delete')) {
@@ -373,11 +435,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && (key === 'z' || key === 'y')) {
         event.preventDefault();
-        const head = key === 'y' || event.shiftKey ? model.current?.redo() : model.current?.undo();
-        if (head === null || head === undefined) return;
-        bump();
-        saveSoon();
-        caretAfter.current = head;
+        undo(key === 'y' || event.shiftKey);
         return;
       }
       if ((event.metaKey || event.ctrlKey) && key === 's') {
@@ -398,7 +456,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       const at = composing.current;
       composing.current = null;
       setEpoch((value) => value + 1);
-      if (at && event.data) replace(at.from, at.to, escapeTyped(event.data, source[at.from - 1] ?? ''), 'type');
+      if (at && event.data) replace(at.from, at.to, escapeTyped(event.data, charBefore(at.from)), 'type');
     };
     element.addEventListener('beforeinput', beforeInput);
     element.addEventListener('keydown', keyDown);
@@ -637,7 +695,9 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /* ------------------------------------------------------------------ hovering, dragging, comments */
 
   const [hovered, setHovered] = useState<string | null>(null);
-  const [nearBottom, setNearBottom] = useState(false);
+  // The block whose menu is open, from the handle beside it.
+  const [menu, setMenu] = useState<string | null>(null);
+  useBlockMenuClose(menu, setMenu);
   const [drag, setDrag] = useState<{ id: string; target?: { id: string; after: boolean } } | null>(null);
   const dragRef = useRef(drag);
   dragRef.current = drag;
@@ -672,17 +732,20 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     if ((event.target as HTMLElement).closest?.('[data-page-control]')) return;
     const id = blockAtPoint(event.clientX, event.clientY);
     setHovered(id === 'references' ? null : id);
-    const boxes = id ? boxesOf(id) : [];
-    const last = boxes[boxes.length - 1];
-    const origin = wrapper.current?.getBoundingClientRect();
-    setNearBottom(Boolean(last && origin && Math.abs(event.clientY - origin.top - last.bottom) < 14));
   };
 
+  /** The handle: a click opens the block's menu, a drag moves the block. */
   const startDrag = (event: React.PointerEvent, id: string) => {
     event.preventDefault();
     event.stopPropagation();
-    setDrag({ id });
+    const origin = { x: event.clientX, y: event.clientY };
+    let moving = false;
     const move = (moved: PointerEvent) => {
+      if (!moving && Math.hypot(moved.clientX - origin.x, moved.clientY - origin.y) < 4) return;
+      if (!moving) {
+        moving = true;
+        setMenu(null);
+      }
       const target = blockAtPoint(moved.clientX, moved.clientY);
       if (!target || target === id || target === 'references') return setDrag({ id });
       const rect = Array.from(sectionOf(target)?.getClientRects() ?? []).find((box) => moved.clientX >= box.left && moved.clientX <= box.right && moved.clientY >= box.top && moved.clientY <= box.bottom);
@@ -693,6 +756,10 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       window.removeEventListener('pointerup', up);
       const done = dragRef.current;
       setDrag(null);
+      if (!moving) {
+        setMenu((open) => (open === id ? null : id));
+        return;
+      }
       if (!done?.target) return;
       const ids = paperRef.current.blocks.map((block) => block.id).filter((item) => item !== done.id);
       const at = ids.indexOf(done.target.id);
@@ -765,11 +832,13 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     const elements: React.ReactNode[] = [];
     for (const block of shownBlocks) {
       const id = block.id;
-      const lit = editing && (hovered === id || drag?.id === id);
+      // Hovering shows the handle only; its menu, or a drag, outlines the block.
+      const grip = editing && (hovered === id || menu === id || drag?.id === id);
+      const lit = editing && (menu === id || drag?.id === id);
       const own = comments?.(id);
       const isHidden = hidden.has(id);
       const showBadge = own && own.count > 0 && own.first;
-      if (!lit && !showBadge && !(editing && isHidden) && drag?.target?.id !== id) continue;
+      if (!grip && !showBadge && !(editing && isHidden) && drag?.target?.id !== id) continue;
       const boxes = boxesOf(id);
       if (boxes.length === 0) continue;
       const first = boxes[0];
@@ -794,33 +863,25 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
             <HiddenBadge />
           </span>,
         );
-      if (lit && stored && !drag)
-        elements.push(
-          <div key={`t${id}`} data-page-control role="group" aria-label={t('这一块的操作')} className="absolute z-[4] flex flex-col items-start gap-1.5" style={{ left: textRight + 16, top: first.top - 6 }}>
-            <BlockTools paperId={paper.id} block={stored} published={published} onComment={own?.onAdd} />
-          </div>,
-        );
-      if (lit && stored)
+      if (grip && stored)
         elements.push(
           <button
             key={`d${id}`}
             type="button"
             data-page-control
-            aria-label={t('拖动来移动这一块')}
-            title={t('拖动来移动这一块')}
+            data-block-grip
+            aria-label={t('这一块的操作')}
+            aria-expanded={menu === id}
+            title={t('点击打开菜单，拖动来移动这一块')}
             onPointerDown={(event) => startDrag(event, id)}
-            className="absolute z-[4] flex h-8 w-6 cursor-grab items-center justify-center rounded-md border border-gray-300 bg-white text-gray-400 shadow-sm hover:text-purple-700 active:cursor-grabbing"
-            style={{ left: textLeft - 40, top: first.top - 6 }}
+            className={`absolute z-[4] flex h-6 w-5 cursor-grab items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-black/[0.06] hover:text-gray-700 active:cursor-grabbing ${menu === id ? 'bg-black/[0.06] text-gray-700' : ''}`}
+            style={{ left: first.left - 26, top: first.top + 1 }}
           >
             <GripVertical size={14} />
           </button>,
         );
-      if (lit && !drag && nearBottom)
-        elements.push(
-          <div key={`i${id}`} data-page-control role="group" aria-label={t('在当前块下方插入内容')} className="absolute z-[4] flex w-max gap-2 rounded-full bg-white px-2" style={{ left: last.left + last.width / 2, top: last.bottom + 6, transform: 'translate(-50%, -50%)' }}>
-            <InsertButtons paperId={paper.id} afterBlockId={id} />
-          </div>,
-        );
+      if (menu === id && stored && !drag)
+        elements.push(<BlockMenu key={`m${id}`} paperId={paper.id} block={stored} published={published} onComment={own?.onAdd} style={{ left: first.left - 30, top: first.top + 28 }} />);
       if (drag?.target?.id === id) {
         const at = drag.target.after ? last : first;
         elements.push(<div key={`l${id}`} className="pointer-events-none absolute z-[5] h-0.5 rounded bg-purple-600" style={{ left: at.left - 8, width: at.width + 16, top: drag.target.after ? at.bottom + 4 : at.top - 6 }} />);
@@ -841,7 +902,8 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       const boxes = boxesOf(block.id);
       if (boxes.length > 0)
         elements.push(
-          <div key={`r${block.id}`} className="absolute w-0" style={{ left: textLeft - 52, top: boxes[0].top + 28 }}>
+          // In the margin on the block's side: the left one for the left column, the right one for the right.
+          <div key={`r${block.id}`} className="absolute w-0" style={{ left: boxes[0].left > (textLeft + textRight) / 2 ? textRight - 4 : textLeft - 52, top: boxes[0].top + 28 }}>
             <BlockReaders blockId={block.id} />
           </div>,
         );
@@ -885,6 +947,18 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
             onBlur={onBlur}
             style={{ columnCount: style.columns, columnGap: `${style.columnGap}pt` }}
           >
+            {titlePage.title && (
+              <header className="html-title">
+                <h1 data-kind="title" data-s={titlePage.title.from} data-e={titlePage.title.to}>
+                  {inline(titlePage.title.content)}
+                </h1>
+                {titlePage.author && (
+                  <div className="html-authors" data-kind="title" data-s={titlePage.author.from} data-e={titlePage.author.to}>
+                    {inline(titlePage.author.content)}
+                  </div>
+                )}
+              </header>
+            )}
             {shownBlocks.map((block) => {
               const stored = blockOf.get(block.id);
               return (

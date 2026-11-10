@@ -11,14 +11,31 @@ import { describeFailure } from '../../editor/results/numbering';
 import { ResultsOp, applyResultsOp, resultsCommitMessage } from '../../editor/results/ops';
 import { getTexEngine } from '../../editor/tex/engine';
 import { blockChanges, blocksOf } from '../../app/writing/document';
+import { plainText } from '../../app/writing/latexHtml';
 import { Message } from '../../lib/i18n';
 import { ResultPaper } from '../../types';
 
 export { describeSaveError, loadAttachments };
+
+/** The title a preamble sets, as plain text. */
+export function titleOf(preamble: string): string | null {
+  const match = /\\title\s*(?:\[[^\]]*\])?\s*\{/.exec(preamble.replace(/(^|[^\\])%[^\n]*/g, '$1'));
+  if (!match) return null;
+  let depth = 1;
+  let at = (match.index ?? 0) + match[0].length;
+  const start = at;
+  for (; at < preamble.length && depth > 0; at += 1) {
+    if (preamble[at] === '\\') at += 1;
+    else if (preamble[at] === '{') depth += 1;
+    else if (preamble[at] === '}') depth -= 1;
+  }
+  return plainText(preamble.slice(start, at - 1).replace(/\\\\(\[[^\]]*\])?/g, ' ')) || null;
+}
 export type { ArticleCarry, LiveArticle };
 
-export async function compileArticleText(paper: ResultPaper, body: string, files: Record<string, Uint8Array>, carry: ArticleCarry): Promise<LiveArticle> {
-  return compileLive(await getTexEngine(), paper, body, files, carry);
+/** The article as typed: main.tex `body`, and the preamble as typed, its title and authors marked as input file 1. */
+export async function compileArticleText(paper: ResultPaper, body: string, files: Record<string, Uint8Array>, carry: ArticleCarry, preamble?: string): Promise<LiveArticle> {
+  return compileLive(await getTexEngine(), preamble === undefined ? paper : { ...paper, preamble }, body, files, carry, { titleFile: 1, quick: true });
 }
 
 /**
@@ -32,10 +49,17 @@ export async function saveArticleText(
   files: Record<string, Uint8Array>,
   added: Record<string, Uint8Array>,
   save: ResultsSave,
+  preamble?: string,
 ): Promise<Message | null> {
   const inBody = paper.blocks.filter((block) => block.source?.trim());
   const changes = blockChanges(inBody, blocksOf(body), newBlockId);
   const ops: ResultsOp[] = changes.put.filter((change) => change.at === undefined).map((change) => ({ kind: 'putBlock', paperId: paper.id, block: change.block }));
+  if (preamble !== undefined && preamble !== (paper.preamble ?? '')) {
+    ops.unshift({ kind: 'patchPaper', id: paper.id, fields: { preamble } });
+    // The paper's title follows the one its preamble sets.
+    const title = titleOf(preamble);
+    if (title && title !== paper.title) ops.unshift({ kind: 'putPaper', paper: { ...paper, title } });
+  }
   if (ops.length === 0 && Object.keys(added).length === 0) return null;
   const writes: FileWrite[] = [];
   if (Object.keys(added).length > 0) {

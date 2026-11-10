@@ -106,6 +106,8 @@
 }
 
 .html-block figure {
+  max-width: 100%;
+  overflow-x: auto;
   margin: 0.9em 0;
   text-align: center;
   break-inside: avoid;
@@ -141,6 +143,9 @@
 .html-block .html-table {
   margin: 0.9em 0;
   break-inside: avoid;
+  /* LaTeX shrinks a wide table to the line (\resizebox); here it scrolls within it instead of widening the page. */
+  max-width: 100%;
+  overflow-x: auto;
 }
 .html-block table {
   margin: 0 auto;
@@ -286,4 +291,30 @@
 .html-fallback {
   margin: 0.6em 0;
   text-indent: 0;
+}
+
+/* \maketitle: the title and the authors the preamble sets, across the columns. */
+.html-title {
+  column-span: all;
+  text-align: center;
+  hyphens: manual;
+  margin: 0 0 1.6em;
+}
+.html-title h1 {
+  font-size: 1.45em;
+  font-weight: bold;
+  line-height: 1.25;
+  margin: 0 0 0.9em;
+}
+.html-sheet[data-template='article'] .html-title h1 {
+  font-size: 1.7em;
+  font-weight: normal;
+}
+.html-sheet[data-template='ieee'] .html-title h1 {
+  font-size: 2.2em;
+  font-weight: normal;
+}
+.html-authors {
+  font-size: 1.05em;
+  line-height: 1.35;
 }

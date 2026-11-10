@@ -2,6 +2,7 @@ import { t } from '../../lib/phrases/results';
 import { BlockKind, buildBlockDocument } from '../tex/document';
 import { TexEngine } from '../tex/engine';
 import { locateLine, parseAuxCitations, parseAuxLabels, parseCounters, parseErrors, parseWarnings } from '../tex/log';
+import { packageSetsStyle } from './bibtex';
 import { citedKeys, referencedLabels } from './numbering';
 
 export interface BlockIssue {
@@ -168,7 +169,9 @@ export async function compileReferences(
   input: { preamble: string; keys: string[]; style: string; files: Record<string, Uint8Array> },
   measure: Measure,
 ): Promise<ReferencesCompileResult> {
-  const source = [`\\nocite{${input.keys.join(',')}}`, `\\bibliographystyle{${input.style}}`, `\\bibliography{${REFERENCES_FILE.replace(/\.bib$/, '')}}`].join('\n');
+  // A template that sets the style itself (acl.sty) gets no second one.
+  const style = packageSetsStyle(input.preamble, input.files) ? [] : [`\\bibliographystyle{${input.style}}`];
+  const source = [`\\nocite{${input.keys.join(',')}}`, ...style, `\\bibliography{${REFERENCES_FILE.replace(/\.bib$/, '')}}`].join('\n');
   const doc = buildBlockDocument({ preamble: input.preamble, source, kind: 'text' });
   const out = await engine.compile({ main: doc.main, files: { ...input.files, 'main.aux': doc.aux }, bibtex: true });
   const issues = parseErrors(out.log).map((issue): BlockIssue => (issue.file ? { message: issue.message, area: 'file', file: issue.file, line: issue.line } : { message: issue.message, area: 'wrapper' }));

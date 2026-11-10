@@ -151,6 +151,10 @@ function environmentEnd(src: string, name: string, from: number, to: number): { 
 /** Text a command stands for, read plainly: braces and commands dropped. */
 export const plainText = (tex: string): string =>
   tex
+    // Accents first (\"a, {\"a}, \'{e}), while the commands are still there.
+    .replace(/\\(['"`^~=.uvHckrbd])\s*\{?\s*(\\?[A-Za-z])\s*\}?/g, (match, accent: string, letter: string) =>
+      /[A-Za-z]/.test(accent) && letter.startsWith('\\') ? match : `${letter.replace(/^\\i$/, 'ı').replace(/^\\/, '')}${ACCENTS[accent] ?? ''}`.normalize('NFC'),
+    )
     .replace(/\\[A-Za-z@]+\*?\s*/g, '')
     .replace(/\\(.)/g, '$1')
     .replace(/[{}]/g, '')
@@ -165,7 +169,7 @@ const SYMBOLS: Record<string, string> = {
   textbackslash: '\\', textbar: '|', textless: '<', textgreater: '>', ss: 'ß', ae: 'æ', AE: 'Æ', oe: 'œ', OE: 'Œ', o: 'ø',
   O: 'Ø', aa: 'å', AA: 'Å', l: 'ł', L: 'Ł', i: 'ı', j: 'ȷ', textdegree: '°', pounds: '£', euro: '€', textasciicircum: '^',
   textunderscore: '_', LaTeX: 'LaTeX', TeX: 'TeX', LaTeXe: 'LaTeX2ε', checkmark: '✓', textsection: '§', quad: ' ',
-  qquad: '  ', enspace: ' ', thinspace: ' ', textpm: '±', texttimes: '×',
+  qquad: '  ', and: '  ', AND: '  ', enspace: ' ', thinspace: ' ', textpm: '±', texttimes: '×',
 };
 // Commands that print nothing here.
 const SILENT = new Set([

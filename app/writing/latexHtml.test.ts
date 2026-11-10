@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Context, Element, Inline, TextRun, hasUnsupported, parseBlocks, parseInline, readDefinitions } from './latexHtml';
+import { Context, Element, Inline, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from './latexHtml';
 
 const context = (preamble = ''): Context => ({ definitions: readDefinitions(preamble), labels: [] });
 const blocks = (src: string, preamble = '') => parseBlocks(src, 0, src.length, context(preamble));
@@ -117,5 +117,11 @@ describe('readDefinitions', () => {
     expect(found.text.R).toBe('\\mathbb{R}');
     expect(found.text.norm).toBeUndefined();
     expect(found.theorems.lemma).toEqual({ title: 'Lemma', counter: 'theorem', numbered: true });
+  });
+});
+
+describe('plainText', () => {
+  it('puts accents on letters, as BibTeX names write them', () => {
+    expect(plainText('Wollschl{\\"a}ger and Erd\\H{o}s and Fran\\c{c}ois and \\\'Eva')).toBe('Wollschläger and Erdős and François and Éva');
   });
 });

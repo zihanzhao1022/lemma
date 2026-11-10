@@ -75,9 +75,25 @@ interface Props {
 const PicturePicker: React.FC<Props> = ({ path, left, top, names, attachments, onChoose, onUpload, onClose }) => {
   const t = useT();
   const upload = useRef<HTMLInputElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  // The wheel over the box scrolls its list only, never the page behind once the list ends; off the box (on the
+  // layer that closes it) it scrolls the page.
+  useEffect(() => {
+    const box = dialog.current;
+    if (!box) return undefined;
+    const wheel = (event: WheelEvent) => {
+      const scroller = list.current;
+      event.preventDefault();
+      if (scroller && scroller.contains(event.target as Node)) scroller.scrollTop += event.deltaY;
+    };
+    box.addEventListener('wheel', wheel, { passive: false });
+    return () => box.removeEventListener('wheel', wheel);
+  }, []);
   return (
     <div className="fixed inset-0 z-[95]" onMouseDown={onClose} onKeyDown={(event) => event.key === 'Escape' && onClose()}>
       <div
+        ref={dialog}
         role="dialog"
         aria-label={t('换图片')}
         className="absolute w-[17rem] rounded-xl border border-black/[0.08] bg-white p-1.5 text-[13px] text-gray-800 shadow-[0_10px_28px_rgba(0,0,0,0.18)]"
@@ -85,7 +101,7 @@ const PicturePicker: React.FC<Props> = ({ path, left, top, names, attachments, o
         onMouseDown={(event) => event.stopPropagation()}
       >
         <p className="px-2 pb-1.5 pt-1 text-xs text-gray-500">{t('图片文件')}</p>
-        <div className="max-h-72 overflow-y-auto">
+        <div ref={list} className="max-h-72 overflow-y-auto overscroll-contain">
           {names.map((name) => {
             const current = samePicture(name, path);
             return (

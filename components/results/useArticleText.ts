@@ -9,6 +9,9 @@ import { useResultsAccess } from './access';
 
 type Live = typeof import('./articleLive');
 
+/** The two texts typed on: main.tex (the blocks) and the preamble (the title and the authors). */
+export type Part = 'main' | 'preamble';
+
 export const showMessage = (message: Message | null): string | null => (message === null ? null : typeof message === 'function' ? message() : message);
 
 /** The blocks an article holds: those with code, hidden ones too (whoever edits sees them, greyed). */
@@ -35,6 +38,12 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
   resetRef.current = onReset;
   const live$ = useRef<Live | null>(null);
   const model = useRef<TextModel | null>(null);
+  const preamble = useRef<TextModel | null>(null);
+  const savedPreamble = useRef(0);
+  /** The text a part is typed into. */
+  const modelOf = useCallback((part: Part) => (part === 'preamble' ? preamble.current : model.current), []);
+  // Undo goes to the text changed last.
+  const lastPart = useRef<Part>('main');
   const files = useRef<Record<string, Uint8Array> | null>(null);
   const added = useRef<Record<string, Uint8Array>>({});
   const savedVersion = useRef(0);
@@ -47,13 +56,23 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
   useEffect(() => {
     if (!live) return;
     const fresh = bodyOf(inBody(paper.blocks));
+    const ownPreamble = paper.preamble ?? '';
     if (!model.current) {
       model.current = new TextModel(fresh);
       savedVersion.current = model.current.version;
-    } else if (model.current.version === savedVersion.current && !sameAsPaper(model.current.text, paper)) {
-      model.current.reset(fresh);
-      savedVersion.current = model.current.version;
-      resetRef.current?.();
+      preamble.current = new TextModel(ownPreamble);
+      savedPreamble.current = preamble.current.version;
+    } else {
+      if (model.current.version === savedVersion.current && !sameAsPaper(model.current.text, paper)) {
+        model.current.reset(fresh);
+        savedVersion.current = model.current.version;
+        resetRef.current?.();
+      }
+      if (preamble.current && preamble.current.version === savedPreamble.current && preamble.current.text !== ownPreamble) {
+        preamble.current.reset(ownPreamble);
+        savedPreamble.current = preamble.current.version;
+        resetRef.current?.();
+      }
     }
     bump();
   }, [live, paper, bump]);
@@ -88,18 +107,23 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
     const text = model.current;
     if (!lib || !text || !files.current || !saveResults) return;
     const add = added.current;
-    if (text.version === savedVersion.current && Object.keys(add).length === 0) return;
+    const head = preamble.current;
+    const preambleChanged = head !== null && head.version !== savedPreamble.current;
+    if (text.version === savedVersion.current && !preambleChanged && Object.keys(add).length === 0) return;
     const version = text.version;
     const body = text.text;
+    const headVersion = head?.version ?? 0;
+    const headText = preambleChanged ? head!.text : undefined;
     setSaveState('saving');
     const run = (async () => {
       try {
-        const failed = await lib.saveArticleText(paperRef.current, body, files.current ?? {}, add, saveResults);
+        const failed = await lib.saveArticleText(paperRef.current, body, files.current ?? {}, add, saveResults, headText);
         if (failed) {
           setProblem(() => showMessage(failed) ?? '');
           return;
         }
         savedVersion.current = version;
+        if (head) savedPreamble.current = headVersion;
         added.current = Object.fromEntries(Object.entries(added.current).filter(([name]) => !(name in add)));
         setProblem(null);
       } catch (error) {
@@ -109,7 +133,7 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
     saving.current = run;
     await run;
     saving.current = null;
-    setSaveState(model.current?.version === savedVersion.current ? 'saved' : 'dirty');
+    setSaveState(model.current?.version === savedVersion.current && preamble.current?.version === savedPreamble.current ? 'saved' : 'dirty');
   }, [saveResults]);
 
   // Saving compiles every changed block and the article again: it waits for a pause.
@@ -129,7 +153,7 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
     if (!live) return undefined;
     const hide = () => document.visibilityState === 'hidden' && void save();
     const unload = (event: BeforeUnloadEvent) => {
-      if (model.current && model.current.version !== savedVersion.current) event.preventDefault();
+      if ((model.current && model.current.version !== savedVersion.current) || (preamble.current && preamble.current.version !== savedPreamble.current)) event.preventDefault();
     };
     document.addEventListener('visibilitychange', hide);
     window.addEventListener('beforeunload', unload);
@@ -140,14 +164,29 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
     };
   }, [live, save]);
 
-  /** Changes the text, and saves a moment later. */
+  /** Changes a text (main.tex unless said), and saves a moment later. */
   const change = useCallback(
-    (from: number, to: number, insert: string, kind?: string) => {
-      model.current?.change(from, to, insert, kind);
+    (from: number, to: number, insert: string, kind?: string, part: Part = 'main') => {
+      modelOf(part)?.change(from, to, insert, kind);
+      lastPart.current = part;
       bump();
       saveSoon();
     },
-    [bump, saveSoon],
+    [bump, saveSoon, modelOf],
+  );
+
+  /** Undoes (or redoes) the last change to the text changed last; where its caret goes, and in which text. */
+  const history = useCallback(
+    (redo: boolean): { part: Part; offset: number } | null => {
+      const part = lastPart.current;
+      const target = modelOf(part);
+      const offset = redo ? target?.redo() : target?.undo();
+      if (offset === null || offset === undefined) return null;
+      bump();
+      saveSoon();
+      return { part, offset };
+    },
+    [bump, saveSoon, modelOf],
   );
 
   /** The block tools save what is typed first, so the paper they change is the paper on screen. */
@@ -177,5 +216,5 @@ export function useArticleText(paper: ResultPaper, live: boolean, { delay = 4000
     return name;
   }, []);
 
-  return { live$, model, files, tick, bump, ready, problem, setProblem, attachmentNames, saveState, save, saveSoon, holdSave, change, flushed, addPicture };
+  return { live$, model, preamble, modelOf, history, files, tick, bump, ready, problem, setProblem, attachmentNames, saveState, save, saveSoon, holdSave, change, flushed, addPicture };
 }

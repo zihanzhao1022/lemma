@@ -77,3 +77,18 @@ export function bibliographyStyle(paper: ResultPaper): string {
   if (bst) return bst.slice(0, -'.bst'.length);
   return NATBIB.test(stripComments(paper.preamble ?? DEFAULT_PREAMBLE)) ? 'plainnat' : 'unsrt';
 }
+
+/**
+ * Whether a package the preamble loads from the paper's attachments sets the bibliography style itself, as ACL's
+ * acl.sty does: a second \\bibliographystyle makes BibTeX stop.
+ */
+export function packageSetsStyle(preamble: string, files: Record<string, Uint8Array | string>): boolean {
+  const names = [...stripComments(preamble).matchAll(/\\usepackage\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g)].flatMap((match) => match[1].split(',').map((name) => name.trim()));
+  return names.some((name) => {
+    const key = Object.keys(files).find((path) => path === `${name}.sty` || path.endsWith(`/${name}.sty`));
+    if (!key) return false;
+    const data = files[key];
+    const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    return /^[^%\n]*\\bibliographystyle\s*\{/m.test(text);
+  });
+}

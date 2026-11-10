@@ -369,4 +369,5 @@ export const { t, useT, table } = phrases({
     ja: 'テンプレートに合わせたウェブページ。入力はすぐ反映されますが、改行や改ページは PDF と異なります',
     en: 'A web page set like the template: typing shows at once, but lines and pages break differently from the PDF',
   },
+  '点击打开菜单，拖动来移动这一块': { ja: 'クリックでメニュー、ドラッグでこのブロックを移動', en: 'Click for the menu, drag to move this block' },
 });

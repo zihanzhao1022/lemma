@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ResultPaper } from '../../types';
-import { addBibEntries, bibKeysOf, bibliographyStyle, parseBibEntries } from './bibtex';
+import { addBibEntries, bibKeysOf, bibliographyStyle, parseBibEntries, packageSetsStyle } from './bibtex';
 
 // Made-up entries in the shapes Google Scholar and DBLP copy.
 const scholar = `@article{doe2024made,
@@ -48,5 +48,15 @@ describe('bibliographyStyle', () => {
     expect(bibliographyStyle(paper('\\usepackage{iclr2025_conference,times}'))).toBe('plainnat');
     expect(bibliographyStyle(paper('\\usepackage[numbers]{natbib}'))).toBe('plainnat');
     expect(bibliographyStyle(paper('\\documentclass{article}\n% \\usepackage{natbib}'))).toBe('unsrt');
+  });
+});
+
+describe('packageSetsStyle', () => {
+  it('sees a package among the attachments that sets the bibliography style itself', () => {
+    const files = { 'acl.sty': '% \\bibliographystyle{x} in a comment\n\\bibliographystyle{acl_natbib}\n', 'other.sty': '\\def\\x{}' };
+    expect(packageSetsStyle('\\documentclass{article}\n\\usepackage[review]{acl}', files)).toBe(true);
+    expect(packageSetsStyle('\\usepackage{other}', files)).toBe(false);
+    expect(packageSetsStyle('% \\usepackage{acl}', files)).toBe(false);
+    expect(packageSetsStyle('\\usepackage{acl}', { 'styles/acl.sty': new TextEncoder().encode('\\bibliographystyle{acl_natbib}') })).toBe(true);
   });
 });

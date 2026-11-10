@@ -36,7 +36,22 @@ export const ToolButton: React.FC<{
   danger?: boolean;
   /** Red all over: the next click does what cannot be undone here. */
   alarm?: boolean;
-}> = ({ icon, label, title, onClick, onBlur, open = false, danger = false, alarm = false }) => (
+}> = ({ icon, label, title, onClick, onBlur, open = false, danger = false, alarm = false }) =>
+  React.useContext(InMenu) ? (
+    // A row of a block's menu: its icon and its words, always.
+    <button
+      type="button"
+      onClick={onClick}
+      onBlur={onBlur}
+      title={title ?? label}
+      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors duration-150 ${
+        alarm ? 'bg-red-50 text-red-700' : danger ? 'text-gray-700 hover:bg-red-50 hover:text-red-700' : 'text-gray-700 hover:bg-black/[0.05]'
+      }`}
+    >
+      <span className="shrink-0 text-gray-500">{icon}</span>
+      <span className="whitespace-nowrap">{label}</span>
+    </button>
+  ) : (
   <button
     type="button"
     onClick={onClick}
@@ -58,7 +73,60 @@ export const ToolButton: React.FC<{
       {label}
     </span>
   </button>
-);
+  );
+
+/** Closes a block's menu on a click outside it and its handle, or on Escape. */
+export function useBlockMenuClose(menu: string | null, setMenu: (value: string | null) => void): void {
+  useEffect(() => {
+    if (!menu) return undefined;
+    const down = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement).closest?.('[data-block-menu], [data-block-grip]')) setMenu(null);
+    };
+    const key = (event: KeyboardEvent) => event.key === 'Escape' && setMenu(null);
+    document.addEventListener('mousedown', down);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', down);
+      document.removeEventListener('keydown', key);
+    };
+  }, [menu, setMenu]);
+}
+
+/** Tools drawn inside a block's menu take the shape of its rows. */
+const InMenu = React.createContext(false);
+
+/**
+ * A block's menu, opened from its handle beside the article: what can be done with it, and blocks to insert after
+ * it. Placed by the caller (`style`), over the page.
+ */
+export const BlockMenu: React.FC<{ paperId: string; block: ResultBlock; published: boolean; onComment?: () => void; style: React.CSSProperties }> = ({
+  paperId,
+  block,
+  published,
+  onComment,
+  style,
+}) => {
+  const t = useT();
+  return (
+    <div
+      data-page-control
+      data-block-menu
+      role="menu"
+      aria-label={t('这一块的操作')}
+      className="absolute z-[30] w-max min-w-[11rem] rounded-xl border border-black/[0.08] bg-white p-1 shadow-[0_10px_28px_rgba(0,0,0,0.16)]"
+      style={style}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <InMenu.Provider value>
+        <BlockTools paperId={paperId} block={block} published={published} onComment={onComment} />
+      </InMenu.Provider>
+      <div className="mt-1 border-t border-black/[0.06] px-2.5 pb-1 pt-2 text-[11px] text-gray-400">{t('在当前块下方插入内容')}</div>
+      <div className="flex flex-wrap gap-1.5 px-1.5 pb-1.5">
+        <InsertButtons paperId={paperId} afterBlockId={block.id} />
+      </div>
+    </div>
+  );
+};
 
 /** Copies LaTeX to the clipboard without opening an editor; `pill` matches the labelled edit buttons beside it. */
 export const CopyButton: React.FC<{ text: () => string; label: string; title: string; pill?: boolean; className?: string }> = ({

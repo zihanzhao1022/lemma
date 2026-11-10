@@ -18,11 +18,17 @@ import { ResultPaper } from '../../types';
 import { EditModeContext, HiddenBadge, useEditMode } from '../EditMode';
 import { readsPrivately, useResultsAccess } from './access';
 import type { ArticleCarry } from './articleLive';
-import { BlockReaders, BlockTools, InsertButtons } from './BlockTools';
+import { BlockMenu, BlockReaders, useBlockMenuClose } from './BlockTools';
 import { QuoteMark } from './BlockView';
 import { findQuote } from './comments/commentText';
 import { Box, LayerText, layerText, quoteBoxes } from './comments/textLayer';
-import { showMessage, useArticleText } from './useArticleText';
+import { Part, showMessage, useArticleText } from './useArticleText';
+
+/** Marks name main.tex as file 0 and the preamble, whose title and authors are marked, as file 1. */
+const fileOf = (part: Part) => (part === 'preamble' ? 1 : 0);
+const partOf = (file: number | undefined): Part | null => (file === 1 ? 'preamble' : file ? null : 'main');
+const sourceOf = (from: Shown, part: Part) => (part === 'preamble' ? from.preamble : from.source);
+const versionOf = (from: Shown, part: Part) => (part === 'preamble' ? from.preambleVersion : from.version);
 
 
 const MAIN = 'main.tex';
@@ -61,12 +67,17 @@ interface Shown {
   /** The main.tex it was compiled from, and the text's version then, when compiled while typing. */
   source?: string;
   version?: number;
-  /** The caret when the compile started, in `source`. */
-  caret?: { offset: number; atom?: { from: number; to: number } };
+  /** The preamble it was compiled from (its title and authors are typed on too), and its version then. */
+  preamble?: string;
+  preambleVersion?: number;
+  /** The caret when the compile started, in that text. */
+  caret?: { part: Part; offset: number; atom?: { from: number; to: number } };
 }
 
 /** Where typing on the article goes: an offset in the text now, and the lines of the region it is in. */
 interface PageEdit {
+  /** The text typed into: main.tex, or the preamble (the title and the authors). */
+  part: Part;
   offset: number;
   from: number;
   until: number;
@@ -122,7 +133,7 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
   /* ------------------------------------------------------------------ the text typed on, and its compiles */
 
   const text = useArticleText(paper, live, { onReset: () => setPageEdit(null) });
-  const { live$, model, files, tick, bump, ready, problem, setProblem, attachmentNames, saveState, save, saveSoon, holdSave, change, flushed, addPicture } = text;
+  const { live$, model, preamble, modelOf, history, files, tick, ready, problem, setProblem, attachmentNames, saveState, save, saveSoon, holdSave, change, flushed, addPicture } = text;
   // Why the text as typed does not compile; the last PDF stays on screen meanwhile.
   const [compileProblem, setCompileProblem] = useState<string | null>(null);
 
@@ -146,24 +157,40 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     }
     running.current = true;
     setCompiling(true);
+    let settling = 0;
     try {
       do {
         again.current = false;
         const text = model.current.text;
         const version = model.current.version;
+        const head = preamble.current;
         const edit = editRef.current;
-        const out = await lib.compileArticleText(paperRef.current, text, files.current, carry.current);
+        const out = await lib.compileArticleText(paperRef.current, text, files.current, carry.current, head?.text);
         carry.current = out.carry;
         if (!out.ok) {
           setCompileProblem(out.message);
           continue;
         }
         setCompileProblem(null);
-        const next: Shown = { pdf: out.pdf, marks: out.marks, blocks: bodyBlocks(text), source: text, version, ...(edit ? { caret: { offset: edit.offset, ...(edit.atom ? { atom: edit.atom } : {}) } } : {}) };
+        const next: Shown = {
+          pdf: out.pdf,
+          marks: out.marks,
+          blocks: bodyBlocks(text),
+          source: text,
+          version,
+          ...(head ? { preamble: head.text, preambleVersion: head.version } : {}),
+          ...(edit ? { caret: { part: edit.part, offset: edit.offset, ...(edit.atom ? { atom: edit.atom } : {}) } } : {}),
+        };
         compiledByPdf.current.set(out.pdf, next);
         // Only the last few are kept: those on their way to the screen.
         for (const key of [...compiledByPdf.current.keys()].slice(0, -4)) compiledByPdf.current.delete(key);
         setCompiled(next);
+        // The numbers \ref and \cite print settle in one more run, after what was typed is on screen (twice at most,
+        // should they keep moving a line across a page).
+        if (out.unsettled && settling < 2) {
+          settling += 1;
+          again.current = true;
+        }
       } while (again.current);
     } catch (error) {
       setProblem(() => live$.current?.describeSaveError(error) ?? String(error));
@@ -238,20 +265,25 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
 
   /* ------------------------------------------------------------------ typing on the article */
 
-  const offsetNow = (from: Shown, offset: number): number | null => {
-    const text = model.current;
-    if (!text || from.source === undefined || from.version === undefined) return null;
-    return from.source === text.text ? offset : text.map(offset, from.version);
+  /** An offset of a text as compiled, in that text now. */
+  const offsetNow = (from: Shown, offset: number, part: Part = 'main'): number | null => {
+    const text = modelOf(part);
+    const then = sourceOf(from, part);
+    const version = versionOf(from, part);
+    if (!text || then === undefined || version === undefined) return null;
+    return then === text.text ? offset : text.map(offset, version);
   };
-  const lineNow = (from: Shown, line: number): number | null => {
-    if (from.source === undefined) return null;
-    const offset = offsetNow(from, lineStarts(from.source)[line - 1] ?? 0);
-    return offset === null || !model.current ? null : lineAt(model.current.text, offset);
+  const lineNow = (from: Shown, line: number, part: Part = 'main'): number | null => {
+    const then = sourceOf(from, part);
+    if (then === undefined) return null;
+    const offset = offsetNow(from, lineStarts(then)[line - 1] ?? 0, part);
+    const text = modelOf(part);
+    return offset === null || !text ? null : lineAt(text.text, offset);
   };
 
-  /** The text of the pages a region at `line` reads: its mark's page and the one after. */
-  const regionPages = useCallback(async (marks: Mark[], line: number): Promise<(PageText | undefined)[]> => {
-    const start = marks.filter((mark) => (mark.file ?? 0) === 0 && (mark.kind === 'L' || mark.kind === 'B') && mark.line <= line).sort((a, b) => b.line - a.line)[0];
+  /** The text of the pages a region at `line` of a file reads: its mark's page and the one after. */
+  const regionPages = useCallback(async (marks: Mark[], line: number, file = 0): Promise<(PageText | undefined)[]> => {
+    const start = marks.filter((mark) => (mark.file ?? 0) === file && (mark.kind === 'L' || mark.kind === 'B') && mark.line <= line).sort((a, b) => b.line - a.line)[0];
     const pages: (PageText | undefined)[] = [];
     if (!start || !pdf.current) return pages;
     for (const page of [start.page, start.page + 1]) pages[page - 1] = await pdf.current.pageText(page);
@@ -292,6 +324,7 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     change(choice.from, choice.to, replaceGraphic(choice.path, name));
   };
 
+
   const uploadPicture = async (choice: NonNullable<typeof picker>, chosen: File) => {
     const name = await addPicture(chosen, attachmentNames.find((item) => samePicture(item, choice.path)));
     choosePicture(choice, name);
@@ -301,21 +334,24 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     const from = shownRef.current;
     if (!live || !from?.source) return leavePage();
     const located = locate(from.marks, click);
-    if (!located || located.file) return leavePage();
-    const map = mapRegion(from.source, from.marks, await regionPages(from.marks, located.line), 0, located.line);
+    const part = located ? partOf(located.file) : null;
+    const source = part ? sourceOf(from, part) : undefined;
+    if (!located || !part || source === undefined) return leavePage();
+    const file = fileOf(part);
+    const map = mapRegion(source, from.marks, await regionPages(from.marks, located.line, file), file, located.line);
     const caret = map && click.item >= 0 ? clickToCaret(map, click.item, click.offset, click.side) : null;
     if (!map || !caret) {
       leavePage();
-      if (map?.region.float) await pickPicture(from, map, click);
+      if (map?.region.float && part === 'main') await pickPicture(from, map, click);
       return;
     }
     const atom = 'atom' in caret ? caret.atom : undefined;
-    const offset = offsetNow(from, atom ? atom.to : 'offset' in caret ? caret.offset : 0);
-    const atomFrom = atom ? offsetNow(from, atom.from) : null;
-    const start = lineNow(from, map.region.from);
-    const until = map.region.until === Number.MAX_SAFE_INTEGER ? map.region.until : lineNow(from, map.region.until);
+    const offset = offsetNow(from, atom ? atom.to : 'offset' in caret ? caret.offset : 0, part);
+    const atomFrom = atom ? offsetNow(from, atom.from, part) : null;
+    const start = lineNow(from, map.region.from, part);
+    const until = map.region.until === Number.MAX_SAFE_INTEGER ? map.region.until : lineNow(from, map.region.until, part);
     if (offset === null || start === null || until === null || (atom && atomFrom === null)) return leavePage();
-    const edit: PageEdit = { offset, from: start, until, float: map.region.float, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
+    const edit: PageEdit = { part, offset, from: start, until, float: map.region.float, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
     holdSave();
     setPageEdit(edit);
     editRef.current = edit;
@@ -328,22 +364,23 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
   useEffect(() => {
     const edit = pageEdit;
     const from = shown;
-    const text = model.current;
-    if (!edit || !from?.source || !text) {
+    const text = edit ? modelOf(edit.part) : null;
+    const source = edit && from ? sourceOf(from, edit.part) : undefined;
+    if (!edit || !from || source === undefined || !text) {
       setCaretSpot(null);
       setAtomSpots(null);
       setPending('');
       return undefined;
     }
-    const fresh = from.source === text.text;
-    const caret = fresh ? edit : from.caret ?? null;
-    setPending(!fresh && caret && !caret.atom && !edit.atom ? typedSince(text.text, offsetNow(from, caret.offset), edit.offset) : '');
+    const fresh = source === text.text;
+    const caret = fresh ? edit : from.caret?.part === edit.part ? from.caret : null;
+    setPending(!fresh && caret && !caret.atom && !edit.atom ? typedSince(text.text, offsetNow(from, caret.offset, edit.part), edit.offset) : '');
     if (!caret) return undefined;
     let cancelled = false;
-    const source = from.source;
+    const file = fileOf(edit.part);
     void (async () => {
       const line = lineAt(source, caret.offset);
-      const map = mapRegion(source, from.marks, await regionPages(from.marks, line), 0, line);
+      const map = mapRegion(source, from.marks, await regionPages(from.marks, line, file), file, line);
       if (cancelled) return;
       setCaretSpot(map ? caretToSpot(map, caret.offset) : null);
       setAtomSpots(map && caret.atom ? atomRange(map, caret.atom.from) : null);
@@ -355,7 +392,7 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
   }, [pageEdit, shown, tick, regionPages]);
 
   const regionNow = (edit: PageEdit) => {
-    const text = model.current?.text ?? '';
+    const text = modelOf(edit.part)?.text ?? '';
     const starts = lineStarts(text);
     const from = starts[Math.min(edit.from, starts.length) - 1] ?? 0;
     const to = edit.until < starts.length ? starts[edit.until] - 1 : text.length;
@@ -363,34 +400,33 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
   };
 
   const caretTo = (edit: PageEdit, offset: number, lines = 0) => {
-    const next: PageEdit = { offset, from: edit.from, until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines), float: edit.float };
+    const next: PageEdit = { part: edit.part, offset, from: edit.from, until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines), float: edit.float };
     setPageEdit(next);
     editRef.current = next;
   };
 
   const onPageText = (typed: string) => {
     const edit = editRef.current;
-    const text = model.current;
+    const text = edit ? modelOf(edit.part) : null;
     if (!edit || !text) return;
     const paragraph = typed === '\n';
-    if (paragraph && edit.float) return;
-    const insert = paragraph ? '\n\n' : escapeTyped(edit.float ? typed.replace(/\s*\n\s*/g, ' ') : typed, text.text[edit.offset - 1] ?? '');
-    change(edit.offset, edit.offset, insert, 'type');
+    // A float (a table, a caption) and the title have no paragraphs.
+    if (paragraph && (edit.float || edit.part === 'preamble')) return;
+    const insert = paragraph ? '\n\n' : escapeTyped(edit.float || edit.part === 'preamble' ? typed.replace(/\s*\n\s*/g, ' ') : typed, text.text[edit.offset - 1] ?? '');
+    change(edit.offset, edit.offset, insert, 'type', edit.part);
     caretTo(edit, edit.offset + insert.length, insert.split('\n').length - 1);
   };
 
   const onPageKey = (event: KeyboardEvent) => {
     const edit = editRef.current;
-    const text = model.current;
-    if (!edit || !text) return;
+    if (!edit) return;
     const key = event.key.toLowerCase();
     if ((event.metaKey || event.ctrlKey) && (key === 'z' || key === 'y')) {
       event.preventDefault();
-      const head = key === 'y' || event.shiftKey ? text.redo() : text.undo();
-      if (head === null) return;
-      bump();
-      saveSoon();
-      caretTo(edit, head);
+      const head = history(key === 'y' || event.shiftKey);
+      if (!head) return;
+      if (head.part === edit.part) caretTo(edit, head.offset);
+      else leavePage();
       return;
     }
     if ((event.metaKey || event.ctrlKey) && key === 's') {
@@ -411,7 +447,7 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
         const removal = event.key === 'Backspace' ? deleteBefore(units, edit.offset) : deleteAfter(units, edit.offset);
         if (!removal) return;
         const lines = now.slice(removal.from, removal.to).split('\n').length - 1;
-        change(removal.from, removal.to, '', 'delete');
+        change(removal.from, removal.to, '', 'delete', edit.part);
         caretTo(edit, removal.from, -lines);
         return;
       }
@@ -451,8 +487,9 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
   /* ------------------------------------------------------------------ hovering, and dragging blocks */
 
   const [hovered, setHovered] = useState<string | null>(null);
-  // The pointer is near the bottom edge of the block it is on: where the buttons that insert after it show.
-  const [nearBottom, setNearBottom] = useState(false);
+  // The block whose menu is open, from the handle beside it.
+  const [menu, setMenu] = useState<string | null>(null);
+  useBlockMenuClose(menu, setMenu);
   const [drag, setDrag] = useState<{ id: string; target?: { id: string; after: boolean } } | null>(null);
   const dragRef = useRef(drag);
   dragRef.current = drag;
@@ -463,15 +500,20 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     const point = pdf.current?.pointAt(event.clientX, event.clientY) ?? null;
     const id = boxAt(point, 10);
     setHovered(id === REFERENCES ? null : id);
-    const last = id ? ordered[id]?.[ordered[id].length - 1] : undefined;
-    setNearBottom(Boolean(point && last && last.page === point.page && Math.abs(point.y - last.bottom) < 12));
   };
 
+  /** The handle: a click opens the block's menu, a drag moves the block. */
   const startDrag = (event: React.PointerEvent, id: string) => {
     event.preventDefault();
     event.stopPropagation();
-    setDrag({ id });
+    const origin = { x: event.clientX, y: event.clientY };
+    let moving = false;
     const move = (moved: PointerEvent) => {
+      if (!moving && Math.hypot(moved.clientX - origin.x, moved.clientY - origin.y) < 4) return;
+      if (!moving) {
+        moving = true;
+        setMenu(null);
+      }
       const point = pdf.current?.pointAt(moved.clientX, moved.clientY) ?? null;
       const target = boxAt(point, 16, id);
       if (!point || !target || target === REFERENCES) return setDrag({ id });
@@ -485,6 +527,10 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
       window.removeEventListener('pointerup', up);
       const done = dragRef.current;
       setDrag(null);
+      if (!moving) {
+        setMenu((open) => (open === id ? null : id));
+        return;
+      }
       if (!done?.target) return;
       const ids = paperRef.current.blocks.map((block) => block.id).filter((item) => item !== done.id);
       const at = ids.indexOf(done.target.id);
@@ -595,7 +641,9 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
           const last = list[list.length - 1];
           const block = blockOf.get(id);
           const isHidden = hidden.has(id);
-          const lit = editing && (hovered === id || drag?.id === id);
+          // Hovering shows the handle only; its menu, or a drag, outlines the block.
+          const grip = editing && (hovered === id || menu === id || drag?.id === id);
+          const lit = editing && (menu === id || drag?.id === id);
           const own = comments?.(id);
           const firstPx = px(first);
           return (
@@ -606,7 +654,7 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
               )}
               {first.page === page && (
                 // The others looking at the block, in the left margin under its drag handle (the tools take the right).
-                <div className="absolute w-0" style={{ left: firstPx.left - 52, top: firstPx.top + 22 }}>
+                <div className="absolute w-0" style={{ left: first.left > size.width / 2 ? textRight(page) * scale - 4 : firstPx.left - 52, top: firstPx.top + 22 }}>
                   <BlockReaders blockId={id} />
                 </div>
               )}
@@ -640,41 +688,23 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
                   <HiddenBadge />
                 </span>
               )}
-              {first.page === page && lit && block && !drag && (
-                // In the page's right margin, clear of the text around the block.
-                <div
-                  data-page-control
-                  role="group"
-                  aria-label={t('这一块的操作')}
-                  className="absolute z-[4] flex flex-col items-start gap-1.5"
-                  style={{ left: textRight(page) * scale + 16, top: firstPx.top - 8 }}
-                >
-                  <BlockTools paperId={paper.id} block={block} published={published} onComment={own?.onAdd} />
-                </div>
-              )}
-              {first.page === page && lit && block && (
+              {first.page === page && grip && block && (
                 <button
                   type="button"
                   data-page-control
-                  aria-label={t('拖动来移动这一块')}
-                  title={t('拖动来移动这一块')}
+                  data-block-grip
+                  aria-label={t('这一块的操作')}
+                  aria-expanded={menu === id}
+                  title={t('点击打开菜单，拖动来移动这一块')}
                   onPointerDown={(event) => startDrag(event, id)}
-                  className="absolute z-[4] flex h-8 w-6 cursor-grab items-center justify-center rounded-md border border-gray-300 bg-white text-gray-400 shadow-sm hover:text-purple-700 active:cursor-grabbing"
-                  style={{ left: firstPx.left - 8, top: firstPx.top - 8, transform: 'translate(-100%, -50%)' }}
+                  className={`absolute z-[4] flex h-6 w-5 cursor-grab items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-black/[0.06] hover:text-gray-700 active:cursor-grabbing ${menu === id ? 'bg-black/[0.06] text-gray-700' : ''}`}
+                  style={{ left: firstPx.left - 10, top: firstPx.top + 2, transform: 'translateX(-100%)' }}
                 >
                   <GripVertical size={14} />
                 </button>
               )}
-              {last.page === page && lit && !drag && nearBottom && (
-                <div
-                  data-page-control
-                  role="group"
-                  aria-label={t('在当前块下方插入内容')}
-                  className="absolute z-[4] flex w-max gap-2 rounded-full bg-white px-2"
-                  style={{ left: px(last).left + px(last).width / 2, top: px(last).top + px(last).height + 8, transform: 'translate(-50%, -50%)' }}
-                >
-                  <InsertButtons paperId={paper.id} afterBlockId={id} />
-                </div>
+              {first.page === page && menu === id && block && !drag && (
+                <BlockMenu paperId={paper.id} block={block} published={published} onComment={own?.onAdd} style={{ left: firstPx.left - 10, top: firstPx.top + 28, transform: 'translateX(-24px)' }} />
               )}
               {drag?.target?.id === id &&
                 (drag.target.after ? last : first).page === page &&
