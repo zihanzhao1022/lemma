@@ -25,6 +25,8 @@ import { showMessage, useArticleText } from './useArticleText';
 import './htmlArticle.css';
 
 const REFERENCES_FILE = 'references.bib';
+/** Heading levels LaTeX sets run in, at the start of the paragraph after them: \paragraph and \subparagraph. */
+const HEADINGS_RUN_IN = 4;
 
 interface Props {
   paper: ResultPaper;
@@ -671,6 +673,38 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     );
   };
 
+  /**
+   * A run of elements, where a \paragraph or \subparagraph heading runs into the paragraph after it, as LaTeX
+   * sets it: the title in bold at the paragraph's start, the text going on after it on the same line.
+   */
+  const drawAll = (elements: Element[]): React.ReactNode[] => {
+    const nodes: React.ReactNode[] = [];
+    for (let index = 0; index < elements.length; index += 1) {
+      const element = elements[index];
+      const next = elements[index + 1];
+      if (element.kind === 'heading' && element.level >= HEADINGS_RUN_IN && next?.kind === 'paragraph') {
+        const number = numbering.numbers.get(element);
+        nodes.push(
+          <p key={`runin${element.from}-${index}`} data-kind="paragraph" data-s={next.from} data-e={next.to} className="noindent">
+            <span className="html-runin" data-kind="heading" data-s={element.from} data-e={element.to}>
+              {number && (
+                <span className="html-number" contentEditable={false}>
+                  {number}
+                </span>
+              )}
+              {inline(element.title)}
+            </span>
+            {inline(next.content)}
+          </p>,
+        );
+        index += 1;
+        continue;
+      }
+      nodes.push(draw(element, index));
+    }
+    return nodes;
+  };
+
   const draw = (element: Element, index: number): React.ReactNode => {
     const key = `${element.kind}${element.from}-${index}`;
     switch (element.kind) {
@@ -748,7 +782,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
           <Tag key={key}>
             {element.items.map((item) => (
               <li key={item.from} data-kind="item" data-s={item.from} data-e={item.to}>
-                {item.children.map(draw)}
+                {drawAll(item.children)}
               </li>
             ))}
           </Tag>
@@ -769,7 +803,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
                 {element.name === 'abstract' ? '' : '.'}
               </span>
             )}
-            <div className="html-env-body">{element.children.map(draw)}</div>
+            <div className="html-env-body">{drawAll(element.children)}</div>
           </div>
         );
       }
@@ -1065,7 +1099,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
               return (
                 <section key={block.id} data-result-block-id={block.id} data-quote-layer className={`html-block scroll-mt-24${hidden.has(block.id) ? ' html-hidden' : ''}`}>
                   {block.supported || !stored ? (
-                    block.elements.map(draw)
+                    drawAll(block.elements)
                   ) : (
                     <div className="html-fallback" contentEditable={false}>
                       <BlockView paperId={paper.id} block={stored} />

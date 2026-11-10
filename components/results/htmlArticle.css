@@ -352,3 +352,9 @@
     box-shadow: 0 0 0 3px transparent;
   }
 }
+
+/* \paragraph and \subparagraph run into their paragraph: a bold title, then the text on the same line. */
+.html-block .html-runin {
+  font-weight: bold;
+  margin-right: 1em;
+}
