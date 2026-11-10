@@ -9,7 +9,7 @@ import { Hit } from './document';
 import type { Spot } from './pageAlign';
 import { Box, imageBoxes } from './pageImages';
 import { PageText, itemIndex, itemPage } from './pageRegions';
-import { GlyphRun, glyphReader, glyphRuns } from './pdfGlyphs';
+import { Glyph, GlyphRun, glyphReader, glyphRuns } from './pdfGlyphs';
 import { pdfClickWord, pdfTextAt, selectedPdfWord } from './pdfText';
 
 /** A double click in the PDF: where (see Hit), the word under it and the text of its line. */
@@ -47,6 +47,10 @@ export interface PdfPagesHandle {
   hitAt: (clientX: number, clientY: number) => PageClick | null;
   /** The caret's box in the window while one is drawn. */
   caretBox: () => DOMRect | null;
+  /** The first (-1) or last (1) glyph of the line the caret is on, as a click on its outer side. */
+  lineEdge: (direction: -1 | 1) => PageClick | null;
+  /** Sends the keys to the caret's text box now, so the key being pressed types there. */
+  focusInput: () => void;
   /** The pictures a page of the PDF on screen draws, in drawing order. */
   pictures: (page: number) => Promise<Box[]>;
   /** How many pages the PDF on screen has. */
@@ -83,6 +87,12 @@ interface Props {
   onCaretText?: (text: string) => void;
   onCaretKey?: (event: KeyboardEvent) => void;
   onCaretLeave?: () => void;
+  /** Glyphs taken out since TeX set the page, left out until it is set again. */
+  hidden?: Spot[];
+  /** Text selected on the pages: its first and last glyphs, as clicks before the first and after the last. */
+  onSelection?: (ends: { start: PageClick; end: PageClick } | null) => void;
+  /** A key pressed while text is selected on the pages and no text box has the keys. */
+  onSelectionKey?: (event: KeyboardEvent) => void;
 }
 
 export interface Size {
@@ -175,24 +185,25 @@ function glyphLayer(runs: GlyphRun[], width: number, height: number): { svg: SVG
   svg.setAttribute('class', 'pdf-glyphs');
   const texts = runs.map((run) => {
     const text = document.createElementNS(SVG, 'text');
-    placeRun(text, run, height, 0, -1);
+    placeRun(text, run, height, null);
     svg.append(text);
     return text;
   });
   return { svg, texts };
 }
 
-/** Sets a run's glyphs in its SVG text; those from `from` on moved right by `shift` PDF points (typing before them). */
-function placeRun(text: SVGTextElement, run: GlyphRun, height: number, shift: number, from: number): void {
+/** Sets a run's glyphs in its SVG text, each moved right by its `shifts` (PDF points), those in `skip` left out. */
+function placeRun(text: SVGTextElement, run: GlyphRun, height: number, shifts: number[] | null, skip?: Set<number>): void {
   const scale = run.scaleX || 1;
+  const kept = run.glyphs.map((glyph, index) => ({ glyph, index })).filter(({ index }) => !skip?.has(index));
   text.setAttribute('font-family', run.font);
   text.setAttribute('font-size', String(run.size));
   text.setAttribute('fill', run.color);
   text.setAttribute('y', String(height - run.y));
-  text.setAttribute('x', run.glyphs.map((glyph, index) => run.x + (glyph.x + (from >= 0 && index >= from ? shift : 0)) / scale).join(' '));
+  text.setAttribute('x', kept.map(({ glyph, index }) => run.x + (glyph.x + (shifts?.[index] ?? 0)) / scale).join(' '));
   if (scale !== 1) text.setAttribute('transform', `matrix(${scale} 0 0 1 ${run.x * (1 - scale)} 0)`);
   else text.removeAttribute('transform');
-  text.textContent = run.glyphs.map((glyph) => glyph.char).join('');
+  text.textContent = kept.map(({ glyph }) => glyph.char).join('');
 }
 
 let measurer: CanvasRenderingContext2D | null = null;
@@ -260,6 +271,64 @@ function glyphAt(drawn: DrawnPage, number: number, clientX: number, clientY: num
   return { ...hit, item: number * 100000 + index, offset: glyph.offset, side };
 }
 
+/** A click on a run's glyph, on one side of it. */
+function clickOn(drawn: DrawnPage, number: number, index: number, glyph: Glyph, side: 'before' | 'after'): PageClick {
+  const run = drawn.runs[index];
+  const box = drawn.frame.getBoundingClientRect();
+  const x = run.x + glyph.x + glyph.width / 2;
+  const y = run.y + 0.3 * run.size;
+  return {
+    page: number, x, y, baseline: run.y, pageWidth: drawn.width,
+    clientX: box.left + (x * box.width) / drawn.width, clientY: box.top + ((drawn.height - y) * box.height) / drawn.height,
+    item: number * 100000 + index, offset: glyph.offset, side,
+  };
+}
+
+const glyphHolding = (run: GlyphRun, offset: number): Glyph | undefined =>
+  run.glyphs.find((glyph) => offset >= glyph.offset && offset < glyph.offset + Math.max(1, glyph.text.length)) ?? (offset >= run.str.length ? run.glyphs[run.glyphs.length - 1] : undefined);
+
+/** The first and last glyphs of the window's selection on the drawn pages: a click before the first, after the last. */
+function selectionEnds(selection: Selection | null, pages: Map<number, DrawnPage>): { start: PageClick; end: PageClick } | null {
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  let start: PageClick | null = null;
+  let end: PageClick | null = null;
+  for (const number of [...pages.keys()].sort((a, b) => a - b)) {
+    const drawn = pages.get(number)!;
+    drawn.spans.forEach((span, index) => {
+      const run = drawn.runs[index];
+      if (!run || run.glyphs.length === 0 || !span.isConnected || !range.intersectsNode(span)) return;
+      const from = span.contains(range.startContainer) ? range.startOffset : 0;
+      const to = span.contains(range.endContainer) ? range.endOffset : run.str.length;
+      if (to <= from) return;
+      const first = glyphHolding(run, from);
+      const last = glyphHolding(run, to - 1);
+      if (!start && first) start = clickOn(drawn, number, index, first, 'before');
+      if (last) end = clickOn(drawn, number, index, last, 'after');
+    });
+  }
+  return start && end ? { start, end } : null;
+}
+
+/** The first (-1) or last (1) glyph of the line a run is on: the runs beside it on its baseline, up to a column's gap. */
+function lineEdgeOf(drawn: DrawnPage, number: number, index: number, direction: -1 | 1): PageClick | null {
+  const { runs } = drawn;
+  const run = runs[index];
+  if (!run || run.glyphs.length === 0) return null;
+  const right = (other: GlyphRun) => other.x + other.glyphs[other.glyphs.length - 1].x + other.glyphs[other.glyphs.length - 1].width;
+  let at = index;
+  for (;;) {
+    const next = runs[at + direction];
+    const current = runs[at];
+    if (!next || next.glyphs.length === 0 || Math.abs(next.y - current.y) > 0.3 * current.size) break;
+    const gap = direction > 0 ? next.x - right(current) : current.x - right(next);
+    if (gap < -0.5 || gap > 3 * current.size) break;
+    at += direction;
+  }
+  const edge = runs[at];
+  return direction < 0 ? clickOn(drawn, number, at, edge.glyphs[0], 'before') : clickOn(drawn, number, at, edge.glyphs[edge.glyphs.length - 1], 'after');
+}
+
 /** A glyph's box in the window: across, the glyph's advance; down, a font size from just above its baseline. */
 function glyphBox(drawn: DrawnPage, spot: Spot): DOMRect | null {
   const run = drawn.runs[itemIndex(spot.item)];
@@ -285,15 +354,29 @@ function learnGlyphs(doc: PDFDocumentProxy, runs: GlyphRun[]): void {
 }
 
 /**
- * Typed text TeX has not set yet, drawn at the caret in the run's own font (a character the font has never shown
- * falls back to a serif), the rest of the line moved right to make room. Returns its width in PDF points and how
- * to put the page back.
+ * What changed since TeX last set the page, drawn on it at once: the glyphs taken out (`hidden`) are left out, typed
+ * text TeX has not set yet is drawn at the caret in the run's own font (a character the font has never shown falls
+ * back to a serif), and the rest of the caret's line closes up or moves right to fit. Returns how to put it back.
  */
-function showPending(drawn: DrawnPage, spot: CaretSpot, pending: string): { width: number; undo: () => void } {
+function showEdit(pages: Map<number, DrawnPage>, spot: CaretSpot, pending: string, hidden: Spot[]): { width: number; undo: () => void } {
+  const drawn = pages.get(itemPage(spot.item));
   const index = itemIndex(spot.item);
-  const run = drawn.runs[index];
-  const svg = drawn.texts[0]?.ownerSVGElement;
-  if (!run || !svg || !pending) return { width: 0, undo: () => undefined };
+  const run = drawn?.runs[index];
+  const svg = drawn?.texts[0]?.ownerSVGElement;
+  if (!drawn || !run || !svg || (!pending && hidden.length === 0)) return { width: 0, undo: () => undefined };
+  // The glyphs left out, by page and run.
+  const gone = new Map<DrawnPage, Map<number, Set<number>>>();
+  for (const out of hidden) {
+    const page = pages.get(itemPage(out.item));
+    const other = page?.runs[itemIndex(out.item)];
+    if (!page || !other) continue;
+    const glyph = other.glyphs.findIndex((candidate) => out.offset >= candidate.offset && out.offset < candidate.offset + Math.max(1, candidate.text.length));
+    if (glyph < 0) continue;
+    if (!gone.has(page)) gone.set(page, new Map());
+    const runs = gone.get(page)!;
+    if (!runs.has(itemIndex(out.item))) runs.set(itemIndex(out.item), new Set());
+    runs.get(itemIndex(out.item))!.add(glyph);
+  }
   const known = fontGlyphs.get(drawn.doc)?.get(run.font) ?? new Map<string, { char: string; em: number }>();
   const at = run.glyphs.findIndex((glyph) => glyph.offset >= spot.offset);
   const split = at < 0 ? run.glyphs.length : spot.side === 'after' ? at + 1 : at;
@@ -322,24 +405,43 @@ function showPending(drawn: DrawnPage, spot: CaretSpot, pending: string): { widt
     }
     text.append(span);
   }
-  svg.append(text);
-  // The rest of the line: this run from the caret on, and the runs after it until a gap wider than a column's.
-  const moved: number[] = [];
-  placeRun(drawn.texts[index], run, drawn.height, width, split);
-  moved.push(index);
-  let edge = run.x + (run.glyphs[run.glyphs.length - 1].x + run.glyphs[run.glyphs.length - 1].width);
+  if (pending) svg.append(text);
+  // The caret's line from the caret on: this run, then the runs after it until a gap wider than a column's. Each
+  // glyph moves right by the typed text's width and left by the width of the glyphs left out before it on the line.
+  const placed: { page: DrawnPage; run: number }[] = [];
+  const line = new Set<number>([index]);
+  let edge = run.x + run.glyphs[run.glyphs.length - 1].x + run.glyphs[run.glyphs.length - 1].width;
   for (let next = index + 1; next < drawn.runs.length; next += 1) {
     const other = drawn.runs[next];
     if (Math.abs(other.y - run.y) > 0.3 * run.size || other.x < edge - 0.5 || other.x - edge > 3 * run.size || other.glyphs.length === 0) break;
-    placeRun(drawn.texts[next], other, drawn.height, width, 0);
-    moved.push(next);
+    line.add(next);
     edge = other.x + other.glyphs[other.glyphs.length - 1].x + other.glyphs[other.glyphs.length - 1].width;
+  }
+  let closed = 0;
+  for (const which of [...line].sort((a, b) => a - b)) {
+    const other = drawn.runs[which];
+    const skip = gone.get(drawn)?.get(which) ?? new Set<number>();
+    const shifts = other.glyphs.map((glyph, glyphIndex) => {
+      const moved = which > index || glyphIndex >= split ? width - closed : 0;
+      if (skip.has(glyphIndex) && (which > index || glyphIndex >= split)) closed += glyph.width;
+      return moved;
+    });
+    placeRun(drawn.texts[which], other, drawn.height, shifts, skip);
+    placed.push({ page: drawn, run: which });
+  }
+  // Glyphs left out on other lines are only left out.
+  for (const [page, runs] of gone) {
+    for (const [which, skip] of runs) {
+      if (page === drawn && line.has(which)) continue;
+      placeRun(page.texts[which], page.runs[which], page.height, null, skip);
+      placed.push({ page, run: which });
+    }
   }
   return {
     width,
     undo: () => {
       text.remove();
-      for (const which of moved) placeRun(drawn.texts[which], drawn.runs[which], drawn.height, 0, -1);
+      for (const { page, run: which } of placed) placeRun(page.texts[which], page.runs[which], page.height, null);
     },
   };
 }
@@ -482,7 +584,7 @@ const Page: React.FC<{
 
 /** Every page of a PDF, one under another, fitted to the pane and drawn as they come near the screen. */
 const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
-  { data, url, flow = false, overlay, onLoaded, onTextLayer, zoom, onDoubleClick, onDocumentReady, onClick, editing = false, caret, outline, pending = '', onCaretText, onCaretKey, onCaretLeave },
+  { data, url, flow = false, overlay, onLoaded, onTextLayer, zoom, onDoubleClick, onDocumentReady, onClick, editing = false, caret, outline, pending = '', hidden, onCaretText, onCaretKey, onCaretLeave, onSelection, onSelectionKey },
   ref,
 ) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -498,11 +600,14 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
   // Bumped whenever a page is drawn again, so the caret is placed on the new drawing.
   const [drawing, setDrawing] = useState(0);
   const [caretPlace, setCaretPlace] = useState<{ left: number; top: number; height: number } | null>(null);
-  // Puts back what the typed text shown at the caret moved (showPending).
+  // Puts back what showEdit changed on the page.
   const preview = useRef<(() => void) | null>(null);
   const [outlinePlace, setOutlinePlace] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
-  const handlers = useRef({ onCaretText, onCaretKey, onCaretLeave });
-  handlers.current = { onCaretText, onCaretKey, onCaretLeave };
+  const handlers = useRef({ onCaretText, onCaretKey, onCaretLeave, onSelection, onSelectionKey });
+  handlers.current = { onCaretText, onCaretKey, onCaretLeave, onSelection, onSelectionKey };
+  const selected = useRef<{ start: PageClick; end: PageClick } | null>(null);
+  const caretRef = useRef(caret);
+  caretRef.current = caret;
 
   useEffect(() => {
     const element = scroller.current;
@@ -635,7 +740,17 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
 
   useImperativeHandle(
     ref,
-    () => ({ show, pageText, hitAt, pictures, pointAt, pageCount: () => loaded?.doc.numPages ?? 0, caretBox: () => input.current?.getBoundingClientRect() ?? null }),
+    () => ({
+      show, pageText, hitAt, pictures, pointAt,
+      pageCount: () => loaded?.doc.numPages ?? 0,
+      caretBox: () => input.current?.getBoundingClientRect() ?? null,
+      lineEdge: (direction: -1 | 1) => {
+        const spot = caretRef.current;
+        const page = spot ? pages.current.get(itemPage(spot.item)) : undefined;
+        return spot && page ? lineEdgeOf(page, itemPage(spot.item), itemIndex(spot.item), direction) : null;
+      },
+      focusInput: () => input.current?.focus({ preventScroll: true }),
+    }),
     [show, pageText, hitAt, pictures, pointAt, loaded],
   );
 
@@ -649,7 +764,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
   // previous PDF keeps them where they were until it is drawn again.
   useLayoutEffect(() => {
     const origin = sheet.current?.getBoundingClientRect();
-    const spots = [caret, outline?.[0], outline?.[1]].filter((spot): spot is Spot => Boolean(spot));
+    const spots = [caret, outline?.[0], outline?.[1], ...(hidden ?? [])].filter((spot): spot is Spot => Boolean(spot));
     // Typing shown before stays until its page is drawn again from the new PDF, so it never blinks out.
     if (spots.some((spot) => pages.current.get(itemPage(spot.item))?.doc !== loaded?.doc)) return;
     preview.current?.();
@@ -661,7 +776,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
     const glyph = caret ? place(caret) : null;
     // Typing TeX has not set yet shows at the caret, in the page's own type, the caret after it.
     const caretPage = caret ? pages.current.get(itemPage(caret.item)) : undefined;
-    const shown = caret && caretPage && pending ? showPending(caretPage, caret, pending) : null;
+    const shown = caret && caretPage && (pending || hidden?.length) ? showEdit(pages.current, caret, pending, hidden ?? []) : null;
     preview.current = shown?.undo ?? null;
     const extra = shown && caretPage ? (shown.width * caretPage.frame.getBoundingClientRect().width) / caretPage.width : 0;
     setCaretPlace(glyph && origin ? { left: (caret!.side === 'before' ? glyph.left : glyph.right) - origin.left + extra, top: glyph.top - origin.top, height: glyph.height } : null);
@@ -677,14 +792,17 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
           }
         : null,
     );
-  }, [caret, outline, drawing, scale, loaded, pending]);
+  }, [caret, outline, drawing, scale, loaded, pending, hidden]);
   useLayoutEffect(() => () => preview.current?.(), []);
 
   // Keys go to a hidden text box at the caret, which also places an input method's candidates there.
   useEffect(() => {
     const box = input.current;
-    if (!box || !editing) return undefined;
-    if (document.activeElement !== box) box.focus({ preventScroll: true });
+    if (box && editing && document.activeElement !== box) box.focus({ preventScroll: true });
+  }, [editing, loaded]);
+  useEffect(() => {
+    const box = input.current;
+    if (!box) return undefined;
     let composing = false;
     const beforeInput = (event: InputEvent) => {
       if (composing || event.isComposing) return;
@@ -722,7 +840,37 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
       box.removeEventListener('keydown', keyDown);
       box.removeEventListener('blur', blur);
     };
-  }, [editing]);
+  }, [loaded, Boolean(onCaretText)]);
+
+  // Text selected on the pages, and keys pressed while it is: they act on the selection.
+  useEffect(() => {
+    if (!onSelection && !onSelectionKey) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = () => {
+      const ends = selectionEnds(window.getSelection(), pages.current);
+      const before = selected.current;
+      selected.current = ends;
+      if (ends || before) handlers.current.onSelection?.(ends);
+    };
+    const changed = () => {
+      clearTimeout(timer);
+      timer = setTimeout(read, 60);
+    };
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !selected.current) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return;
+      if (window.getSelection()?.isCollapsed !== false) return;
+      handlers.current.onSelectionKey?.(event);
+    };
+    document.addEventListener('selectionchange', changed);
+    document.addEventListener('keydown', keyDown);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('selectionchange', changed);
+      document.removeEventListener('keydown', keyDown);
+    };
+  }, [Boolean(onSelection), Boolean(onSelectionKey)]);
 
   return (
     <div ref={scroller} className={flow ? '' : 'h-full overflow-auto bg-[#e9e9ec] py-3'}>
@@ -760,7 +908,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
               style={{ left: caretPlace.left - 0.75, top: caretPlace.top, height: caretPlace.height }}
             />
           )}
-          {editing && (
+          {onCaretText && (
             <textarea
               ref={input}
               aria-label={t('在页面上输入')}

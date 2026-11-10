@@ -3,8 +3,8 @@ import { GripVertical, MessageSquare } from 'lucide-react';
 import { ArticleBlock, blockHeadingLines, bodyBlocks, unpackMarks } from '../../app/writing/articleBlocks';
 import { BlockBox, REFERENCES, blockBoxes } from '../../app/writing/blockBoxes';
 import { Mark, locate } from '../../app/writing/document';
-import type { Spot } from '../../app/writing/pageAlign';
-import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSince } from '../../app/writing/pageEdits';
+import { atomChars, type Spot } from '../../app/writing/pageAlign';
+import { deleteAfter, deleteBefore, escapeTyped, moveCaret, moveWord, printedChange, removeRange, typedSince } from '../../app/writing/pageEdits';
 import { graphicsOf, replaceGraphic } from '../../app/writing/pageImages';
 import { RegionMap, atomRange, caretToSpot, clickToCaret, lineAt, lineStarts, mapRegion } from '../../app/writing/pageMap';
 import type { PageText } from '../../app/writing/pageRegions';
@@ -25,6 +25,7 @@ import { Box, LayerText, layerText, quoteBoxes } from './comments/textLayer';
 import { Part, showMessage, useArticleText } from './useArticleText';
 
 /** Marks name main.tex as file 0 and the preamble, whose title and authors are marked, as file 1. */
+const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 const fileOf = (part: Part) => (part === 'preamble' ? 1 : 0);
 const partOf = (file: number | undefined): Part | null => (file === 1 ? 'preamble' : file ? null : 'main');
 const sourceOf = (from: Shown, part: Part) => (part === 'preamble' ? from.preamble : from.source);
@@ -332,38 +333,112 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     choosePicture(choice, name);
   };
 
-  const onPageClick = async (click: PageClick) => {
+  /**
+   * Where a click on the page puts the caret: the edit it starts (null where it finds no source position), the
+   * region it found, and the caret in the source of the PDF on screen (an atom's whole range).
+   */
+  const editAt = async (click: PageClick): Promise<{ edit: PageEdit | null; map: RegionMap | null; from: Shown; part: Part; shown?: { from: number; to: number } } | null> => {
     const from = shownRef.current;
-    if (!live || !from?.source) return leavePage();
+    if (!from?.source) return null;
     const located = locate(from.marks, click);
     const part = located ? partOf(located.file) : null;
     const source = part ? sourceOf(from, part) : undefined;
-    if (!located || !part || source === undefined) return leavePage();
+    if (!located || !part || source === undefined) return null;
     const file = fileOf(part);
     const map = mapRegion(source, from.marks, await regionPages(from.marks, located.line, file), file, located.line);
     const caret = map && click.item >= 0 ? clickToCaret(map, click.item, click.offset, click.side) : null;
-    if (!map || !caret) {
-      leavePage();
-      if (map?.region.float && part === 'main') await pickPicture(from, map, click);
-      return;
-    }
+    if (!map || !caret) return { edit: null, map, from, part };
     const atom = 'atom' in caret ? caret.atom : undefined;
     const offset = offsetNow(from, atom ? atom.to : 'offset' in caret ? caret.offset : 0, part);
     const atomFrom = atom ? offsetNow(from, atom.from, part) : null;
     const start = lineNow(from, map.region.from, part);
     const until = map.region.until === Number.MAX_SAFE_INTEGER ? map.region.until : lineNow(from, map.region.until, part);
-    if (offset === null || start === null || until === null || (atom && atomFrom === null)) return leavePage();
+    if (offset === null || start === null || until === null || (atom && atomFrom === null)) return { edit: null, map: null, from, part };
     const base = { shown: from, offset: atom ? atom.to : 'offset' in caret ? caret.offset : 0 };
     const edit: PageEdit = { part, offset, from: start, until, float: map.region.float, base, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
-    holdSave();
-    setPageEdit(edit);
-    editRef.current = edit;
+    return { edit, map, from, part, shown: atom ?? { from: base.offset, to: base.offset } };
   };
 
-  // Where to draw the caret, and the text typed since the PDF on screen.
+  const onPageClick = async (click: PageClick) => {
+    if (!live) return leavePage();
+    const at = await editAt(click);
+    if (!at) return leavePage();
+    if (!at.edit) {
+      leavePage();
+      if (at.map?.region.float && at.part === 'main') await pickPicture(at.from, at.map, click);
+      return;
+    }
+    holdSave();
+    setPageEdit(at.edit);
+    editRef.current = at.edit;
+  };
+
+  // Text selected on the page, in the source: typing replaces it, Backspace and Delete remove it, Cmd+X cuts it.
+  const selectionRef = useRef<{ part: Part; from: number; to: number; edit: PageEdit } | null>(null);
+  const selectionAsked = useRef(0);
+  const onPageSelection = (ends: { start: PageClick; end: PageClick } | null) => {
+    selectionRef.current = null;
+    const asked = (selectionAsked.current += 1);
+    if (!ends || !live) return;
+    void (async () => {
+      const [start, end] = await Promise.all([editAt(ends.start), editAt(ends.end)]);
+      if (asked !== selectionAsked.current || !start?.edit || !end?.edit || start.part !== end.part) return;
+      const from = start.edit.atom ? start.edit.atom.from : start.edit.offset;
+      const to = end.edit.offset;
+      if (to <= from || !plainBetween(modelOf(start.part)?.text ?? '', from, to, start.edit, end.edit)) return;
+      const { atom: _atom, ...caret } = start.edit;
+      const until = Math.max(start.edit.until, end.edit.until);
+      const base = start.shown ? { shown: start.from, offset: start.shown.from } : start.edit.base;
+      selectionRef.current = { part: start.part, from, to, edit: { ...caret, offset: from, until, ...(base ? { base } : {}) } };
+    })();
+  };
+
+  /**
+   * Whether a selection's source holds running text only: one float's text, or text outside floats with no float,
+   * heading, caption or block marker inside it. A float's source can sit far from where it prints, so a stretch of source that
+   * crosses one is not what was selected.
+   */
+  const plainBetween = (text: string, from: number, to: number, start: PageEdit, end: PageEdit): boolean => {
+    if (start.float || end.float) return Boolean(start.float && end.float && start.from === end.from);
+    return !/\\begin\s*\{(?:figure|table|wrapfigure|wraptable)\*?\}|\\(?:part|chapter|(?:sub){0,2}section|(?:sub)?paragraph|caption)\*?\s*[[{]|^%% galley-block /m.test(text.slice(from, to));
+  };
+
+  /** The source a change removes from `from` to `to` of a part: its printed units, markup kept (removeRange). */
+  const removalIn = (part: Part, from: number, to: number) => {
+    const text = modelOf(part)?.text ?? '';
+    const starts = lineStarts(text);
+    const first = starts[lineAt(text, from) - 1] ?? 0;
+    const lastLine = lineAt(text, to);
+    const last = lastLine < starts.length ? starts[lastLine] - 1 : text.length;
+    const removal = removeRange(text, printedUnits(text, first, last), from, to);
+    return removal ? { ...removal, lines: text.slice(removal.from, removal.to).split('\n').length - removal.insert.split('\n').length } : null;
+  };
+
+  const onSelectionKey = (event: KeyboardEvent) => {
+    const selection = selectionRef.current;
+    if (!selection) return;
+    const command = event.metaKey || event.ctrlKey;
+    const cut = command && !event.altKey && event.key.toLowerCase() === 'x';
+    const removing = !command && (event.key === 'Backspace' || event.key === 'Delete');
+    const typing = !command && !removing && (event.key.length === 1 || event.key === 'Process' || event.key === 'Enter');
+    if (!cut && !removing && !typing) return;
+    if (cut || removing) event.preventDefault();
+    if (cut) void navigator.clipboard?.writeText(window.getSelection()?.toString() ?? '').catch(() => undefined);
+    selectionRef.current = null;
+    const removal = removalIn(selection.part, selection.from, selection.to);
+    window.getSelection()?.removeAllRanges();
+    holdSave();
+    if (removal) change(removal.from, removal.to, removal.insert, 'delete', selection.part);
+    caretTo(selection.edit, removal ? removal.from : selection.from, removal ? -removal.lines : 0);
+    // The key being pressed goes on to the caret's text box, which types it there.
+    if (typing) pdf.current?.focusInput();
+  };
+
+  // Where to draw the caret, and what changed since the PDF on screen: the text typed, the glyphs taken out.
   const [caretSpot, setCaretSpot] = useState<CaretSpot | null>(null);
   const [atomSpots, setAtomSpots] = useState<[Spot, Spot] | null>(null);
   const [pending, setPending] = useState('');
+  const [goneSpots, setGoneSpots] = useState<Spot[]>([]);
   useEffect(() => {
     const edit = pageEdit;
     const from = shown;
@@ -373,6 +448,7 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
       setCaretSpot(null);
       setAtomSpots(null);
       setPending('');
+      setGoneSpots([]);
       return undefined;
     }
     const fresh = source === text.text;
@@ -385,15 +461,39 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
         : from.caret?.part === edit.part
           ? from.caret
           : null;
-    setPending(!fresh && caret && !caret.atom && !edit.atom ? typedSince(text.text, offsetNow(from, caret.offset, edit.part), edit.offset) : '');
-    if (!caret) return undefined;
+    const typed = !fresh && caret && !caret.atom && !edit.atom ? typedSince(text.text, offsetNow(from, caret.offset, edit.part), edit.offset) : '';
+    if (!caret) {
+      setPending(typed);
+      setGoneSpots([]);
+      return undefined;
+    }
     let cancelled = false;
     const file = fileOf(edit.part);
     void (async () => {
       const line = lineAt(source, caret.offset);
       const map = mapRegion(source, from.marks, await regionPages(from.marks, line, file), file, line);
       if (cancelled) return;
+      // What the region prints now against what the PDF shows: one change around the caret is drawn at once.
+      const change = !fresh && map && !caret.atom && !edit.atom ? printedChange(map.alignment.units, source, regionNow(edit).units, text.text, edit.offset) : null;
+      const drawn = change && change.to - change.from <= 400 && (change.inserted ?? '').length <= 200 && edit.offset >= change.start && edit.offset <= change.end;
+      if (map && change && drawn) {
+        const { units } = map.alignment;
+        const at = change.from > 0 ? units[change.from - 1].to : units[change.from]?.from ?? map.from;
+        const gone: Spot[] = [];
+        for (let unit = change.from; unit < change.to; unit += 1) {
+          const range = units[unit].kind === 'atom' ? atomChars(map.alignment, unit) : map.alignment.unitChars[unit];
+          if (!range) continue;
+          for (let char = range[0]; char <= range[1]; char += 1) if (map.alignment.chars[char].spot.item >= 0) gone.push(map.alignment.chars[char].spot);
+        }
+        setCaretSpot(caretToSpot(map, at));
+        setPending(change.inserted ?? '');
+        setGoneSpots(gone);
+        setAtomSpots(null);
+        return;
+      }
       setCaretSpot(map ? caretToSpot(map, caret.offset) : null);
+      setPending(typed);
+      setGoneSpots([]);
       setAtomSpots(map && caret.atom ? atomRange(map, caret.atom.from) : null);
     })();
     return () => {
@@ -450,6 +550,44 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     if ((event.metaKey || event.ctrlKey) && key === 's') {
       event.preventDefault();
       void save();
+      return;
+    }
+    // A word at a time with Alt (Ctrl off a Mac); to the line's ends with Cmd, Home and End.
+    const byWord = MAC ? event.altKey && !event.metaKey && !event.ctrlKey : event.ctrlKey && !event.altKey && !event.metaKey;
+    const byLine = (MAC && event.metaKey && !event.altKey && !event.ctrlKey) || ((event.key === 'Home' || event.key === 'End') && !event.altKey);
+    if (byWord && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      caretTo(edit, moveWord(regionNow(edit).units, edit.offset, event.key === 'ArrowLeft' ? -1 : 1));
+      return;
+    }
+    if (byWord && (event.key === 'Backspace' || event.key === 'Delete')) {
+      event.preventDefault();
+      const target = moveWord(regionNow(edit).units, edit.offset, event.key === 'Backspace' ? -1 : 1);
+      const removal = removalIn(edit.part, Math.min(target, edit.offset), Math.max(target, edit.offset));
+      if (!removal) return;
+      change(removal.from, removal.to, removal.insert, 'delete', edit.part);
+      caretTo(edit, removal.from, -removal.lines);
+      return;
+    }
+    if (byLine && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End')) {
+      event.preventDefault();
+      const hit = pdf.current?.lineEdge(event.key === 'ArrowLeft' || event.key === 'Home' ? -1 : 1);
+      if (hit) void onPageClick(hit);
+      return;
+    }
+    if (byLine && event.key === 'Backspace') {
+      event.preventDefault();
+      const hit = pdf.current?.lineEdge(-1);
+      if (!hit) return;
+      void (async () => {
+        const at = await editAt(hit);
+        const now = editRef.current;
+        if (!at?.edit || !now || at.part !== now.part || at.edit.offset >= now.offset) return;
+        const removal = removalIn(now.part, at.edit.atom ? at.edit.atom.from : at.edit.offset, now.offset);
+        if (!removal) return;
+        change(removal.from, removal.to, removal.insert, 'delete', now.part);
+        caretTo(now, removal.from, -removal.lines);
+      })();
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -805,9 +943,12 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
             caret={caretSpot}
             outline={atomSpots}
             pending={pending}
+            hidden={goneSpots}
             onCaretText={onPageText}
             onCaretKey={onPageKey}
             onCaretLeave={leavePage}
+            onSelection={live ? onPageSelection : undefined}
+            onSelectionKey={live ? onSelectionKey : undefined}
           />
         )}
       </div>

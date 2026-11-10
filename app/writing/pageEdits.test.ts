@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSince, typedSinceText } from './pageEdits';
+import { deleteAfter, deleteBefore, escapeTyped, moveCaret, moveWord, printedChange, removeRange, typedSince, typedSinceText } from './pageEdits';
 import { printedUnits } from './printed';
 
 describe('escapeTyped', () => {
@@ -98,5 +98,76 @@ describe('typedSinceText', () => {
   it('gives nothing when the text changed anywhere else too', () => {
     expect(typedSinceText('abc def', 'abXc dZef', 4)).toBe('');
     expect(typedSinceText('abc', 'ab', 2)).toBe('');
+  });
+});
+
+describe('removeRange', () => {
+  const apply = (source: string, from: number, to: number) => {
+    const change = removeRange(source, printedUnits(source), from, to);
+    return change ? source.slice(0, change.from) + change.insert + source.slice(change.to) : source;
+  };
+
+  it('takes out the printed text and keeps the markup it crosses', () => {
+    const source = 'one \\textbf{two three} four';
+    expect(apply(source, source.indexOf('wo'), source.indexOf('our'))).toBe('one \\textbf{t}our');
+  });
+
+  it('keeps table separators, takes the spaces beside them and an atom whole', () => {
+    expect(apply('a & b $x$ c \\\\ d', 0, 12)).toBe('&\\\\ d');
+  });
+
+  it('keeps the line break before a comment line, so it stays a line of its own', () => {
+    const source = 'one two\n\n%% galley-block b2 text\nthree four';
+    expect(apply(source, source.indexOf('two'), source.indexOf('four'))).toBe('one \n%% galley-block b2 text\nfour');
+  });
+
+  it('gives nothing when nothing printed is selected', () => {
+    expect(removeRange('\\label{x}', printedUnits('\\label{x}'), 0, 9)).toBeNull();
+  });
+});
+
+describe('moveWord', () => {
+  const units = (source: string) => printedUnits(source);
+
+  it('goes to the start of the word before and the end of the word after', () => {
+    const source = 'the \\emph{quick} brown, fox';
+    expect(moveWord(units(source), source.indexOf('brown') + 2, -1)).toBe(source.indexOf('brown'));
+    expect(moveWord(units(source), source.indexOf('brown'), -1)).toBe(source.indexOf('quick'));
+    expect(moveWord(units(source), source.indexOf('brown'), 1)).toBe(source.indexOf(','));
+    expect(moveWord(units(source), source.indexOf(','), 1)).toBe(source.length);
+  });
+
+  it('takes an atom as one word and stops at a table separator', () => {
+    const source = 'see $x+y$ here & next';
+    expect(moveWord(units(source), source.indexOf(' here'), -1)).toBe(source.indexOf('$'));
+    expect(moveWord(units(source), source.indexOf('here'), 1)).toBe(source.indexOf(' &'));
+    expect(moveWord(units(source), source.indexOf(' &'), 1)).toBe(source.indexOf('&'));
+  });
+});
+
+describe('printedChange', () => {
+  const change = (before: string, after: string) => printedChange(printedUnits(before), before, printedUnits(after), after);
+
+  it('finds the printed units that went and the text put in their place', () => {
+    const before = 'one \\textbf{two three} four';
+    const after = 'one \\textbf{tX}our';
+    expect(change(before, after)).toEqual({ from: 5, to: 15, inserted: 'X', start: after.indexOf('X'), end: after.indexOf('X') + 1 });
+  });
+
+  it('gives a deletion with nothing put in and an insertion with nothing taken', () => {
+    expect(change('abc', 'ac')).toEqual({ from: 1, to: 2, inserted: '', start: 1, end: 1 });
+    expect(change('ac', 'a b c')).toMatchObject({ from: 1, to: 1, inserted: ' b ' });
+  });
+
+  it('reaches the caret, so text typed over a word is all put in', () => {
+    const before = 'of full fine';
+    const after = 'of all fine';
+    expect(printedChange(printedUnits(before), before, printedUnits(after), after)).toMatchObject({ from: 3, to: 5, inserted: 'a' });
+    expect(printedChange(printedUnits(before), before, printedUnits(after), after, 6)).toMatchObject({ from: 3, to: 7, inserted: 'all', start: 3, end: 6 });
+  });
+
+  it('gives nothing for markup that prints nothing, and no text for an atom put in', () => {
+    expect(change('a b', '\\emph{a} b')).toBeNull();
+    expect(change('a b', 'a $x$ b')).toMatchObject({ inserted: null });
   });
 });
