@@ -17,7 +17,7 @@ import { ResultPaper } from '../../types';
 import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, locate, markableInputs, parseMarks, placeOf, withMarks } from './document';
 import { SHADOWED, attachedKey, attachedName, editableText, isLatex } from './files';
 import type { Spot } from './pageAlign';
-import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSince } from './pageEdits';
+import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSinceText } from './pageEdits';
 import { graphicsOf, replaceGraphic } from './pageImages';
 import { RegionMap, atomRange, caretToSpot, clickToCaret, lineAt, lineStarts, mapRegion } from './pageMap';
 import type { PageText } from './pageRegions';
@@ -63,6 +63,8 @@ interface PageEdit {
   until: number;
   float: boolean;
   atom?: { from: number; to: number };
+  /** The caret in the source of the PDF it was put in, until a compile records one of its own (Compiled.caret). */
+  base?: { pdf: Uint8Array; offset: number };
 }
 
 const decode = (data: Uint8Array): string => new TextDecoder().decode(data);
@@ -519,7 +521,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     const from = lineNow(current, file, map.region.from);
     const until = map.region.until === Number.MAX_SAFE_INTEGER ? map.region.until : lineNow(current, file, map.region.until);
     if (offset === null || from === null || until === null || (atom && atomFrom === null)) return leavePage();
-    const edit: PageEdit = { file, offset, from, until, float: map.region.float, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
+    const base = current.pdf ? { pdf: current.pdf, offset: atom ? atom.to : 'offset' in caret ? caret.offset : 0 } : undefined;
+    const edit: PageEdit = { file, offset, from, until, float: map.region.float, ...(base ? { base } : {}), ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
     setPageEdit(edit);
     pageEditRef.current = edit;
     if (active !== file) openFile(file);
@@ -543,19 +546,30 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     const source = current.sources[edit.file];
     // The caret now when nothing changed since that compile; else the caret the compile started with.
     const fresh = source !== undefined && source === textsRef.current?.[edit.file];
-    const caret = fresh ? edit : current.caret?.file === edit.file ? current.caret : null;
+    // A caret put in this very PDF is newer than the one its compile started with.
+    const caret = fresh
+      ? edit
+      : edit.base?.pdf === current.pdf
+        ? { offset: edit.base.offset, atom: undefined as { from: number; to: number } | undefined }
+        : current.caret?.file === edit.file
+          ? current.caret
+          : null;
     const now = editor.current?.text(edit.file) ?? textsRef.current?.[edit.file] ?? '';
     // While a newer PDF is on its way to the screen, what shows stays.
-    if (shownPdf === current.pdf) setPending(!fresh && caret && !caret.atom && !edit.atom ? typedSince(now, offsetNow(current, edit.file, caret.offset), edit.offset) : '');
+    // What was typed since: the text inserted right before the caret, when that is all that changed.
+    const typed = !fresh && !edit.atom && source !== undefined ? typedSinceText(source, now, edit.offset) : '';
+    if (shownPdf === current.pdf) setPending(typed);
+    // The caret goes where the typing started, in the PDF's own text; the typed text is drawn after it.
+    const at = typed && source !== undefined ? edit.offset - (now.length - source.length) : caret?.offset;
     const index = current.fileNames.indexOf(edit.file);
     // Until a PDF catches up with the typing and is on screen, the last caret stays.
-    if (!caret || source === undefined || index < 0 || shownPdf !== current.pdf) return undefined;
+    if (!caret || at === undefined || source === undefined || index < 0 || shownPdf !== current.pdf) return undefined;
     let cancelled = false;
     void (async () => {
-      const line = lineAt(source, caret.offset);
+      const line = lineAt(source, at);
       const map = mapRegion(source, current.marks, await regionPages(current.marks, index, line), index, line);
       if (cancelled) return;
-      setCaretSpot(map ? caretToSpot(map, caret.offset) : null);
+      setCaretSpot(map ? caretToSpot(map, at) : null);
       setAtomSpots(map && caret.atom ? atomRange(map, caret.atom.from) : null);
     })();
     return () => {
@@ -574,7 +588,14 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
 
   /** Puts the caret at `offset`; `lines` is how many lines the change before it added to the region. */
   const caretTo = (edit: PageEdit, offset: number, lines = 0) => {
-    const next: PageEdit = { file: edit.file, offset, from: edit.from, until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines), float: edit.float };
+    const next: PageEdit = {
+      file: edit.file,
+      offset,
+      from: edit.from,
+      until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines),
+      float: edit.float,
+      ...(edit.base ? { base: edit.base } : {}),
+    };
     setPageEdit(next);
     pageEditRef.current = next;
     editor.current?.follow(edit.file, offset);

@@ -70,3 +70,15 @@ export function typedSince(text: string, from: number | null, to: number): strin
   if (typed.includes('\n')) return '';
   return typed.replace(/\\([%&$#_{}])/g, '$1').replace(/~/g, ' ').replace(/\\textbackslash\{\}/g, '\\');
 }
+
+/**
+ * What was typed at the caret since `then` (the text a PDF on screen was compiled from), when that is the only
+ * change: the text `now` inserted ending at `caret`, as it prints. Nothing otherwise (see typedSince).
+ */
+export function typedSinceText(then: string, now: string, caret: number): string {
+  if (now.length <= then.length) return '';
+  const inserted = now.length - then.length;
+  const from = caret - inserted;
+  if (from < 0 || now.slice(0, from) !== then.slice(0, from) || now.slice(caret) !== then.slice(from)) return '';
+  return typedSince(now, from, caret);
+}

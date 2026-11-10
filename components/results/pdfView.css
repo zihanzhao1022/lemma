@@ -1,3 +1,16 @@
+/* A page's text drawn as SVG in the PDF's own fonts, at the PDF's places (app/writing/PdfPages.tsx). */
+.pdf-glyphs {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+  text-rendering: geometricPrecision;
+  white-space: pre;
+}
+
 /* Transparent, selectable text over the rendered page (the text layer rules of pdf.js's viewer CSS). */
 .textLayer {
   position: absolute;

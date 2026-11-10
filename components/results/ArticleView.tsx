@@ -83,6 +83,8 @@ interface PageEdit {
   until: number;
   float?: boolean;
   atom?: { from: number; to: number };
+  /** The caret in the source of the PDF it was put in, until a compile records one of its own (Shown.caret). */
+  base?: { shown: Shown; offset: number };
 }
 
 
@@ -351,7 +353,8 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
     const start = lineNow(from, map.region.from, part);
     const until = map.region.until === Number.MAX_SAFE_INTEGER ? map.region.until : lineNow(from, map.region.until, part);
     if (offset === null || start === null || until === null || (atom && atomFrom === null)) return leavePage();
-    const edit: PageEdit = { part, offset, from: start, until, float: map.region.float, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
+    const base = { shown: from, offset: atom ? atom.to : 'offset' in caret ? caret.offset : 0 };
+    const edit: PageEdit = { part, offset, from: start, until, float: map.region.float, base, ...(atom ? { atom: { from: atomFrom!, to: offset } } : {}) };
     holdSave();
     setPageEdit(edit);
     editRef.current = edit;
@@ -373,7 +376,15 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
       return undefined;
     }
     const fresh = source === text.text;
-    const caret = fresh ? edit : from.caret?.part === edit.part ? from.caret : null;
+    // The caret in this PDF's source: now, as recorded when it was compiled, or where it was put in it.
+    // (A caret put in this very PDF is newer than the one its compile started with.)
+    const caret = fresh
+      ? edit
+      : edit.base?.shown === from
+        ? { offset: edit.base.offset, atom: undefined as { from: number; to: number } | undefined }
+        : from.caret?.part === edit.part
+          ? from.caret
+          : null;
     setPending(!fresh && caret && !caret.atom && !edit.atom ? typedSince(text.text, offsetNow(from, caret.offset, edit.part), edit.offset) : '');
     if (!caret) return undefined;
     let cancelled = false;
@@ -400,7 +411,14 @@ const ArticleView = forwardRef<ArticleViewHandle, Props>(function ArticleView({ 
   };
 
   const caretTo = (edit: PageEdit, offset: number, lines = 0) => {
-    const next: PageEdit = { part: edit.part, offset, from: edit.from, until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines), float: edit.float };
+    const next: PageEdit = {
+      part: edit.part,
+      offset,
+      from: edit.from,
+      until: edit.until === Number.MAX_SAFE_INTEGER ? edit.until : Math.max(edit.from, edit.until + lines),
+      float: edit.float,
+      ...(edit.base ? { base: edit.base } : {}),
+    };
     setPageEdit(next);
     editRef.current = next;
   };

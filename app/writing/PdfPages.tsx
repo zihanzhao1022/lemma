@@ -9,6 +9,7 @@ import { Hit } from './document';
 import type { Spot } from './pageAlign';
 import { Box, imageBoxes } from './pageImages';
 import { PageText, itemIndex, itemPage } from './pageRegions';
+import { GlyphRun, glyphRuns } from './pdfGlyphs';
 import { pdfClickWord, pdfTextAt, selectedPdfWord } from './pdfText';
 
 /** A double click in the PDF: where (see Hit), the word under it and the text of its line. */
@@ -89,56 +90,229 @@ export interface Size {
   height: number;
 }
 
-/** What a drawn page offers for clicks and carets: the PDF it shows, its frame, its text layer's spans and their items. */
+/**
+ * What a drawn page offers for clicks and carets: the PDF it shows, its frame, its text as runs of glyphs (with
+ * their exact places), the text layer's span and the SVG text drawing each run, and the runs as text items.
+ */
 interface DrawnPage {
   doc: PDFDocumentProxy;
   frame: HTMLDivElement;
   spans: HTMLElement[];
   items: TextItem[];
   view: PageViewport;
+  runs: GlyphRun[];
+  texts: SVGTextElement[];
+  /** The page's size in PDF points. */
+  width: number;
+  height: number;
+}
+
+/** The runs of glyphs a page draws as text, and the operators that drew them on the canvas. */
+async function pageRuns(page: Awaited<ReturnType<PDFDocumentProxy['getPage']>>): Promise<{ runs: GlyphRun[]; drawn: Set<number> }> {
+  const pdfjs = await loadPdfjs();
+  const list = await page.getOperatorList();
+  return glyphRuns(list.fnArray, list.argsArray, pdfjs.OPS, (name) => {
+    try {
+      return page.commonObjs.has(name) ? page.commonObjs.get(name) : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+}
+
+/** Runs as pdf.js text items: their text, where they start, and how wide and tall they are, in PDF points. */
+const runItems = (runs: GlyphRun[]): TextItem[] =>
+  runs.map((run) => {
+    const last = run.glyphs[run.glyphs.length - 1];
+    return {
+      str: run.str,
+      dir: 'ltr',
+      transform: [run.size * run.scaleX, 0, 0, run.size, run.x, run.y],
+      width: last ? last.x + last.width : 0,
+      height: run.size,
+      fontName: run.font,
+      hasEOL: false,
+    } as TextItem;
+  });
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+/** The page's text as SVG, glyph by glyph where the PDF puts it, in the fonts pdf.js loaded from the PDF. */
+function glyphLayer(runs: GlyphRun[], width: number, height: number): { svg: SVGSVGElement; texts: SVGTextElement[] } {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('class', 'pdf-glyphs');
+  const texts = runs.map((run) => {
+    const text = document.createElementNS(SVG, 'text');
+    placeRun(text, run, height, 0, -1);
+    svg.append(text);
+    return text;
+  });
+  return { svg, texts };
+}
+
+/** Sets a run's glyphs in its SVG text; those from `from` on moved right by `shift` PDF points (typing before them). */
+function placeRun(text: SVGTextElement, run: GlyphRun, height: number, shift: number, from: number): void {
+  const scale = run.scaleX || 1;
+  text.setAttribute('font-family', run.font);
+  text.setAttribute('font-size', String(run.size));
+  text.setAttribute('fill', run.color);
+  text.setAttribute('y', String(height - run.y));
+  text.setAttribute('x', run.glyphs.map((glyph, index) => run.x + (glyph.x + (from >= 0 && index >= from ? shift : 0)) / scale).join(' '));
+  if (scale !== 1) text.setAttribute('transform', `matrix(${scale} 0 0 1 ${run.x * (1 - scale)} 0)`);
+  else text.removeAttribute('transform');
+  text.textContent = run.glyphs.map((glyph) => glyph.char).join('');
+}
+
+let measurer: CanvasRenderingContext2D | null = null;
+
+/**
+ * The text layer: each run's text, transparent, over the run (stretched to its width as pdf.js does), with spaces
+ * between words and a line break between lines, for selecting, copying and quoting in comments.
+ */
+function selectionLayer(runs: GlyphRun[], width: number, height: number, scale: number): { layer: HTMLDivElement; spans: HTMLElement[] } {
+  const layer = document.createElement('div');
+  layer.className = 'textLayer';
+  layer.style.setProperty('--scale-factor', String(scale));
+  layer.style.setProperty('--total-scale-factor', String(scale));
+  measurer ??= document.createElement('canvas').getContext('2d');
+  const spans = runs.map((run, index) => {
+    const span = document.createElement('span');
+    const last = run.glyphs[run.glyphs.length - 1];
+    const runWidth = last ? last.x + last.width : 0;
+    span.textContent = run.str;
+    span.style.left = `${(run.x / width) * 100}%`;
+    span.style.top = `${((height - run.y - 0.8 * run.size) / height) * 100}%`;
+    span.style.fontFamily = 'serif';
+    span.style.setProperty('--font-height', `${run.size}px`);
+    if (measurer && run.str) {
+      measurer.font = `${run.size}px serif`;
+      const natural = measurer.measureText(run.str).width;
+      if (natural > 0) span.style.setProperty('--scale-x', String(runWidth / natural));
+    }
+    if (run.str) layer.append(span);
+    const next = runs[index + 1];
+    if (!next) return span;
+    if (Math.abs(next.y - run.y) > 0.5 * run.size || next.x < run.x) layer.append(document.createElement('br'));
+    else if (next.x - (run.x + runWidth) > 0.15 * run.size) layer.append(document.createTextNode(' '));
+    return span;
+  });
+  return { layer, spans };
 }
 
 const GAP = 12;
 
-/** The clicked glyph and side of it, from the text layer under the point, else from the items' geometry. */
+/** The clicked glyph and the side of it the click was on, from the runs' glyph places; item -1 off the text. */
 function glyphAt(drawn: DrawnPage, number: number, clientX: number, clientY: number): PageClick | null {
-  const { frame, spans, items, view } = drawn;
+  const { frame, runs, view } = drawn;
   const box = frame.getBoundingClientRect();
   if (clientX < box.left || clientX > box.right || clientY < box.top || clientY > box.bottom) return null;
   const [x, y] = view.convertToPdfPoint((clientX - box.left) * view.width / box.width, (clientY - box.top) * view.height / box.height) as [number, number];
   const hit = { page: number, x, y, pageWidth: Math.abs(view.viewBox[2] - view.viewBox[0]), clientX, clientY };
-  const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
-  const position = document.caretPositionFromPoint?.(clientX, clientY);
-  const node = position ? position.offsetNode : doc.caretRangeFromPoint?.(clientX, clientY)?.startContainer;
-  const at = position ? position.offset : doc.caretRangeFromPoint?.(clientX, clientY)?.startOffset ?? 0;
-  const span = node?.parentElement;
-  const index = span ? spans.indexOf(span) : -1;
-  if (index >= 0 && node instanceof Text && node.length > 0) {
-    // The caret position between glyphs, as the glyph after it (or the last one, after it).
-    if (at < node.length) return { ...hit, item: number * 100000 + index, offset: at, side: 'before' };
-    return { ...hit, item: number * 100000 + index, offset: node.length - 1, side: 'after' };
-  }
-  const found = pdfTextAt(items, x, y);
-  if (!found) return { ...hit, item: -1, offset: 0, side: 'before' };
-  const item = items[found.index];
-  const [a, b, , , left] = item.transform as number[];
-  const share = Math.max(0, Math.min(0.999999, (x - left) / Math.max(1e-6, item.width || Math.hypot(a, b))));
-  const offset = Math.min(item.str.length - 1, Math.floor(share * item.str.length));
-  return { ...hit, item: number * 100000 + found.index, offset: Math.max(0, offset), side: share * item.str.length - offset < 0.5 ? 'before' : 'after' };
+  // The runs on the clicked line, the nearest along it first.
+  let best: { run: number; distance: number } | null = null;
+  runs.forEach((run, index) => {
+    if (y < run.y - 0.3 * run.size || y > run.y + 0.9 * run.size || run.glyphs.length === 0) return;
+    const last = run.glyphs[run.glyphs.length - 1];
+    const right = run.x + last.x + last.width;
+    const distance = x < run.x ? run.x - x : x > right ? x - right : 0;
+    if (distance > 1.5 * run.size) return;
+    const vertical = Math.abs(y - (run.y + 0.3 * run.size));
+    if (!best || distance + vertical * 0.01 < best.distance) best = { run: index, distance: distance + vertical * 0.01 };
+  });
+  if (!best) return { ...hit, item: -1, offset: 0, side: 'before' };
+  const index = (best as { run: number }).run;
+  const run = runs[index];
+  const along = x - run.x;
+  const glyph = run.glyphs.find((candidate) => along < candidate.x + candidate.width) ?? run.glyphs[run.glyphs.length - 1];
+  const side = along < glyph.x + glyph.width / 2 ? 'before' : 'after';
+  return { ...hit, item: number * 100000 + index, offset: glyph.offset, side };
 }
 
-/** A glyph's box in the window: across, the glyph's own; down, its line's (the text layer span's, a font size tall). */
+/** A glyph's box in the window: across, the glyph's advance; down, a font size from just above its baseline. */
 function glyphBox(drawn: DrawnPage, spot: Spot): DOMRect | null {
-  const span = drawn.spans[itemIndex(spot.item)];
-  const node = span?.firstChild;
-  if (!(node instanceof Text) || node.length === 0) return null;
-  const range = document.createRange();
-  const start = Math.min(spot.offset, node.length - 1);
-  range.setStart(node, start);
-  range.setEnd(node, Math.min(node.length, start + Math.max(1, spot.length)));
-  const glyph = range.getClientRects()[0] ?? range.getBoundingClientRect();
-  const line = span.getBoundingClientRect();
-  return new DOMRect(glyph.left, line.top, glyph.width, line.height);
+  const run = drawn.runs[itemIndex(spot.item)];
+  if (!run || run.glyphs.length === 0) return null;
+  const glyph = [...run.glyphs].reverse().find((candidate) => candidate.offset <= spot.offset) ?? run.glyphs[0];
+  const box = drawn.frame.getBoundingClientRect();
+  const across = box.width / drawn.width;
+  const down = box.height / drawn.height;
+  return new DOMRect(box.left + (run.x + glyph.x) * across, box.top + (drawn.height - run.y - 0.8 * run.size) * down, glyph.width * across, 1.05 * run.size * down);
+}
+
+/** The glyphs a doc's fonts have, by the text they stand for: the character to draw and its advance per em. */
+const fontGlyphs = new WeakMap<PDFDocumentProxy, Map<string, Map<string, { char: string; em: number }>>>();
+
+function learnGlyphs(doc: PDFDocumentProxy, runs: GlyphRun[]): void {
+  let fonts = fontGlyphs.get(doc);
+  if (!fonts) fontGlyphs.set(doc, (fonts = new Map()));
+  for (const run of runs) {
+    let known = fonts.get(run.font);
+    if (!known) fonts.set(run.font, (known = new Map()));
+    for (const glyph of run.glyphs) if (glyph.text && !known.has(glyph.text)) known.set(glyph.text, { char: glyph.char, em: glyph.width / (run.size * (run.scaleX || 1)) });
+  }
+}
+
+/**
+ * Typed text TeX has not set yet, drawn at the caret in the run's own font (a character the font has never shown
+ * falls back to a serif), the rest of the line moved right to make room. Returns its width in PDF points and how
+ * to put the page back.
+ */
+function showPending(drawn: DrawnPage, spot: CaretSpot, pending: string): { width: number; undo: () => void } {
+  const index = itemIndex(spot.item);
+  const run = drawn.runs[index];
+  const svg = drawn.texts[0]?.ownerSVGElement;
+  if (!run || !svg || !pending) return { width: 0, undo: () => undefined };
+  const known = fontGlyphs.get(drawn.doc)?.get(run.font) ?? new Map<string, { char: string; em: number }>();
+  const at = run.glyphs.findIndex((glyph) => glyph.offset >= spot.offset);
+  const split = at < 0 ? run.glyphs.length : spot.side === 'after' ? at + 1 : at;
+  const start = run.x + (split < run.glyphs.length ? run.glyphs[split].x : run.glyphs[run.glyphs.length - 1].x + run.glyphs[run.glyphs.length - 1].width);
+  measurer ??= document.createElement('canvas').getContext('2d');
+  const text = document.createElementNS(SVG, 'text');
+  text.setAttribute('font-size', String(run.size));
+  text.setAttribute('fill', run.color);
+  text.setAttribute('y', String(drawn.height - run.y));
+  let width = 0;
+  for (const char of pending) {
+    const glyph = known.get(char);
+    const span = document.createElementNS(SVG, 'tspan');
+    span.setAttribute('x', String(start + width));
+    if (glyph) {
+      span.setAttribute('font-family', run.font);
+      span.textContent = glyph.char;
+      width += glyph.em * run.size * (run.scaleX || 1);
+    } else {
+      span.setAttribute('font-family', 'serif');
+      span.textContent = char;
+      if (measurer) {
+        measurer.font = `${run.size}px serif`;
+        width += measurer.measureText(char).width;
+      }
+    }
+    text.append(span);
+  }
+  svg.append(text);
+  // The rest of the line: this run from the caret on, and the runs after it until a gap wider than a column's.
+  const moved: number[] = [];
+  placeRun(drawn.texts[index], run, drawn.height, width, split);
+  moved.push(index);
+  let edge = run.x + (run.glyphs[run.glyphs.length - 1].x + run.glyphs[run.glyphs.length - 1].width);
+  for (let next = index + 1; next < drawn.runs.length; next += 1) {
+    const other = drawn.runs[next];
+    if (Math.abs(other.y - run.y) > 0.3 * run.size || other.x < edge - 0.5 || other.x - edge > 3 * run.size || other.glyphs.length === 0) break;
+    placeRun(drawn.texts[next], other, drawn.height, width, 0);
+    moved.push(next);
+    edge = other.x + other.glyphs[other.glyphs.length - 1].x + other.glyphs[other.glyphs.length - 1].width;
+  }
+  return {
+    width,
+    undo: () => {
+      text.remove();
+      for (const which of moved) placeRun(drawn.texts[which], drawn.runs[which], drawn.height, 0, -1);
+    },
+  };
 }
 
 /** One page: drawn (canvas, text, links) once it comes near the screen, and again when the PDF or scale changes. */
@@ -181,26 +355,24 @@ const Page: React.FC<{
     if (!near || !target) return undefined;
     let cancelled = false;
     (async () => {
-      const pdfjs = await loadPdfjs();
       const page = await doc.getPage(number);
       if (cancelled) return;
       const ratio = window.devicePixelRatio || 1;
       const view = page.getViewport({ scale });
+      const base = page.getViewport({ scale: 1 });
+      // Text the PDF sets upright and filled is drawn as SVG in its own fonts; the canvas draws everything else.
+      const { runs, drawn: asText } = await pageRuns(page);
+      if (cancelled) return;
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(view.width * ratio);
       canvas.height = Math.floor(view.height * ratio);
       canvas.style.width = `${view.width}px`;
       canvas.style.height = `${view.height}px`;
       canvas.style.display = 'block';
-      await page.render({ canvas, viewport: page.getViewport({ scale: scale * ratio }) }).promise;
+      await page.render({ canvas, viewport: page.getViewport({ scale: scale * ratio }), operationsFilter: (index: number) => !asText.has(index) }).promise;
       if (cancelled) return;
-      const content = await page.getTextContent();
-      const text = document.createElement('div');
-      text.className = 'textLayer';
-      text.style.setProperty('--scale-factor', String(scale));
-      text.style.setProperty('--total-scale-factor', String(scale));
-      const textLayer = new pdfjs.TextLayer({ textContentSource: content, container: text, viewport: view });
-      await textLayer.render();
+      const glyphs = glyphLayer(runs, base.width, base.height);
+      const { layer: text, spans } = selectionLayer(runs, base.width, base.height, scale);
       const links = renderPdfLinks({
         annotations: await page.getAnnotations({ intent: 'display' }),
         viewport: view,
@@ -216,8 +388,9 @@ const Page: React.FC<{
       });
       if (cancelled || !frame.current) return;
       renderedDoubleClick.current = onDoubleClick;
-      target.replaceChildren(canvas, text, links);
-      drawn.current = { doc, frame: frame.current, spans: textLayer.textDivs, items: content.items.filter((item): item is TextItem => 'str' in item), view };
+      target.replaceChildren(canvas, glyphs.svg, text, links);
+      drawn.current = { doc, frame: frame.current, spans, items: runItems(runs), view, runs, texts: glyphs.texts, width: base.width, height: base.height };
+      learnGlyphs(doc, runs);
       onDrawn(number, drawn.current);
       textLayerRef.current?.(number, text);
     })().catch(() => undefined);
@@ -298,6 +471,8 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
   // Bumped whenever a page is drawn again, so the caret is placed on the new drawing.
   const [drawing, setDrawing] = useState(0);
   const [caretPlace, setCaretPlace] = useState<{ left: number; top: number; height: number } | null>(null);
+  // Puts back what the typed text shown at the caret moved (showPending).
+  const preview = useRef<(() => void) | null>(null);
   const [outlinePlace, setOutlinePlace] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const handlers = useRef({ onCaretText, onCaretKey, onCaretLeave });
   handlers.current = { onCaretText, onCaretKey, onCaretLeave };
@@ -401,8 +576,9 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
         text = (async () => {
           const page = await doc.getPage(number);
           const view = page.getViewport({ scale: 1 });
-          const content = await page.getTextContent();
-          return { width: view.width, height: view.height, items: content.items.filter((item): item is TextItem => 'str' in item) };
+          // The same runs, in the same order, as the page draws: items and spans share their numbers.
+          const { runs } = await pageRuns(page);
+          return { width: view.width, height: view.height, items: runItems(runs) };
         })().catch(() => undefined);
         texts.current.pages.set(number, text);
       }
@@ -447,13 +623,21 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
   useLayoutEffect(() => {
     const origin = sheet.current?.getBoundingClientRect();
     const spots = [caret, outline?.[0], outline?.[1]].filter((spot): spot is Spot => Boolean(spot));
+    // Typing shown before stays until its page is drawn again from the new PDF, so it never blinks out.
     if (spots.some((spot) => pages.current.get(itemPage(spot.item))?.doc !== loaded?.doc)) return;
+    preview.current?.();
+    preview.current = null;
     const place = (spot: Spot): DOMRect | null => {
       const page = pages.current.get(itemPage(spot.item));
       return page && origin ? glyphBox(page, spot) : null;
     };
     const glyph = caret ? place(caret) : null;
-    setCaretPlace(glyph && origin ? { left: (caret!.side === 'before' ? glyph.left : glyph.right) - origin.left, top: glyph.top - origin.top, height: glyph.height } : null);
+    // Typing TeX has not set yet shows at the caret, in the page's own type, the caret after it.
+    const caretPage = caret ? pages.current.get(itemPage(caret.item)) : undefined;
+    const shown = caret && caretPage && pending ? showPending(caretPage, caret, pending) : null;
+    preview.current = shown?.undo ?? null;
+    const extra = shown && caretPage ? (shown.width * caretPage.frame.getBoundingClientRect().width) / caretPage.width : 0;
+    setCaretPlace(glyph && origin ? { left: (caret!.side === 'before' ? glyph.left : glyph.right) - origin.left + extra, top: glyph.top - origin.top, height: glyph.height } : null);
     const first = outline ? place(outline[0]) : null;
     const last = outline ? place(outline[1]) : null;
     setOutlinePlace(
@@ -466,7 +650,8 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
           }
         : null,
     );
-  }, [caret, outline, drawing, scale, loaded]);
+  }, [caret, outline, drawing, scale, loaded, pending]);
+  useLayoutEffect(() => () => preview.current?.(), []);
 
   // Keys go to a hidden text box at the caret, which also places an input method's candidates there.
   useEffect(() => {
@@ -541,25 +726,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
               style={outlinePlace}
             />
           )}
-          {caretPlace && pending && (
-            // Over the page's own text, the caret at its end, until TeX has set what was typed.
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute z-[3] whitespace-pre bg-white text-gray-900"
-              style={{
-                left: caretPlace.left,
-                top: caretPlace.top,
-                height: caretPlace.height,
-                lineHeight: `${caretPlace.height}px`,
-                fontSize: caretPlace.height * 0.82,
-                fontFamily: '"Latin Modern Roman", "CMU Serif", "Times New Roman", Times, serif',
-              }}
-            >
-              {pending}
-              <span className="writing-caret ml-px inline-block w-[1.5px] bg-violet-700 align-top" style={{ height: caretPlace.height }} />
-            </span>
-          )}
-          {caretPlace && !pending && (
+          {caretPlace && (
             <div
               aria-hidden="true"
               className="writing-caret pointer-events-none absolute z-[3] w-[1.5px] bg-violet-700"

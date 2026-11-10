@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSince } from './pageEdits';
+import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSince, typedSinceText } from './pageEdits';
 import { printedUnits } from './printed';
 
 describe('escapeTyped', () => {
@@ -88,5 +88,15 @@ describe('typedSince', () => {
     expect(typedSince('ab\n\ncd', 2, 4)).toBe('');
     expect(typedSince('x'.repeat(300), 0, 200)).toBe('');
     expect(typedSince('abc', null, 2)).toBe('');
+  });
+});
+
+describe('typedSinceText', () => {
+  it('gives what was inserted right before the caret, as it prints', () => {
+    expect(typedSinceText('a  gain', 'a 5\\% gain', 5)).toBe('5%');
+  });
+  it('gives nothing when the text changed anywhere else too', () => {
+    expect(typedSinceText('abc def', 'abXc dZef', 4)).toBe('');
+    expect(typedSinceText('abc', 'ab', 2)).toBe('');
   });
 });
