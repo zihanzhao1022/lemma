@@ -69,13 +69,19 @@ export function addBibEntries(existing: string, pasted: string): BibMerge {
 const NATBIB = /\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:natbib|acl|iclr\w*|neurips\w*|icml\w*)\b[^}]*\}/;
 
 /**
- * The \\bibliographystyle for a paper's references: an uploaded .bst (e.g. acl_natbib.bst) if there is one,
- * author-year (plainnat) when the preamble uses natbib, numbered in order of citation (unsrt) otherwise.
+ * The \\bibliographystyle for a paper's references: an uploaded .bst (e.g. acl_natbib.bst) if there is one, the
+ * style of an ACM (acmart) or IEEE (IEEEtran) class, author-year (plainnat) when the preamble uses natbib, numbered
+ * in order of citation (unsrt) otherwise.
  */
 export function bibliographyStyle(paper: ResultPaper): string {
   const bst = (paper.files ?? []).find((name) => name.endsWith('.bst'));
   if (bst) return bst.slice(0, -'.bst'.length);
-  return NATBIB.test(stripComments(paper.preamble ?? DEFAULT_PREAMBLE)) ? 'plainnat' : 'unsrt';
+  const preamble = stripComments(paper.preamble ?? DEFAULT_PREAMBLE);
+  // Classes TeX Live has, with their own styles: ACM's and IEEE's.
+  const documentClass = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*([^}\s]+)\s*\}/.exec(preamble)?.[1];
+  if (documentClass === 'acmart') return 'ACM-Reference-Format';
+  if (documentClass === 'IEEEtran') return 'IEEEtran';
+  return NATBIB.test(preamble) ? 'plainnat' : 'unsrt';
 }
 
 /**

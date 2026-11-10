@@ -384,11 +384,16 @@ export interface FullDocument {
   bodyLines: number;
 }
 
-/** Marks at the start of the preamble's \title and \author, as input file `file`, so their text on the page finds its line. */
+/**
+ * Marks at the start of the preamble's \title and \author, as input file `file`, so their text on the page finds its
+ * line. ACM's acmart reads \author's argument at once, before the marks are defined: its authors stay unmarked.
+ */
 export function withTitleMarks(preamble: string, file: number): string {
+  const acm = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*acmart\s*\}/.test(stripComments(preamble));
+  const start = acm ? /^(\s*\\title\s*(?:\[[^\]{}]*\]\s*)?\{)/ : /^(\s*\\(?:title|author)\s*(?:\[[^\]{}]*\]\s*)?\{)/;
   return preamble
     .split('\n')
-    .map((line, index) => line.replace(/^(\s*\\(?:title|author)\s*(?:\[[^\]{}]*\]\s*)?\{)/, `$1\\leavevmode\\galleytextat{${file}}{${index + 1}}`))
+    .map((line, index) => line.replace(start, `$1\\leavevmode\\galleytextat{${file}}{${index + 1}}`))
     .join('\n');
 }
 

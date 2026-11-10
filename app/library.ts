@@ -1,6 +1,7 @@
 import { slugify } from '../editor/schemas';
 import { DEFAULT_PREAMBLE } from '../editor/tex/document';
 import { ResultPaper } from '../types';
+import { TemplateId, templateById, templatePreamble } from './templates';
 
 /** A slug for a new paper that no other paper of the account uses. */
 export function uniqueSlug(title: string, taken: string[], fallback: string): string {
@@ -10,9 +11,14 @@ export function uniqueSlug(title: string, taken: string[], fallback: string): st
   return slug;
 }
 
-/** A new, private paper with no blocks yet. */
-export function newPaper(fields: { title: string; venue?: string; year?: number }, author: string, taken: string[], now = Date.now()): ResultPaper {
+/**
+ * A new, private paper. From a template (templates.ts) it has the template's preamble, with its title and author
+ * put in, and the blocks the template starts with; the template's files are added as it is saved.
+ */
+export function newPaper(fields: { title: string; venue?: string; year?: number; template?: TemplateId }, author: string, taken: string[], now = Date.now()): ResultPaper {
   const id = `res-${now.toString(36)}`;
+  const template = fields.template ? templateById(fields.template) : null;
+  const blocks = (template?.blocks ?? []).map((source, index) => ({ id: `blk-${now.toString(36)}${index.toString(36).padStart(3, '0')}`, kind: 'text' as const, source }));
   return {
     id,
     slug: uniqueSlug(fields.title, taken, id),
@@ -21,9 +27,9 @@ export function newPaper(fields: { title: string; venue?: string; year?: number 
     ...(fields.venue?.trim() ? { venue: fields.venue.trim() } : {}),
     ...(fields.year ? { year: fields.year } : {}),
     hidden: true,
-    preamble: DEFAULT_PREAMBLE,
+    preamble: template ? templatePreamble(template.id, { title: fields.title, author, ...(fields.venue ? { venue: fields.venue } : {}) }) : DEFAULT_PREAMBLE,
     files: [],
-    blocks: [],
+    blocks,
   };
 }
 

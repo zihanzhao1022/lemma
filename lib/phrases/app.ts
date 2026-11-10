@@ -162,6 +162,12 @@ export const { t, useT, table } = phrases({
   '创建中…': { ja: '作成しています…', en: 'Creating…' },
   标题: { ja: 'タイトル', en: 'Title' },
   '投稿去向或状态（可以不填）': { ja: '投稿先や状況（空欄でもかまいません）', en: 'Venue or status (optional)' },
+  'LaTeX 模板': { ja: 'LaTeX テンプレート', en: 'LaTeX template' },
+  'arXiv 预印本（没有指定会议时）': { ja: 'arXiv プレプリント（投稿先が決まっていないとき）', en: 'arXiv preprint (when no venue is set)' },
+  '模板的导言区和样式文件会放进论文，之后可以在「导言区与附件」里改。': {
+    ja: 'テンプレートのプリアンブルとスタイルファイルが論文に入ります。あとから「プリアンブルと添付ファイル」で変更できます。',
+    en: 'The template\'s preamble and style files go into the paper; change them later under "Preamble & attachments".',
+  },
   '新论文只有你能看到；建好后在页面上添加文字、图和表格，再决定分享给谁。': {
     ja: '新しい論文はあなたにしか見えません。作成後にページで文章・図・表を追加し、誰と共有するかを決めてください。',
     en: 'Only you can see a new paper. Add text, figures and tables on its page, then decide whom to share it with.',

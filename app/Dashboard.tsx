@@ -29,6 +29,7 @@ import { useAccount } from './AccountContext';
 import Avatar from './Avatar';
 import ImportDialog from './ImportDialog';
 import { newPaper, sharing } from './library';
+import { DEFAULT_TEMPLATE, TEMPLATES, TemplateId, templateFiles, templateFor } from './templates';
 import { TAG_LOOK, ago } from './look';
 import Menu, { MenuItem, MenuLabel } from './Menu';
 import { FOLDER_TYPE, PAPERS_TYPE, accepts, dragged, dropping } from './dragging';
@@ -96,13 +97,19 @@ interface Row extends Listed {
   touched?: number;
 }
 
-/** Starts a paper: just its title and where it is going; everything else is added on its page. */
+/**
+ * Starts a paper: its title, where it is going, and the template it starts from (the venue's own, found from what
+ * is typed as the venue until one is picked; the arXiv style without one). Everything else is added on its page.
+ */
 const NewPaperDialog: React.FC<{ folder: string | null; onClose: () => void }> = ({ folder, onClose }) => {
   const t = useT();
   const { account, mine, organize } = useAccount()!;
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [venue, setVenue] = useState('');
+  const [template, setTemplate] = useState<TemplateId>(DEFAULT_TEMPLATE);
+  // Once the owner picks a template, typing the venue no longer changes it.
+  const [picked, setPicked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useMessage();
 
@@ -113,8 +120,11 @@ const NewPaperDialog: React.FC<{ folder: string | null; onClose: () => void }> =
     }
     setBusy(true);
     try {
-      const paper = newPaper({ title, venue, year: new Date().getFullYear() }, account.name, mine.content.results.map((item) => item.slug));
-      await mine.saveContentOp({ kind: 'upsert', collection: 'results', item: paper as unknown as { id: string } & Record<string, unknown> });
+      const paper = newPaper({ title, venue, year: new Date().getFullYear(), template }, account.name, mine.content.results.map((item) => item.slug));
+      const files = await templateFiles(template);
+      // The template's style files go in with the paper, as its attachments.
+      if (Object.keys(files).length > 0 || paper.blocks.length > 0) await mine.importPaper(paper, files);
+      else await mine.saveContentOp({ kind: 'upsert', collection: 'results', item: paper as unknown as { id: string } & Record<string, unknown> });
       // A paper started while a folder is open goes into that folder.
       const key = paperKey(account.login, paper.id);
       organize((current) => touch(folder ? moveTo(current, [key], folder) : current, key));
@@ -154,7 +164,33 @@ const NewPaperDialog: React.FC<{ folder: string | null; onClose: () => void }> =
         </label>
         <label className="block space-y-1">
           <span className="text-gray-700">{t('投稿去向或状态（可以不填）')}</span>
-          <input value={venue} onChange={(event) => setVenue(event.target.value)} placeholder="ACL 2027" className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100" />
+          <input
+            value={venue}
+            onChange={(event) => {
+              setVenue(event.target.value);
+              if (!picked) setTemplate(templateFor(event.target.value));
+            }}
+            placeholder="ACL 2027"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-gray-700">{t('LaTeX 模板')}</span>
+          <select
+            value={template}
+            onChange={(event) => {
+              setTemplate(event.target.value as TemplateId);
+              setPicked(true);
+            }}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100"
+          >
+            {TEMPLATES.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.id === DEFAULT_TEMPLATE ? t('arXiv 预印本（没有指定会议时）') : item.name}
+              </option>
+            ))}
+          </select>
+          <span className="block text-xs text-gray-500">{t('模板的导言区和样式文件会放进论文，之后可以在「导言区与附件」里改。')}</span>
         </label>
         <p className="text-xs text-gray-500">{t('新论文只有你能看到；建好后在页面上添加文字、图和表格，再决定分享给谁。')}</p>
         {/* Enter in either field creates the paper; the visible buttons are outside the form. */}

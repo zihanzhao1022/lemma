@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ResultBlock } from '../../types';
-import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, markableInputs, markerLine, parseMarks, placeOf, withMarks } from './document';
+import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, markableInputs, markerLine, parseMarks, placeOf, withMarks, withTitleMarks } from './document';
 
 const blocks: ResultBlock[] = [
   { id: 'blk-a', kind: 'text', source: '\\section{Results}\nOurs keeps the made-up accuracy.' },
@@ -285,5 +285,15 @@ describe('from the PDF to the source', () => {
       { line: 1, level: 0, title: 'Results' },
       { line: 3, level: 1, title: 'The x ablation' },
     ]);
+  });
+});
+
+describe('withTitleMarks', () => {
+  it('marks the title and the authors at the start of their text', () => {
+    expect(withTitleMarks('\\documentclass{article}\n\\title{T}\n\\author{A}', 1)).toBe('\\documentclass{article}\n\\title{\\leavevmode\\galleytextat{1}{2}T}\n\\author{\\leavevmode\\galleytextat{1}{3}A}');
+  });
+
+  it('leaves the authors of an ACM paper unmarked: acmart reads them before marks exist', () => {
+    expect(withTitleMarks('\\documentclass[sigconf]{acmart}\n\\title{T}\n\\author{A}', 1)).toBe('\\documentclass[sigconf]{acmart}\n\\title{\\leavevmode\\galleytextat{1}{2}T}\n\\author{A}');
   });
 });
