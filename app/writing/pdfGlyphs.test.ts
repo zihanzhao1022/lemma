@@ -45,6 +45,14 @@ describe('glyphRuns', () => {
     ]);
   });
 
+  it('reads a text matrix given as a typed array, as pdf.js gives a line stretched by font expansion', () => {
+    const fn = [OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText];
+    const args = [null, ['g1', 10], [new Float32Array([0.5, 0, 0, 1, 50, 500])], [[glyph('a', 1000), glyph('b', 1000)]]];
+    const { runs, drawn } = glyphRuns(fn, args, OPS, fonts);
+    expect(runs[0]).toMatchObject({ x: 50, y: 500, scaleX: 0.5, glyphs: [{ x: 0, width: 5 }, { x: 5, width: 5 }] });
+    expect([...drawn]).toEqual([3]);
+  });
+
   it('leaves to the canvas a Type 3 font, invisible text and rotated text', () => {
     const fn = [OPS.beginText, OPS.setFont, OPS.showText, OPS.setFont, OPS.setTextRenderingMode, OPS.showText, OPS.setTextRenderingMode, OPS.setTextMatrix, OPS.showText];
     const args = [null, ['g3', 10], [[glyph('a')]], ['g1', 10], [3], [[glyph('b')]], [0], [[0, 1, -1, 0, 100, 100]], [[glyph('c')]]];

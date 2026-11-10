@@ -81,6 +81,13 @@ const compose = (outer: Matrix, inner: Matrix): Matrix => [
 
 const round = (value: number) => Math.round(value * 1e6) / 1e6;
 
+/** A matrix as pdf.js passes it: an array or a typed array (Float32Array for a text matrix), else null. */
+const matrixOf = (value: unknown): Matrix | null => {
+  if (!value || typeof value !== 'object' || (value as ArrayLike<number>).length !== 6) return null;
+  const m = Array.from(value as ArrayLike<number>, Number) as Matrix;
+  return m.every(Number.isFinite) ? m : null;
+};
+
 interface RawGlyph {
   fontChar?: string;
   unicode?: string;
@@ -194,13 +201,17 @@ export function glyphReader(ops: GlyphOps, fontOf: (name: string) => FontInfo | 
       case ops.restore:
         state = stack.pop() ?? state;
         break;
-      case ops.transform:
-        state.ctm = compose(state.ctm, args as Matrix);
+      case ops.transform: {
+        const m = matrixOf(args);
+        if (m) state.ctm = compose(state.ctm, m);
         break;
-      case ops.paintFormXObjectBegin:
+      }
+      case ops.paintFormXObjectBegin: {
         stack.push({ ...state });
-        if (Array.isArray(args[0]) && args[0].length === 6) state.ctm = compose(state.ctm, args[0] as Matrix);
+        const form = matrixOf(args[0]);
+        if (form) state.ctm = compose(state.ctm, form);
         break;
+      }
       case ops.paintFormXObjectEnd:
         state = stack.pop() ?? state;
         break;
@@ -241,7 +252,7 @@ export function glyphReader(ops: GlyphOps, fontOf: (name: string) => FontInfo | 
         moveText(Number(args[0]), Number(args[1]));
         break;
       case ops.setTextMatrix:
-        textMatrix = (Array.isArray(args[0]) ? args[0] : args) as Matrix;
+        textMatrix = matrixOf(args[0]) ?? matrixOf(args) ?? IDENTITY;
         lineX = lineY = x = y = 0;
         break;
       case ops.nextLine:
