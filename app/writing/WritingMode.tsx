@@ -15,6 +15,7 @@ import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper } from '../../types';
 import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, locate, markableInputs, parseMarks, placeOf, withMarks } from './document';
+import { fillFloatCache, withCachedFloats } from './floatCache';
 import { SHADOWED, attachedKey, attachedName, editableText, isLatex } from './files';
 import type { Spot } from './pageAlign';
 import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSinceText } from './pageEdits';
@@ -242,9 +243,13 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         const keys = citedKeys(body);
         const style = bibliographyStyle({ ...paper, preamble });
         const cites = bib !== undefined && keys.length > 0;
-        const doc = fullDocument(preamble, body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null);
+        // Tables already set are taken from their boxes; the others are set now and cached once typing pauses.
+        const cached = withCachedFloats(body, preamble, carried.current.aux);
+        const doc = fullDocument(preamble, cached.body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null);
         // The attachments as they are being edited.
         const inputs: Record<string, string | Uint8Array> = { ...files, ...(bib !== undefined ? { [REFERENCES_FILE]: encode(bib) } : {}), ...changedFiles(snapshot, saved.current ?? {}) };
+        const sources = { ...inputs };
+        Object.assign(inputs, cached.files);
         const fileNames = [MAIN];
         const texFiles: Record<string, string> = {};
         for (const [key, source] of Object.entries(snapshot)) {
@@ -271,6 +276,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         // Like latexmk: once more when the run changed the labels or citations it read.
         if (out.pdf && out.aux !== undefined && references(out.aux) !== references(state.aux)) out = await pass(out.aux, bbl, false);
         carried.current = { aux: out.aux, bbl, bibKey: cites ? bibKey : '' };
+        if (out.pdf) fillFloatCache(engine, body, preamble, sources, out.aux);
         const issues = parseErrors(out.log).map((issue): Issue => {
           // An error in an attachment the editor has open goes to its line there.
           const attached = issue.file ? attachedKey(issue.file.replace(/^\.\//, '')) : '';

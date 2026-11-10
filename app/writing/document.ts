@@ -372,6 +372,7 @@ const MARK_SUPPORT = String.raw`\makeatletter
 \protected\def\galleyfloatat#1#2{\galley@mark{B}{#2}{#1}}
 \protected\def\galleyendat#1#2{\par\galley@mark{E}{#2}{#1}}
 \protected\def\galleyreferences{\par\galley@mark{R}{0}{0}}
+\protected\def\lemmacached#1#2#3#4#5{\leavevmode\hbox to#3{\lower#5\hbox{\pdfximage width #3 height \dimexpr#4+#5\relax page #2 {#1}\pdfrefximage\pdflastximage}\hss}}
 \makeatother`;
 
 export interface FullDocument {
@@ -395,10 +396,16 @@ export function withTitleMarks(preamble: string, file: number): string {
  * The paper as one document: its preamble, every block in order and, when it cites, its bibliography. `titleFile`
  * marks the title and the authors (withTitleMarks), the preamble being that input file.
  */
-export function fullDocument(preamble: string, body: string, bibliography: { style: string | null; file: string } | null, { titleFile }: { titleFile?: number } = {}): FullDocument {
-  const own = (titleFile ? withTitleMarks(preamble, titleFile) : preamble).replace(/\s+$/, '');
+/** The lines main.tex opens with: options passed to packages, the class when the preamble names none, then the preamble. */
+export function documentHead(preamble: string): { head: string[]; own: string } {
+  const own = preamble.replace(/\s+$/, '');
   const head = passOptionsLines(own);
   if (!/\\documentclass/.test(stripComments(own))) head.push('\\documentclass{article}');
+  return { head, own };
+}
+
+export function fullDocument(preamble: string, body: string, bibliography: { style: string | null; file: string } | null, { titleFile }: { titleFile?: number } = {}): FullDocument {
+  const { head, own } = documentHead(titleFile ? withTitleMarks(preamble, titleFile) : preamble);
   const text = body.replace(/\s+$/, '');
   // The page shows the paper's title itself, so the blocks leave \maketitle out; the whole paper opens with it,
   // as the paper does, when the preamble gives a title the text does not set itself.

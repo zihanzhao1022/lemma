@@ -10,6 +10,7 @@ import { citedKeys, hashText } from './numbering';
 import { DEFAULT_PREAMBLE } from '../tex/document';
 import { Mark, bodyOf, fullDocument, parseMarks } from '../../app/writing/document';
 import type { TexEngine } from '../tex/engine';
+import { fillFloatCache, withCachedFloats } from '../../app/writing/floatCache';
 import { parseAuxCitations, parseAuxLabels, parseErrors } from '../tex/log';
 import type { ResultArticle, ResultBlock, ResultPaper } from '../../types';
 
@@ -119,13 +120,15 @@ export async function compileLive(
   const keys = citedKeys(body);
   const style = bibliographyStyle(paper);
   const cites = files[REFERENCES_FILE] !== undefined && keys.length > 0;
-  const doc = fullDocument(preamble, body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null, { titleFile });
+  // Tables already set are taken from their boxes; the others are set now and cached once typing pauses.
+  const cached = withCachedFloats(body, preamble, carry.aux);
+  const doc = fullDocument(preamble, cached.body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null, { titleFile });
   const bibKey = JSON.stringify([keys, style]);
   const bibtex = cites && (bibKey !== carry.bibKey || carry.bbl === undefined);
   const pass = (aux: string | undefined, bbl: string | undefined, withBibtex: boolean) =>
     engine.compile({
       main: doc.main,
-      files: { ...files, ...(aux ? { 'main.aux': aux } : {}), ...(bbl && !withBibtex ? { 'main.bbl': bbl } : {}) },
+      files: { ...files, ...cached.files, ...(aux ? { 'main.aux': aux } : {}), ...(bbl && !withBibtex ? { 'main.bbl': bbl } : {}) },
       bibtex: withBibtex,
       read: ['main.gpos', 'main.bbl'],
     });
@@ -141,6 +144,7 @@ export async function compileLive(
     }
   }
   const next = { aux: out.aux ?? carry.aux, bbl, bibKey: cites ? bibKey : '' };
+  if (out.pdf) fillFloatCache(engine, body, preamble, files, next.aux);
   if (!out.pdf) return { ok: false, message: parseErrors(out.log)[0]?.message ?? out.reason ?? 'no PDF', carry: next };
   return { ok: true, pdf: out.pdf, marks: parseMarks(out.written?.['main.gpos'] ?? ''), carry: next, ...(unsettled ? { unsettled } : {}) };
 }
