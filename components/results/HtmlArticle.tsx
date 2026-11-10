@@ -619,7 +619,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
           return <span key={`u${item.from}`} className="html-rule" contentEditable={false} data-s={item.from} data-e={item.to} style={ruleStyle(item)} />;
         case 'cite':
           return (
-            <span key={`c${item.from}`} className="html-atom" contentEditable={false} data-s={item.from} data-e={item.to} title={item.keys.join(', ')}>
+            <span key={`c${item.from}`} className="html-atom html-cite" contentEditable={false} data-s={item.from} data-e={item.to} data-cite={item.keys.join(' ')} title={item.keys.join(', ')}>
               {citationText(item.command, item.keys, numbering, style, item.pre, item.post)}
             </span>
           );
@@ -884,6 +884,21 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   }, [wantedKey, read, frame, zoom]);
 
   const onClickCapture = (event: React.MouseEvent) => {
+    // A citation leads to its entry in the references, marked for a moment.
+    const cite = (event.target as HTMLElement).closest?.<HTMLElement>('[data-cite]');
+    if (cite && window.getSelection()?.isCollapsed !== false) {
+      const keys = (cite.dataset.cite ?? '').split(' ');
+      const entries = keys.map((key) => wrapper.current?.querySelector<HTMLElement>(`[data-ref="${CSS.escape(key)}"]`)).filter((entry): entry is HTMLElement => Boolean(entry));
+      if (entries.length > 0) {
+        entries[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        for (const entry of entries) {
+          entry.classList.remove('html-ref-flash');
+          void entry.offsetWidth;
+          entry.classList.add('html-ref-flash');
+        }
+        return;
+      }
+    }
     if (!window.getSelection()?.isCollapsed && !live) return;
     const origin = wrapper.current?.getBoundingClientRect();
     if (!origin) return;
@@ -1064,7 +1079,9 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
                 <h2>References</h2>
                 <ol className={style.citations === 'author-year' ? 'author-year' : undefined}>
                   {numbering.references.map((entry) => (
-                    <li key={entry.key}>{entry.text}</li>
+                    <li key={entry.key} data-ref={entry.key}>
+                      {entry.text}
+                    </li>
                   ))}
                 </ol>
               </section>

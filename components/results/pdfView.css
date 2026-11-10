@@ -152,3 +152,8 @@
     animation: none;
   }
 }
+
+/* Citations in the text, coloured as links to the bibliography (app/writing/bibEntry.ts). */
+.pdf-glyphs .pdf-cite {
+  fill: rgb(109 40 217);
+}

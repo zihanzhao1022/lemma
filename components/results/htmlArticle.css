@@ -329,3 +329,26 @@
   font-size: 1.05em;
   line-height: 1.35;
 }
+
+/* Citations, coloured as links: a click leads to the entry in the references, marked for a moment. */
+.html-cite {
+  color: rgb(109 40 217);
+  cursor: pointer;
+}
+.html-references li {
+  border-radius: 3px;
+}
+.html-ref-flash {
+  animation: html-ref-flash 2.6s ease-out;
+}
+@keyframes html-ref-flash {
+  0%,
+  60% {
+    background: rgb(167 139 250 / 0.3);
+    box-shadow: 0 0 0 3px rgb(167 139 250 / 0.3);
+  }
+  to {
+    background: transparent;
+    box-shadow: 0 0 0 3px transparent;
+  }
+}

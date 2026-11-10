@@ -9,6 +9,7 @@ import { Hit } from './document';
 import type { Spot } from './pageAlign';
 import { Box, imageBoxes } from './pageImages';
 import { PageText, itemIndex, itemPage } from './pageRegions';
+import { EntryBox, citedGlyphs, entryBox } from './bibEntry';
 import { Glyph, GlyphRun, glyphReader, glyphRuns } from './pdfGlyphs';
 import { pdfClickWord, pdfTextAt, selectedPdfWord } from './pdfText';
 
@@ -40,7 +41,7 @@ export interface CaretSpot extends Spot {
 
 export interface PdfPagesHandle {
   /** Scrolls to a point (PDF points from the page's bottom left) and marks it for a moment. */
-  show: (page: number, y: number) => void;
+  show: (page: number, y: number, x?: number) => void;
   /** The text pdf.js reads from a page of the PDF on screen, items numbered as the text layer's spans. */
   pageText: (page: number) => Promise<PageText | undefined>;
   /** What a click at a point of the window would hit. */
@@ -192,18 +193,40 @@ function glyphLayer(runs: GlyphRun[], width: number, height: number): { svg: SVG
   return { svg, texts };
 }
 
+/** The glyphs of a run a citation link covers (citedGlyphs), drawn in the citation colour. */
+const citedIn = new WeakMap<GlyphRun, Set<number>>();
+
 /** Sets a run's glyphs in its SVG text, each moved right by its `shifts` (PDF points), those in `skip` left out. */
 function placeRun(text: SVGTextElement, run: GlyphRun, height: number, shifts: number[] | null, skip?: Set<number>): void {
   const scale = run.scaleX || 1;
   const kept = run.glyphs.map((glyph, index) => ({ glyph, index })).filter(({ index }) => !skip?.has(index));
+  const xOf = ({ glyph, index }: { glyph: Glyph; index: number }) => run.x + (glyph.x + (shifts?.[index] ?? 0)) / scale;
   text.setAttribute('font-family', run.font);
   text.setAttribute('font-size', String(run.size));
   text.setAttribute('fill', run.color);
   text.setAttribute('y', String(height - run.y));
-  text.setAttribute('x', kept.map(({ glyph, index }) => run.x + (glyph.x + (shifts?.[index] ?? 0)) / scale).join(' '));
   if (scale !== 1) text.setAttribute('transform', `matrix(${scale} 0 0 1 ${run.x * (1 - scale)} 0)`);
   else text.removeAttribute('transform');
-  text.textContent = kept.map(({ glyph }) => glyph.char).join('');
+  const cited = citedIn.get(run);
+  if (!cited || !kept.some(({ index }) => cited.has(index))) {
+    text.setAttribute('x', kept.map(xOf).join(' '));
+    text.textContent = kept.map(({ glyph }) => glyph.char).join('');
+    return;
+  }
+  // Cited glyphs go in spans of their own, each glyph still at its own place.
+  text.removeAttribute('x');
+  text.replaceChildren();
+  for (let start = 0; start < kept.length; ) {
+    const inCitation = cited.has(kept[start].index);
+    let end = start + 1;
+    while (end < kept.length && cited.has(kept[end].index) === inCitation) end += 1;
+    const span = document.createElementNS(SVG, 'tspan');
+    span.setAttribute('x', kept.slice(start, end).map(xOf).join(' '));
+    if (inCitation) span.setAttribute('class', 'pdf-cite');
+    span.textContent = kept.slice(start, end).map(({ glyph }) => glyph.char).join('');
+    text.append(span);
+    start = end;
+  }
 }
 
 let measurer: CanvasRenderingContext2D | null = null;
@@ -453,11 +476,13 @@ const Page: React.FC<{
   size: Size;
   scale: number;
   root: HTMLElement | null;
-  onLink: (page: number, y: number) => void;
+  /** A link was followed to a place in the PDF; `x` for a citation's entry. */
+  onLink: (page: number, y: number, x?: number) => void;
   onDoubleClick: (click: PdfClick) => void;
   onClick?: (click: PageClick) => void;
   onDrawn: (number: number, drawn: DrawnPage | null) => void;
-  flash: number | null;
+  /** A place a link led to, marked for a moment: a line, or a bibliography entry's box. */
+  flash: { y: number; box?: EntryBox } | null;
   onTextLayer?: (page: number, layer: HTMLElement | null) => void;
   children?: React.ReactNode;
 }> = ({ doc, number, size, scale, root, onLink, onDoubleClick, onClick, onDrawn, flash, onTextLayer, children }) => {
@@ -499,11 +524,14 @@ const Page: React.FC<{
       canvas.style.display = 'block';
       // Text the PDF sets upright and filled is drawn as SVG in its own fonts; the canvas draws everything else.
       const runs = await renderWithoutText(page, canvas, page.getViewport({ scale: scale * ratio }));
+      const annotations = await page.getAnnotations({ intent: 'display' });
       if (cancelled) return;
+      // Citations are coloured: the glyphs under hyperref's links to the bibliography.
+      for (const [index, glyphs] of citedGlyphs(runs, annotations)) citedIn.set(runs[index], glyphs);
       const glyphs = glyphLayer(runs, base.width, base.height);
       const { layer: text, spans } = selectionLayer(runs, base.width, base.height, scale);
       const links = renderPdfLinks({
-        annotations: await page.getAnnotations({ intent: 'display' }),
+        annotations,
         viewport: view,
         onDestination: (destination) => {
           void (async () => {
@@ -511,7 +539,8 @@ const Page: React.FC<{
             if (!resolved || !resolved[0] || typeof resolved[0] !== 'object') return;
             const index = await doc.getPageIndex(resolved[0] as { num: number; gen: number });
             const y = typeof resolved[3] === 'number' ? resolved[3] : size.height;
-            onLink(index + 1, y);
+            const cite = typeof destination === 'string' && destination.startsWith('cite.') && typeof resolved[2] === 'number';
+            onLink(index + 1, y, cite ? (resolved[2] as number) : undefined);
           })().catch(() => undefined);
         },
       });
@@ -571,13 +600,25 @@ const Page: React.FC<{
     >
       <div ref={layers} className="absolute inset-0" />
       {children}
-      {flash !== null && (
+      {flash?.box ? (
+        <div
+          aria-hidden="true"
+          className="writing-flash pointer-events-none absolute z-[3] rounded-[3px] bg-violet-400/20 ring-2 ring-violet-500/70"
+          style={{
+            left: (flash.box.left - 2) * scale,
+            top: (size.height - flash.box.top - 2) * scale,
+            width: (flash.box.right - flash.box.left + 4) * scale,
+            height: (flash.box.top - flash.box.bottom + 4) * scale,
+            animationDuration: '2.6s',
+          }}
+        />
+      ) : flash ? (
         <div
           aria-hidden="true"
           className="writing-flash pointer-events-none absolute inset-x-0 h-6 -translate-y-1/2 bg-violet-400/25"
-          style={{ top: (size.height - flash) * scale }}
+          style={{ top: (size.height - flash.y) * scale }}
         />
-      )}
+      ) : null}
     </div>
   );
 };
@@ -594,7 +635,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
   const task = useRef<PDFDocumentLoadingTask | null>(null);
   const [sizes, setSizes] = useState<Size[]>([]);
   const [width, setWidth] = useState(0);
-  const [flash, setFlash] = useState<{ page: number; y: number; key: number } | null>(null);
+  const [flash, setFlash] = useState<{ page: number; y: number; key: number; box?: EntryBox } | null>(null);
   const pages = useRef(new Map<number, DrawnPage>());
   const texts = useRef<{ doc: PDFDocumentProxy | null; pages: Map<number, Promise<PageText | undefined>> }>({ doc: null, pages: new Map() });
   // Bumped whenever a page is drawn again, so the caret is placed on the new drawing.
@@ -659,7 +700,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
   const scale = (Math.max(200, width - (flow ? 0 : 2 * GAP)) / widest) * zoom;
 
   const show = useCallback(
-    (page: number, y: number) => {
+    (page: number, y: number, x?: number) => {
       const element = scroller.current;
       const target = element?.querySelector<HTMLElement>(`[data-page="${page}"]`);
       const size = sizes[page - 1];
@@ -671,9 +712,21 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
         const top = target.offsetTop + (size.height - y) * scale;
         element.scrollTo({ top: Math.max(0, top - element.clientHeight / 3), behavior: 'smooth' });
       }
-      setFlash({ page, y, key: Date.now() });
+      const key = Date.now();
+      const doc = loaded?.doc;
+      if (x === undefined || !doc) {
+        setFlash({ page, y, key });
+        return;
+      }
+      // A citation's entry: its lines, from the page's runs (drawn already, or read now).
+      void (async () => {
+        const runs = pages.current.get(page)?.doc === doc ? pages.current.get(page)!.runs : (await pageRuns(await doc.getPage(page))).runs;
+        const placed = runs.filter((run) => run.glyphs.length > 0).map((run) => ({ x: run.x, y: run.y, size: run.size, right: run.x + run.glyphs[run.glyphs.length - 1].x + run.glyphs[run.glyphs.length - 1].width }));
+        const box = entryBox(placed, x, y);
+        setFlash({ page, y, key, ...(box ? { box } : {}) });
+      })().catch(() => setFlash({ page, y, key }));
     },
-    [sizes, scale, flow],
+    [sizes, scale, flow, loaded],
   );
 
   const pointAt = useCallback(
@@ -756,7 +809,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
 
   useEffect(() => {
     if (!flash) return undefined;
-    const timer = window.setTimeout(() => setFlash(null), 1600);
+    const timer = window.setTimeout(() => setFlash(null), flash.box ? 2600 : 1600);
     return () => window.clearTimeout(timer);
   }, [flash]);
 
@@ -888,7 +941,7 @@ const PdfPages = React.forwardRef<PdfPagesHandle, Props>(function PdfPages(
               onDoubleClick={loaded.onDoubleClick}
               onClick={loaded.onClick}
               onDrawn={onDrawn}
-              flash={flash && flash.page === index + 1 ? flash.y : null}
+              flash={flash && flash.page === index + 1 ? { y: flash.y, ...(flash.box ? { box: flash.box } : {}) } : null}
               onTextLayer={onTextLayer}
             >
               {overlay?.(index + 1, scale, size)}
