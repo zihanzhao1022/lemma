@@ -486,6 +486,17 @@ export const { t, useT, table } = phrases({
   '还没有关联线：从节点右上角的小圆点拖到另一个节点就能连上。': { ja: 'まだ関連線がありません。ノード右上の小さな丸から別のノードへドラッグするとつながります。', en: 'No links yet: drag from the small dot at a node’s top right to another node.' },
   添加关联: { ja: '関連を追加', en: 'Add a link' },
   分支: { ja: '枝', en: 'Branches' },
+  '「{b}」挂在「{a}」下面': { ja: '「{b}」は「{a}」の下', en: '“{b}” hangs under “{a}”' },
+
+  // Colours and tags of the research space's nodes and lines
+  默认颜色: { ja: 'デフォルトの色', en: 'Default color' },
+  自定义颜色: { ja: '色を選ぶ', en: 'Pick a color' },
+  节点标签: { ja: 'ラベル', en: 'Label' },
+  颜色和标签: { ja: '色とラベル', en: 'Color and label' },
+  '给这个节点加个标签，比如“核心”': { ja: 'このノードにラベルを付ける（例：「中心」）', en: 'Label this node, e.g. “core”' },
+  '给这条线加个标签，比如“对比”': { ja: 'この線にラベルを付ける（例：「対比」）', en: 'Label this line, e.g. “contrast”' },
+  关联线: { ja: '関連線', en: 'Link' },
+  分支线: { ja: '枝', en: 'Branch' },
 
   // Edits on their way to the repository
   '{n} 项改动还没同步到 GitHub': { ja: '{n} 件の変更がまだ GitHub に同期されていません', en: 'Not synced to GitHub yet ({n})' },

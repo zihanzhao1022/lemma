@@ -267,6 +267,17 @@ export interface ResearchSpace {
   relations: [string, string][];
   /** The ideas' words, by ID ("idea-…"). */
   ideas: Record<string, string>;
+  /**
+   * Colours and tags the person gave nodes and lines, by a node's ID, a drawn line's "a|b" (the smaller ID first)
+   * or a branch's "parent>child" (see app/space/space.ts).
+   */
+  marks?: Record<string, SpaceMark>;
+}
+
+/** A colour (#rrggbb) and a short tag the person gave a node or a line of the research space. */
+export interface SpaceMark {
+  color?: string;
+  tag?: string;
 }
 
 /** The paper typeset as one document, as its page shows it, with where each block landed in it. */

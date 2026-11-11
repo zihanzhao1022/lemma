@@ -1,4 +1,4 @@
-import { ResearchSpace } from '../../types';
+import { ResearchSpace, SpaceMark } from '../../types';
 
 /** The research space's file in the account's repository (see ResearchSpace). */
 export const SPACE_PATH = 'research-space.json';
@@ -21,7 +21,14 @@ export function parseSpace(text: string | null): ResearchSpace {
   const relations = Array.isArray(stored.relations)
     ? stored.relations.filter((pair): pair is [string, string] => Array.isArray(pair) && pair.length === 2 && pair.every((id) => typeof id === 'string'))
     : [];
-  return { parents: texts(stored.parents), relations, ideas: texts(stored.ideas) };
+  const marks: Record<string, SpaceMark> = {};
+  for (const [key, value] of Object.entries(record(stored.marks))) {
+    const mark = record(value);
+    const color = typeof mark.color === 'string' && /^#[0-9a-f]{6}$/i.test(mark.color) ? mark.color.toLowerCase() : undefined;
+    const tag = typeof mark.tag === 'string' && mark.tag.trim() ? mark.tag : undefined;
+    if (color || tag) marks[key] = { ...(color ? { color } : {}), ...(tag ? { tag } : {}) };
+  }
+  return { parents: texts(stored.parents), relations, ideas: texts(stored.ideas), ...(Object.keys(marks).length > 0 ? { marks } : {}) };
 }
 
 export const serializeSpace = (space: ResearchSpace): string => `${JSON.stringify(space, null, 2)}\n`;

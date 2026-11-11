@@ -24,6 +24,21 @@ export interface NodeLook {
   square?: boolean;
   /** Labelled at every zoom, in bold (the logic's start). */
   strong?: boolean;
+  /** A short tag over the node, in `tagColor`. */
+  tag?: string;
+  tagColor?: string;
+}
+
+/** A line of the graph: a branch from `a` to `b` hanging under it, or a line drawn between `a` and `b`. */
+export interface GraphLine {
+  kind: 'branch' | 'relation';
+  a: string;
+  b: string;
+}
+/** A colour and a tag a line was given. */
+export interface LineMark {
+  color?: string;
+  tag?: string;
 }
 
 /** What the views around the graph ask of it. */
@@ -71,6 +86,10 @@ interface Props {
   /** The nodes a line from `id` cannot go to. */
   lineSkip: (id: string) => ReadonlySet<string>;
   onRelate: (a: string, b: string, on: boolean) => void;
+  /** The colour and tag a line was given, if any. */
+  lineMark?: (line: GraphLine) => LineMark | undefined;
+  /** What can be done with a line clicked (both kinds can be clicked then); without it a drawn line offers its removal. */
+  lineMenu?: (line: GraphLine, close: () => void) => React.ReactNode;
   /** A node let go outside the canvas: true when what is there took it (the logic's list takes blocks out). */
   onDropOutside?: (id: string, clientX: number, clientY: number) => boolean;
   /** A double click on an empty place: the point in the graph, and where in the canvas a menu fits. */
@@ -102,8 +121,14 @@ interface Props {
 
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3;
+/** How long the view glides to where a button sends it. */
+const GLIDE_MS = 280;
+const LINE_MENU_WIDTH = 248;
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 const shortTitle = (title: string) => (title.length > 28 ? `${title.slice(0, 27)}…` : title);
+/** About how wide a short text is set at `size`: wide characters (CJK) a full size, the rest a little over half. */
+const textWidth = (text: string, size: number) => [...text].reduce((sum, char) => sum + (/[\u1100-\uffff]/.test(char) ? size : size * 0.6), 0);
+const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 type Pins = Record<string, [number, number]>;
 function readPins(key: string): Pins {
@@ -145,6 +170,8 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
     onPlace,
     lineSkip,
     onRelate,
+    lineMark,
+    lineMenu,
     onDropOutside,
     onEmptyDoubleClick,
     menuSize = { width: 160, height: 170 },
@@ -168,7 +195,7 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   // A line being drawn from a node to the pointer, and a line clicked to take it away.
   const [drawing, setDrawing] = useState<{ from: string; x: number; y: number } | null>(null);
-  const [pickedLine, setPickedLine] = useState<Relation | null>(null);
+  const [pickedLine, setPickedLine] = useState<GraphLine | null>(null);
   const [, setFrame] = useState(0);
   const viewport = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef(view);
@@ -284,24 +311,83 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
     setView(placedRef.current.length > 6 ? fitAll(placedRef.current, rect.width, rect.height) : { x: rect.width / 2, y: rect.height / 2.4, k: 1 });
   });
 
+  // The view gliding to where a button sent it: the frame asked for, and where it ends.
+  const glideRef = useRef<{ frame: number; to: View } | null>(null);
+  const stopGlide = useCallback(() => {
+    if (!glideRef.current) return;
+    cancelAnimationFrame(glideRef.current.frame);
+    glideRef.current = null;
+  }, []);
+  useEffect(() => stopGlide, [stopGlide]);
+  /**
+   * Moves the view to `to` over a moment: the scale changes evenly (by the same ratio each instant) and the point in
+   * the middle of the canvas goes straight to the one there at the end, so a zoom keeps the middle where it is.
+   */
+  const glide = useCallback(
+    (to: View) => {
+      stopGlide();
+      const rect = viewport.current?.getBoundingClientRect();
+      const from = viewRef.current;
+      if (!rect || reducedMotion()) {
+        setView(to);
+        return;
+      }
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const start = [(cx - from.x) / from.k, (cy - from.y) / from.k];
+      const end = [(cx - to.x) / to.k, (cy - to.y) / to.k];
+      // Timed from the first frame: a frame's time can be a little before the press.
+      let began: number | null = null;
+      const motion = { frame: 0, to };
+      const step = (now: number) => {
+        began ??= now;
+        const p = Math.min(1, (now - began) / GLIDE_MS);
+        if (p >= 1) {
+          glideRef.current = null;
+          setView(to);
+          return;
+        }
+        const e = 1 - (1 - p) ** 3;
+        const k = from.k * (to.k / from.k) ** e;
+        const gx = start[0] + (end[0] - start[0]) * e;
+        const gy = start[1] + (end[1] - start[1]) * e;
+        setView({ k, x: cx - gx * k, y: cy - gy * k });
+        motion.frame = requestAnimationFrame(step);
+      };
+      motion.frame = requestAnimationFrame(step);
+      glideRef.current = motion;
+    },
+    [stopGlide],
+  );
+
   const fitView = () => {
     const element = viewport.current;
     if (!element) return;
     const { width, height } = element.getBoundingClientRect();
-    setView(fitAll(placed, width, height));
+    glide(fitAll(placed, width, height));
   };
 
-  /** Zooms by `factor` keeping the point (px, py) of the view where it is. */
-  const zoom = useCallback((factor: number, px?: number, py?: number) => {
+  /** `view` zoomed by `factor`, the point (x, y) of the canvas kept where it is. */
+  const zoomed = (current: View, factor: number, x: number, y: number): View => {
+    const k = clamp(current.k * factor, MIN_ZOOM, MAX_ZOOM);
+    const ratio = k / current.k;
+    return { k, x: x - (x - current.x) * ratio, y: y - (y - current.y) * ratio };
+  };
+
+  /** Zooms by `factor` around the point (px, py) of the view, at once (the wheel, a pinch). */
+  const zoom = useCallback(
+    (factor: number, px: number, py: number) => {
+      stopGlide();
+      setView((current) => zoomed(current, factor, px, py));
+    },
+    [stopGlide],
+  );
+  /** Zooms by `factor` around the middle, gliding there; a press while it glides goes on from where that ends. */
+  const zoomStep = (factor: number) => {
     const rect = viewport.current?.getBoundingClientRect();
-    const x = px ?? (rect ? rect.width / 2 : 0);
-    const y = py ?? (rect ? rect.height / 2 : 0);
-    setView((current) => {
-      const k = clamp(current.k * factor, MIN_ZOOM, MAX_ZOOM);
-      const ratio = k / current.k;
-      return { k, x: x - (x - current.x) * ratio, y: y - (y - current.y) * ratio };
-    });
-  }, []);
+    if (!rect) return;
+    glide(zoomed(glideRef.current?.to ?? viewRef.current, factor, rect.width / 2, rect.height / 2));
+  };
 
   // The wheel zooms around the pointer (a pinch on a trackpad too). On a page that scrolls, a plain wheel scrolls it.
   useEffect(() => {
@@ -400,7 +486,8 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
       if (!node || !element) return;
       const { width, height } = element.getBoundingClientRect();
       const room = roomOf(width, true);
-      setView((current) => ({ ...current, x: room / 2 - (node.x ?? 0) * current.k, y: height / 2 - (node.y ?? 0) * current.k }));
+      const current = glideRef.current?.to ?? viewRef.current;
+      glide({ ...current, x: room / 2 - (node.x ?? 0) * current.k, y: height / 2 - (node.y ?? 0) * current.k });
     },
   }));
 
@@ -455,12 +542,14 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
     event.stopPropagation();
     capture(event.pointerId);
     grab.current = { kind: 'node', id, pointer: event.pointerId, x: event.clientX, y: event.clientY, moved: false, skip: branchOf(id) };
+    setPickedLine(null);
   };
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 1 && event.button !== 0) return;
     // The middle button would otherwise scroll the page (or paste, on Linux).
     event.preventDefault();
     capture(event.pointerId);
+    stopGlide();
     grab.current = { kind: 'pan', pointer: event.pointerId, x: event.clientX, y: event.clientY, from: viewRef.current, moved: false };
   };
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -548,6 +637,41 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
   const control = 'flex h-8 min-w-8 items-center justify-center rounded-md px-1.5 text-gray-600 hover:bg-black/[0.05] hover:text-gray-900';
   const strokeOf = (width: number) => width / Math.max(0.6, view.k);
   const dash = `${6 / Math.max(0.6, view.k)} ${5 / Math.max(0.6, view.k)}`;
+  const picks = (line: GraphLine) => pickedLine?.kind === line.kind && pickedLine.a === line.a && pickedLine.b === line.b;
+  const canPick = (kind: GraphLine['kind']) => kind === 'relation' || !!lineMenu;
+  /** A wide clear line over a line, which takes its click. */
+  const hitLine = (line: GraphLine, from: GraphNode, to: GraphNode, name: string) =>
+    canPick(line.kind) ? (
+      <line
+        x1={from.x}
+        y1={from.y}
+        x2={to.x}
+        y2={to.y}
+        stroke="transparent"
+        strokeWidth={14 / view.k}
+        data-graph-line
+        className="cursor-pointer"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={() => setPickedLine(line)}
+      >
+        <title>{name}</title>
+      </line>
+    ) : null;
+  /** A line's tag at its middle, kept upright and the same size at any zoom. */
+  const lineTag = (from: GraphNode, to: GraphNode, tag: string | undefined, color: string, dim: boolean) => {
+    if (!tag || view.k < 0.4) return null;
+    const size = 11 / Math.max(0.6, view.k);
+    const width = textWidth(tag, size) + size;
+    const height = size * 1.6;
+    return (
+      <g transform={`translate(${((from.x ?? 0) + (to.x ?? 0)) / 2} ${((from.y ?? 0) + (to.y ?? 0)) / 2})`} className="pointer-events-none" opacity={dim ? 0.35 : 1}>
+        <rect x={-width / 2} y={-height / 2} width={width} height={height} rx={height / 2} fill="#ffffff" stroke={color} strokeWidth={strokeOf(1)} />
+        <text textAnchor="middle" dominantBaseline="central" fontSize={size} fill={color} fontWeight={500}>
+          {tag}
+        </text>
+      </g>
+    );
+  };
 
   return (
     <div className={`relative min-h-0 ${className}`}>
@@ -578,7 +702,9 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
                 const to = nodes.current.get(b);
                 if (!from || !to) return null;
                 const lit = focus === a || focus === b;
-                const picked = pickedLine?.[0] === a && pickedLine[1] === b;
+                const line: GraphLine = { kind: 'relation', a, b };
+                const picked = picks(line);
+                const mark = lineMark?.(line);
                 return (
                   <g key={`line-${a}-${b}`}>
                     <line
@@ -586,25 +712,12 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
                       y1={from.y}
                       x2={to.x}
                       y2={to.y}
-                      stroke={picked ? '#2563eb' : '#60a5fa'}
-                      strokeWidth={strokeOf(lit || picked ? 2 : 1.4)}
+                      stroke={mark?.color ?? (picked ? '#2563eb' : '#60a5fa')}
+                      strokeWidth={strokeOf(lit || picked ? 2.2 : mark?.color ? 1.6 : 1.4)}
                       strokeDasharray={dash}
                       opacity={neighbours && !lit ? 0.3 : 1}
                     />
-                    <line
-                      x1={from.x}
-                      y1={from.y}
-                      x2={to.x}
-                      y2={to.y}
-                      stroke="transparent"
-                      strokeWidth={14 / view.k}
-                      data-graph-line
-                      className="cursor-pointer"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={() => setPickedLine([a, b])}
-                    >
-                      <title>{t('「{a}」和「{b}」的关联', { a: label(a), b: label(b) })}</title>
-                    </line>
+                    {hitLine(line, from, to, t('「{a}」和「{b}」的关联', { a: label(a), b: label(b) }))}
                   </g>
                 );
               })}
@@ -625,18 +738,40 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
                 const to = nodes.current.get(line.target);
                 if (!from || !to) return null;
                 const lit = neighbours ? neighbours.has(line.source) && neighbours.has(line.target) : false;
+                const branch: GraphLine = { kind: 'branch', a: line.source, b: line.target };
+                const picked = picks(branch);
+                const mark = lineMark?.(branch);
                 return (
-                  <line
-                    key={`${line.source}-${line.target}`}
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    stroke={lit ? '#8b5cf6' : '#cfcfd6'}
-                    strokeWidth={strokeOf(lit ? 1.8 : 1.2)}
-                    opacity={neighbours && !lit ? 0.35 : 1}
-                  />
+                  <g key={`${line.source}-${line.target}`}>
+                    <line
+                      x1={from.x}
+                      y1={from.y}
+                      x2={to.x}
+                      y2={to.y}
+                      stroke={mark?.color ?? (lit || picked ? '#8b5cf6' : '#cfcfd6')}
+                      strokeWidth={strokeOf(lit || picked ? 2.2 : mark?.color ? 1.6 : 1.2)}
+                      opacity={neighbours && !lit ? 0.35 : 1}
+                    />
+                    {hitLine(branch, from, to, t('「{b}」挂在「{a}」下面', { a: label(line.source), b: label(line.target) }))}
+                  </g>
                 );
+              })}
+              {/* The lines' tags, over every line. */}
+              {lines.map(([a, b]) => {
+                const from = nodes.current.get(a);
+                const to = nodes.current.get(b);
+                const mark = lineMark?.({ kind: 'relation', a, b });
+                if (!from || !to || !mark?.tag) return null;
+                const lit = focus === a || focus === b;
+                return <React.Fragment key={`tag-${a}-${b}`}>{lineTag(from, to, mark.tag, mark.color ?? '#2563eb', !!neighbours && !lit)}</React.Fragment>;
+              })}
+              {links.map((line) => {
+                const from = nodes.current.get(line.source);
+                const to = nodes.current.get(line.target);
+                const mark = lineMark?.({ kind: 'branch', a: line.source, b: line.target });
+                if (!from || !to || !mark?.tag) return null;
+                const lit = neighbours ? neighbours.has(line.source) && neighbours.has(line.target) : false;
+                return <React.Fragment key={`tag-${line.source}-${line.target}`}>{lineTag(from, to, mark.tag, mark.color ?? '#6b7280', !!neighbours && !lit)}</React.Fragment>;
               })}
               {ids.map((id) => {
                 const node = nodes.current.get(id);
@@ -693,6 +828,23 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
                         {shortTitle(label(id))}
                       </text>
                     )}
+                    {shape.tag && id !== target && (view.k >= 0.4 || on) && (
+                      <g transform={`translate(0 ${-node.r - 13})`} className="pointer-events-none">
+                        <rect
+                          x={-(textWidth(shape.tag, 10.5) + 12) / 2}
+                          y={-8.5}
+                          width={textWidth(shape.tag, 10.5) + 12}
+                          height={17}
+                          rx={8.5}
+                          fill="#ffffff"
+                          stroke={shape.tagColor ?? '#9ca3af'}
+                          strokeWidth={1}
+                        />
+                        <text textAnchor="middle" dominantBaseline="central" fontSize={10.5} fontWeight={500} fill={shape.tagColor ?? '#4b5563'}>
+                          {shape.tag}
+                        </text>
+                      </g>
+                    )}
                     {id === target && (
                       <text y={-node.r - 12} textAnchor="middle" className="pointer-events-none" fontSize={11} fill={drawing ? '#2563eb' : '#6d28d9'} fontWeight={600} stroke="#fafafb" strokeWidth={3} paintOrder="stroke">
                         {drawing ? t('连到「{name}」', { name: shortTitle(label(id)) }) : t('挂到「{name}」下面', { name: shortTitle(label(id)) })}
@@ -718,10 +870,11 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
         {hint}
         {/* A line clicked: what can be done with it, at its middle. */}
         {pickedLine &&
+          !lineMenu &&
           (() => {
-            const from = nodes.current.get(pickedLine[0]);
-            const to = nodes.current.get(pickedLine[1]);
-            if (!from || !to || !related(lines, pickedLine[0], pickedLine[1])) return null;
+            const from = nodes.current.get(pickedLine.a);
+            const to = nodes.current.get(pickedLine.b);
+            if (pickedLine.kind !== 'relation' || !from || !to || !related(lines, pickedLine.a, pickedLine.b)) return null;
             const x = (((from.x ?? 0) + (to.x ?? 0)) / 2) * view.k + view.x;
             const y = (((from.y ?? 0) + (to.y ?? 0)) / 2) * view.k + view.y;
             return (
@@ -729,7 +882,7 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => {
-                  onRelate(pickedLine[0], pickedLine[1], false);
+                  onRelate(pickedLine.a, pickedLine.b, false);
                   setPickedLine(null);
                 }}
                 className="absolute z-10 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-xs text-red-700 shadow-md ring-1 ring-black/[0.08] hover:bg-red-50"
@@ -742,14 +895,36 @@ const ForceGraph = React.forwardRef<ForceGraphHandle, Props>(function ForceGraph
           })()}
       </div>
 
+      {/* A line clicked, when the view says what can be done with it: its menu under its middle, inside the canvas. */}
+      {pickedLine &&
+        lineMenu &&
+        (() => {
+          const from = nodes.current.get(pickedLine.a);
+          const to = nodes.current.get(pickedLine.b);
+          const there = pickedLine.kind === 'relation' ? related(lines, pickedLine.a, pickedLine.b) : links.some((line) => line.source === pickedLine.a && line.target === pickedLine.b);
+          if (!from || !to || !there) return null;
+          const width = viewport.current?.clientWidth ?? 0;
+          const height = viewport.current?.clientHeight ?? 0;
+          const x = (((from.x ?? 0) + (to.x ?? 0)) / 2) * view.k + view.x;
+          const y = (((from.y ?? 0) + (to.y ?? 0)) / 2) * view.k + view.y;
+          return (
+            <div
+              className="absolute z-20"
+              style={{ left: clamp(x - LINE_MENU_WIDTH / 2, 8, Math.max(8, width - LINE_MENU_WIDTH - 8)), top: clamp(y + 14, 8, Math.max(8, height - 200)), width: LINE_MENU_WIDTH }}
+            >
+              {lineMenu(pickedLine, () => setPickedLine(null))}
+            </div>
+          );
+        })()}
+
       {/* The zoom and what the lines mean, over the canvas. */}
       <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-2">
         <div className="flex items-center rounded-lg bg-white/95 p-0.5 shadow-sm ring-1 ring-black/[0.06]">
-          <button type="button" onClick={() => zoom(1 / 1.25)} aria-label={t('缩小')} title={t('缩小')} className={control}>
+          <button type="button" onClick={() => zoomStep(1 / 1.25)} aria-label={t('缩小')} title={t('缩小')} className={control}>
             <Minus size={15} />
           </button>
           <span className="w-12 text-center text-xs tabular-nums text-gray-600">{Math.round(view.k * 100)}%</span>
-          <button type="button" onClick={() => zoom(1.25)} aria-label={t('放大')} title={t('放大')} className={control}>
+          <button type="button" onClick={() => zoomStep(1.25)} aria-label={t('放大')} title={t('放大')} className={control}>
             <Plus size={15} />
           </button>
           <button type="button" onClick={fitView} aria-label={t('显示全部')} title={t('显示全部')} className={control}>

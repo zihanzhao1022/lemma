@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseSpace, serializeSpace } from '../../editor/results/space';
 import { ResearchSpace } from '../../types';
-import { blockNode, blockOfNode, cleanSpace, inSpace, isIdea, spaceNodes, spaceTree, withIdea, withIdeaText, withLine, withNode, withoutNode } from './space';
+import { blockNode, blockOfNode, branchKey, cleanSpace, lineKey, withMark, inSpace, isIdea, spaceNodes, spaceTree, withIdea, withIdeaText, withLine, withNode, withoutNode } from './space';
 
 const PAPERS = ['res-a', 'res-b', 'res-c', 'res-a/blk-1', 'res-a/blk-2'];
 const empty = (): ResearchSpace => ({ parents: {}, relations: [], ideas: {} });
@@ -65,5 +65,21 @@ describe('a research space', () => {
     const space: ResearchSpace = { parents: { 'res-a': '' }, relations: [['idea-1', 'res-a']], ideas: { 'idea-1': 'Made up' } };
     expect(parseSpace(serializeSpace(space))).toEqual(space);
     expect(parseSpace(JSON.stringify({ parents: { a: 1, b: '' }, relations: [['x'], ['a', 'b'], 'c'], ideas: [] }))).toEqual({ parents: { b: '' }, relations: [['a', 'b']], ideas: {} });
+  });
+
+  it('keeps colours and tags of nodes and lines while they are there', () => {
+    let built = withLine(withNode(withNode(empty(), PAPERS, 'res-a', null), PAPERS, 'res-b', 'res-a'), 'res-a', 'res-c', true);
+    built = withNode(built, PAPERS, 'res-c', null);
+    built = withMark(built, 'res-a', { color: '#ef4444', tag: 'Core' });
+    built = withMark(built, lineKey('res-c', 'res-a'), { tag: 'contrasts' });
+    built = withMark(built, branchKey('res-a', 'res-b'), { color: '#10b981' });
+    built = withMark(built, 'res-gone', { tag: 'Stale' });
+    expect(lineKey('res-c', 'res-a')).toBe('res-a|res-c');
+    expect(cleanSpace(built, PAPERS).marks).toEqual({ 'res-a': { color: '#ef4444', tag: 'Core' }, 'res-a|res-c': { tag: 'contrasts' }, 'res-a>res-b': { color: '#10b981' } });
+    // Cleared, the mark goes; moved elsewhere, a branch's mark goes with the branch.
+    expect(withMark(built, 'res-a', {}).marks?.['res-a']).toBeUndefined();
+    expect(cleanSpace(withNode(built, PAPERS, 'res-b', 'res-c'), PAPERS).marks?.['res-a>res-b']).toBeUndefined();
+    expect(parseSpace(serializeSpace(cleanSpace(built, PAPERS)))).toEqual(cleanSpace(built, PAPERS));
+    expect(parseSpace(JSON.stringify({ parents: {}, relations: [], ideas: {}, marks: { a: { color: 'red', tag: 3 }, b: { color: '#ABCDEF' } } })).marks).toEqual({ b: { color: '#abcdef' } });
   });
 });

@@ -5,7 +5,7 @@
  *
  * Node IDs: a paper's own ("res-…"), a block's as "<paper ID>/<block ID>", an idea's ("idea-…").
  */
-import { ResearchSpace, ResultPaper } from '../../types';
+import { ResearchSpace, ResultPaper, SpaceMark } from '../../types';
 import { Relation, cleanRelations, withRelation, withoutRelation } from '../logic/graph';
 import { LogicTree, cleanLogic, logicTree, placedIn, withPlacement, withoutBlock } from '../logic/tree';
 
@@ -42,11 +42,31 @@ export function cleanSpace(space: ResearchSpace, known: readonly string[]): Rese
   const nodes = nodesOf(space, known);
   const kept = cleanLogic(nodes, space.parents);
   const placed = placedIn(nodes, kept);
+  const relations = cleanRelations(space.relations, placed);
+  // Marks of what is still there: a node, a drawn line, a branch as it hangs now.
+  const live = new Set<string>([...placed, ...relations.map(([a, b]) => lineKey(a, b)), ...Object.entries(kept).filter(([, parent]) => parent).map(([child, parent]) => branchKey(parent, child))]);
+  const marks = Object.fromEntries(Object.entries(space.marks ?? {}).filter(([key, mark]) => live.has(key) && (mark.color || mark.tag)));
   return {
     parents: kept,
-    relations: cleanRelations(space.relations, placed),
+    relations,
     ideas: Object.fromEntries(Object.entries(space.ideas).filter(([id]) => placed.has(id))),
+    ...(Object.keys(marks).length > 0 ? { marks } : {}),
   };
+}
+
+/** The key of a drawn line's mark: "a|b", the smaller ID first. */
+export const lineKey = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`);
+/** The key of a branch's mark: "parent>child". */
+export const branchKey = (parent: string, child: string): string => `${parent}>${child}`;
+
+/** The space with `key` (a node's ID, lineKey or branchKey) marked so instead; a mark with neither goes. */
+export function withMark(space: ResearchSpace, key: string, mark: SpaceMark): ResearchSpace {
+  const marks = { ...(space.marks ?? {}) };
+  const color = mark.color || undefined;
+  const tag = mark.tag || undefined;
+  if (color || tag) marks[key] = { ...(color ? { color } : {}), ...(tag ? { tag } : {}) };
+  else delete marks[key];
+  return { ...space, marks };
 }
 
 /** The space with node `id` under `under`, or on its own (null); put in the space if it was not. */
@@ -68,10 +88,14 @@ export const withIdeaText = (space: ResearchSpace, id: string, text: string): Re
 export function withoutNode(space: ResearchSpace, known: readonly string[], id: string): ResearchSpace {
   const ideas = { ...space.ideas };
   delete ideas[id];
+  const marks = { ...(space.marks ?? {}) };
+  delete marks[id];
   return {
+    ...space,
     parents: withoutBlock(nodesOf(space, known), space.parents, id),
     relations: space.relations.filter((pair) => !pair.includes(id)),
     ideas,
+    marks,
   };
 }
 

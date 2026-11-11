@@ -7,16 +7,17 @@ import { ResultsAccess, ResultsAccessContext } from '../../components/results/ac
 import { describeSaveError } from '../../editor/backend';
 import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
-import { ResearchSpace, ResultPaper } from '../../types';
+import { ResearchSpace, ResultPaper, SpaceMark } from '../../types';
 import { PAPERS_TYPE } from '../dragging';
-import ForceGraph, { ForceGraphHandle, NodeLook } from '../logic/ForceGraph';
+import ForceGraph, { ForceGraphHandle, GraphLine, NodeLook } from '../logic/ForceGraph';
 import { graphOf, relatedTo } from '../logic/graph';
 import { LabelWords, NodeLabel, nodeLabels } from '../logic/labels';
 import { subtreeOf } from '../logic/tree';
 import { Organizer } from '../organizer';
+import MarkEditor from './MarkEditor';
 import NodePicker, { KIND_ICON } from './NodePicker';
 import SpaceLibrary from './SpaceLibrary';
-import { blockOfNode, cleanSpace, isIdea, linesOf, spaceNodes, spaceTree, withIdea, withIdeaText, withLine, withNode, withoutNode } from './space';
+import { blockOfNode, branchKey, cleanSpace, isIdea, lineKey, linesOf, spaceNodes, spaceTree, withIdea, withIdeaText, withLine, withMark, withNode, withoutNode } from './space';
 
 interface Props {
   login: string;
@@ -153,8 +154,22 @@ const ResearchSpaceView: React.FC<Props> = ({ login, papers, access, organizer, 
   };
   const look = (id: string, on: boolean): NodeLook => {
     const node = what(id);
-    if (node?.kind === 'block') return node.block.kind === 'text' ? LOOK.text(on) : LOOK.float(on);
-    return node?.kind === 'paper' ? LOOK.paper(on) : LOOK.idea(on);
+    const base = node?.kind === 'block' ? (node.block.kind === 'text' ? LOOK.text(on) : LOOK.float(on)) : node?.kind === 'paper' ? LOOK.paper(on) : LOOK.idea(on);
+    const mark = current.marks?.[id];
+    const tag = mark?.tag?.trim() || undefined;
+    if (!mark?.color) return { ...base, tag };
+    // A colour given: filled with it, or (a figure, a table, an idea) outlined in it over a tint of it.
+    const filled = base.stroke === 'none';
+    return { ...base, fill: filled ? mark.color : `${mark.color}1f`, stroke: filled ? 'none' : mark.color, tag, tagColor: mark.color };
+  };
+  const lineKeyOf = (line: GraphLine) => (line.kind === 'branch' ? branchKey(line.a, line.b) : lineKey(line.a, line.b));
+  const lineMark = (line: GraphLine): SpaceMark | undefined => {
+    const mark = current.marks?.[lineKeyOf(line)];
+    return mark ? { ...mark, tag: mark.tag?.trim() || undefined } : undefined;
+  };
+  const mark = (key: string, next: SpaceMark) => {
+    const base = draftRef.current;
+    if (base) change(withMark(base, key, next));
   };
 
   // The space as stored, read or saved elsewhere (another tab, another computer), when nothing changed here meanwhile.
@@ -533,6 +548,36 @@ const ResearchSpaceView: React.FC<Props> = ({ login, papers, access, organizer, 
                   onPlace={place}
                   lineSkip={lineSkip}
                   onRelate={relate}
+                  lineMark={lineMark}
+                  lineMenu={(line, close) => (
+                    <div onKeyDown={(event) => event.key === 'Escape' && (event.stopPropagation(), close())} className="space-y-2.5 rounded-xl bg-white p-3 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.35)] ring-1 ring-black/[0.08]">
+                      <p className="flex items-start gap-2 text-xs text-gray-500">
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium text-gray-700">{line.kind === 'branch' ? t('分支线') : t('关联线')}</span>
+                          <span className="mt-0.5 block truncate">
+                            {line.kind === 'branch' ? t('「{b}」挂在「{a}」下面', { a: label(line.a), b: label(line.b) }) : t('「{a}」和「{b}」的关联', { a: label(line.a), b: label(line.b) })}
+                          </span>
+                        </span>
+                        <button type="button" onClick={close} aria-label={t('关闭')} className="rounded p-0.5 text-gray-400 hover:bg-black/[0.05] hover:text-gray-700">
+                          <X size={14} />
+                        </button>
+                      </p>
+                      <MarkEditor mark={current.marks?.[lineKeyOf(line)]} onChange={(next) => mark(lineKeyOf(line), next)} placeholder={t('给这条线加个标签，比如“对比”')} />
+                      {line.kind === 'relation' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            relate(line.a, line.b, false);
+                            close();
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-700 ring-1 ring-black/[0.08] hover:bg-red-50"
+                        >
+                          <X size={12} />
+                          {t('删除这条关联')}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   onEmptyDoubleClick={(at, menu) => {
                     setSelected(null);
                     setAdding({ menu, at });
@@ -620,6 +665,12 @@ const ResearchSpaceView: React.FC<Props> = ({ login, papers, access, organizer, 
                             placeholder={t('写下这个想法：一个问题、一个方向、一句笔记…')}
                             className="block w-full resize-y rounded-lg border border-gray-300 px-2.5 py-2 text-[13px] leading-relaxed text-gray-800 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
                           />
+                        )}
+                        {!picker && (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-gray-500">{t('颜色和标签')}</p>
+                            <MarkEditor mark={current.marks?.[selected]} onChange={(next) => mark(selected, next)} placeholder={t('给这个节点加个标签，比如“核心”')} />
+                          </div>
                         )}
                         {picker === 'branch' ? (
                           <div className="space-y-1.5">
