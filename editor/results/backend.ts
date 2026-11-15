@@ -65,7 +65,16 @@ export interface ResultsBackend {
   /** The account's research space (research-space.json, see ResearchSpace); the owner's backends only. */
   loadSpace?(): Promise<ResearchSpace>;
   saveSpace?(space: ResearchSpace, message: string): Promise<void>;
+  /**
+   * How the account sorts its papers (organizer.json: folders, tags, what is archived, see app/organizer.ts), as
+   * stored: null when there is none yet. The owner's backends in an account's own repository only.
+   */
+  loadOrganizer?(): Promise<unknown>;
+  saveOrganizer?(organizer: unknown, message: string): Promise<void>;
 }
+
+/** The account's folders and tags in its repository. */
+export const ORGANIZER_PATH = 'organizer.json';
 
 /** Commit message for the site's repository when no published paper is involved: never names a hidden one. */
 export const GENERIC_PUBLIC_MESSAGE = 'content: update results';
@@ -329,6 +338,20 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
 
     async saveSpace(space, message) {
       await commitFile(SPACE_PATH, serializeSpace(space), message);
+    },
+
+    async loadOrganizer() {
+      const text = await readTextFile(privateApi, ORGANIZER_PATH, await privateApi.headSha());
+      if (text === null) return null;
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        return null;
+      }
+    },
+
+    async saveOrganizer(organizer, message) {
+      await commitFile(ORGANIZER_PATH, `${JSON.stringify(organizer, null, 2)}\n`, message);
     },
   };
 }

@@ -10,7 +10,7 @@ import { SiteContent } from '../types';
 import { ACCOUNTS, Account, collaboratorSession, connectedRepo, ownerSession, storeKeyOf } from './accounts';
 import { repoBackend } from './github/backend';
 import { LemmaRepo, repoLabel } from './github/repo';
-import { Organizer, paperKey, tidy, touch } from './organizer';
+import { Organizer, emptyOrganizer, hasOrganizing, paperKey, parseOrganizer, storedOrganizer, tidy, touch, withTouchedFrom } from './organizer';
 import { examplesReady, loadOrganizer, saveOrganizer } from './seed';
 
 /** Where an account's papers are: its GitHub repository, or a made-up account's store in this browser (`npm run dev:mock`). */
@@ -121,14 +121,49 @@ export const AccountProvider: React.FC<{ account: Account; source: AccountSource
       current = false;
     };
   }, [account.login, github]);
+  const organizerRef = useRef(organizer);
+  organizerRef.current = organizer;
+  // The folders and tags as the repository has them (organizer.json, stored form), once read; and whether this
+  // browser has changes to them it has not saved there yet.
+  const storedJson = useRef<string | null>(null);
+  const unsaved = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const saveFile = useRef<((value: unknown, message: string) => Promise<void>) | null>(null);
+  /** Saves the folders and tags to the repository a moment after the last change, once its copy was read. */
+  const saveOrganizerSoon = useCallback(() => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      if (storedJson.current === null || !saveFile.current) return;
+      const value = storedOrganizer(organizerRef.current);
+      const json = JSON.stringify(value);
+      if (json === storedJson.current) {
+        unsaved.current = false;
+        return;
+      }
+      saveFile.current(value, 'results: update folders and tags').then(
+        () => {
+          storedJson.current = json;
+          if (JSON.stringify(storedOrganizer(organizerRef.current)) === json) unsaved.current = false;
+        },
+        // Kept as unsaved: the next change tries again.
+        () => undefined,
+      );
+    }, 800);
+  }, []);
   const organize = useCallback(
-    (change: (organizer: Organizer) => Organizer) =>
-      setOrganizer((current) => {
-        const next = tidy(change(current));
-        saveOrganizer(account.login, next);
-        return next;
-      }),
-    [account.login],
+    (change: (organizer: Organizer) => Organizer) => {
+      // From the latest organizer, changes made one after another included (React applies state later).
+      const next = tidy(change(organizerRef.current));
+      organizerRef.current = next;
+      saveOrganizer(account.login, next);
+      setOrganizer(next);
+      // When a paper was last changed stays in this browser: only folders, tags and placements go up.
+      if (saveFile.current && JSON.stringify(storedOrganizer(next)) !== storedJson.current) {
+        unsaved.current = true;
+        saveOrganizerSoon();
+      }
+    },
+    [account.login, saveOrganizerSoon],
   );
   const touchPaper = useCallback((owner: string, paperId: string) => organize((current) => touch(current, paperKey(owner, paperId))), [organize]);
   const owner = useMemo(() => ownerSession(account), [account]);
@@ -142,6 +177,27 @@ export const AccountProvider: React.FC<{ account: Account; source: AccountSource
     (paperId: string) => (github ? undefined : ACCOUNTS.find((other) => mockStore(storeKeyOf(other.login)).papers.some((paper) => paper.id === paperId))),
     [github],
   );
+  // The folders and tags are the repository's (organizer.json), this browser's copy standing in until it is read. A
+  // repository without one yet gets this browser's; changes made here before it was read are kept and saved.
+  const { organizerFile } = mine;
+  // undefined where the backend keeps no organizer.json (it is never read there).
+  saveFile.current = organizerFile === undefined ? saveFile.current : mine.saveOrganizerFile;
+  useEffect(() => {
+    if (organizerFile === undefined) return;
+    const read = organizerFile === null ? emptyOrganizer() : parseOrganizer(organizerFile);
+    storedJson.current = JSON.stringify(storedOrganizer(read));
+    if (organizerFile === null ? hasOrganizing(organizerRef.current) : unsaved.current) {
+      unsaved.current = true;
+      saveOrganizerSoon();
+      return;
+    }
+    setOrganizer((current) => {
+      const next = withTouchedFrom(read, current);
+      saveOrganizer(account.login, next);
+      organizerRef.current = next;
+      return next;
+    });
+  }, [organizerFile, account.login, saveOrganizerSoon]);
   // Papers changed elsewhere meanwhile (on another computer, or by Claude Code through OnizukaTex's MCP server) show
   // when the person comes back to this tab.
   const { reload } = mine;

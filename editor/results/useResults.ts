@@ -74,6 +74,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const [siteAccess, setSiteAccess] = useState<ResultsSiteAccess>({});
   /** The owner's research space (research-space.json); null until read, or where there is none (a collaborator). */
   const [space, setSpace] = useState<ResearchSpace | null>(null);
+  /** The owner's folders and tags as stored (organizer.json): undefined until read, null where there are none yet. */
+  const [organizerFile, setOrganizerFile] = useState<unknown>(undefined);
   /** A collaborator's role on each paper shared with them. */
   const [roles, setRoles] = useState<Record<string, PaperRole> | undefined>(undefined);
   /** Once the private list is in, reloading the public content must not replace it with the snapshot. */
@@ -170,6 +172,12 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
             if (!cancelled) setSpace(loadedSpace);
           })
           .catch(() => undefined);
+        created
+          .loadOrganizer?.()
+          .then((loaded) => {
+            if (!cancelled) setOrganizerFile(loaded);
+          })
+          .catch(() => undefined);
         if (loaded.papers.some((paper) => !paper.hidden && paper.pendingReview?.length)) {
           callbacks.current.onToast({ message: () => t('协作者修改了已公开的论文，在论文页确认后才会更新到网站') });
         }
@@ -218,6 +226,11 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     if (backend.loadSpace) {
       enqueue(() => backend.loadSpace!())
         .then(setSpace)
+        .catch(() => undefined);
+    }
+    if (backend.loadOrganizer) {
+      enqueue(() => backend.loadOrganizer!())
+        .then(setOrganizerFile)
         .catch(() => undefined);
     }
   }, [backend, enqueue, show]);
@@ -406,6 +419,15 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [backend, loadState.state, unavailable, enqueue],
   );
 
+  /** Saves the owner's folders and tags as stored; in the queue with the other saves, one commit at a time. */
+  const saveOrganizerFile = useCallback(
+    async (next: unknown, message: string): Promise<void> => {
+      if (!backend?.saveOrganizer || loadState.state !== 'private') throw unavailable();
+      await enqueue(() => backend.saveOrganizer!(next, message));
+    },
+    [backend, loadState.state, unavailable, enqueue],
+  );
+
   /** Saves an edit made through the generic dialogs or by dragging a paper. */
   const saveContentOp = useCallback(
     async (op: ContentOp): Promise<void> => {
@@ -434,6 +456,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
           ? [
               ...paper.blocks.flatMap((block) => [block.output, block.alternate?.output].flatMap((output) => (output ? [output.pdf] : []))),
               ...(paper.files ?? []).map((name) => attachmentPath(paper.id, name)),
+              ...(paper.references ? [paper.references.pdf] : []),
+              ...(paper.article ? [paper.article.pdf] : []),
             ]
           : [];
         return saveResults(resultsOp, [], files, resultsCommitMessage('delete paper', title), `content: unpublish result "${title}"`);
@@ -801,5 +825,5 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
     [collaborator, loadState, backend, roles, siteBehind, syncSite, approveEdits, siteAccess, saveSiteViewers],
   );
 
-  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, deleteBlock, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace, sync, retrySync: flush };
+  return { access, privateLoaded, saveResults, saveContentOp, reorderBlocks, deleteBlock, switchBlock, uploadFiles, importPaper, compileStale, reload, isRenumbering, space, saveSpace, organizerFile, saveOrganizerFile, sync, retrySync: flush };
 }

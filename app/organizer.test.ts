@@ -16,6 +16,11 @@ import {
   tidy,
   touch,
   tree,
+  hasOrganizing,
+  parseOrganizer,
+  storedOrganizer,
+  withTouchedFrom,
+  withoutPapers,
 } from './organizer';
 
 const papers = [
@@ -118,5 +123,51 @@ describe('tidy', () => {
     let organizer = touch(emptyOrganizer(), papers[0].key, 5);
     organizer = { ...organizer, papers: { ...organizer.papers, [papers[0].key]: { touched: 5, folder: 'dir-gone', tags: ['tag-gone'] } } };
     expect(tidy(organizer).papers[papers[0].key]).toEqual({ touched: 5 });
+  });
+});
+
+describe('organizer.json', () => {
+  const local: Organizer = {
+    folders: [{ id: 'f1', name: 'ACL 2027', parent: null }],
+    tags: [{ id: 't1', name: 'draft', color: 'yellow' }],
+    papers: { 'me/res-a': { folder: 'f1', tags: ['t1'], touched: 5 }, 'me/res-b': { touched: 9 }, 'me/res-c': { archived: true } },
+  };
+
+  it('keeps folders, tags and placements, not when papers were touched', () => {
+    expect(storedOrganizer(local)).toEqual({
+      folders: local.folders,
+      tags: local.tags,
+      papers: { 'me/res-a': { folder: 'f1', tags: ['t1'] }, 'me/res-c': { archived: true } },
+    });
+  });
+
+  it('reads back what it stored, with this browser\'s touch times', () => {
+    const read = parseOrganizer(JSON.parse(JSON.stringify(storedOrganizer(local))));
+    expect(withTouchedFrom(read, local)).toEqual(local);
+  });
+
+  it('leaves out what is malformed, and tags and folders that do not exist', () => {
+    const read = parseOrganizer({
+      folders: [{ id: 'f1', name: 'A', parent: 'nope' }, { name: 'no id' }],
+      tags: [{ id: 't1', name: 'x', color: 'purple' }, 'junk'],
+      papers: { 'me/a': { folder: 'f9', tags: ['t1', 't9', 3], archived: 'yes' }, 'me/b': 'junk' },
+    });
+    expect(read.folders).toEqual([{ id: 'f1', name: 'A', parent: 'nope' }]);
+    expect(read.tags).toEqual([{ id: 't1', name: 'x', color: 'gray' }]);
+    expect(read.papers).toEqual({ 'me/a': { tags: ['t1'] } });
+    expect(parseOrganizer(null)).toEqual(emptyOrganizer());
+  });
+
+  it('knows an organizer with nothing in it', () => {
+    expect(hasOrganizing(emptyOrganizer())).toBe(false);
+    expect(hasOrganizing({ ...emptyOrganizer(), papers: { 'me/a': { touched: 1 } } })).toBe(false);
+    expect(hasOrganizing(local)).toBe(true);
+  });
+});
+
+describe('withoutPapers', () => {
+  it('forgets deleted papers and keeps the folders and tags', () => {
+    const organizer: Organizer = { folders: [{ id: 'f', name: 'F', parent: null }], tags: [{ id: 't', name: 'T', color: 'red' }], papers: { 'me/a': { tags: ['t'] }, 'me/b': { folder: 'f' } } };
+    expect(withoutPapers(organizer, ['me/a'])).toEqual({ ...organizer, papers: { 'me/b': { folder: 'f' } } });
   });
 });

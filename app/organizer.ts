@@ -2,8 +2,8 @@
  * How an account organizes the papers it sees, its own and those shared with it, like Overleaf's tags and
  * Obsidian's folders: nested folders, each paper in at most one; colored tags, any number per paper; and
  * archived papers kept out of the way. It belongs to the account, not to the papers, so a paper shared with
- * several people sits in each one's own folders. The real service keeps it in the account's repository
- * (galley.json); the prototype keeps it in this browser.
+ * several people sits in each one's own folders. It is kept in the account's repository (organizer.json, see
+ * AccountContext), with a copy in this browser that stands in until it is read.
  */
 
 export const TAG_COLORS = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'violet', 'gray'] as const;
@@ -282,4 +282,63 @@ export function tidy(organizer: Organizer): Organizer {
     }
     return next;
   });
+}
+
+/* ------------------------------------------------------------------ kept in the account's repository */
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+
+/** An organizer as read from organizer.json: whatever is malformed in it left out. */
+export function parseOrganizer(value: unknown): Organizer {
+  if (!isRecord(value)) return emptyOrganizer();
+  const folders = (Array.isArray(value.folders) ? value.folders : [])
+    .filter((folder): folder is Record<string, unknown> => isRecord(folder) && text(folder.id) && typeof folder.name === 'string')
+    .map((folder): Folder => ({ id: folder.id as string, name: folder.name as string, parent: text(folder.parent) ? folder.parent : null }));
+  const tags = (Array.isArray(value.tags) ? value.tags : [])
+    .filter((tag): tag is Record<string, unknown> => isRecord(tag) && text(tag.id) && typeof tag.name === 'string')
+    .map((tag): Tag => ({ id: tag.id as string, name: tag.name as string, color: (TAG_COLORS as readonly unknown[]).includes(tag.color) ? (tag.color as TagColor) : 'gray' }));
+  const papers: Record<string, Placement> = {};
+  for (const [key, raw] of Object.entries(isRecord(value.papers) ? value.papers : {})) {
+    if (!isRecord(raw)) continue;
+    const placement: Placement = {
+      ...(text(raw.folder) ? { folder: raw.folder } : {}),
+      ...(Array.isArray(raw.tags) && raw.tags.some(text) ? { tags: raw.tags.filter(text) } : {}),
+      ...(raw.archived === true ? { archived: true } : {}),
+    };
+    if (Object.keys(placement).length > 0) papers[key] = placement;
+  }
+  return tidy({ folders, tags, papers });
+}
+
+/**
+ * What organizer.json keeps: the folders, the tags and where each paper is, without when each paper was last
+ * changed (that stays in the browser, so editing a paper is not also a commit of organizer.json).
+ */
+export function storedOrganizer(organizer: Organizer): Organizer {
+  const papers: Record<string, Placement> = {};
+  for (const [key, { touched: _touched, ...placement }] of Object.entries(organizer.papers)) {
+    if (Object.keys(placement).length > 0) papers[key] = placement;
+  }
+  return { folders: organizer.folders, tags: organizer.tags, papers };
+}
+
+/** The stored organizer, with when each paper was last changed as this browser knows it. */
+export function withTouchedFrom(stored: Organizer, local: Organizer): Organizer {
+  const papers: Record<string, Placement> = { ...stored.papers };
+  for (const [key, placement] of Object.entries(local.papers)) {
+    if (placement.touched !== undefined) papers[key] = { ...papers[key], touched: placement.touched };
+  }
+  return { ...stored, papers };
+}
+
+/** Whether an organizer holds anything worth keeping: a folder, a tag, or a paper put somewhere. */
+export const hasOrganizing = (organizer: Organizer): boolean =>
+  organizer.folders.length > 0 || organizer.tags.length > 0 || Object.values(organizer.papers).some((placement) => placement.folder || placement.tags?.length || placement.archived);
+
+/** The organizer without papers that are gone (deleted): their folders and tags kept, they no longer in them. */
+export function withoutPapers(organizer: Organizer, keys: string[]): Organizer {
+  const papers = { ...organizer.papers };
+  for (const key of keys) delete papers[key];
+  return { ...organizer, papers };
 }

@@ -85,7 +85,7 @@ claude mcp add --transport http --scope user lemma https://onizukatex.pages.dev/
 
 ## 账号和数据
 
-每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `onizukatex-papers`，私有；以前建的 `lemma-papers` 照常可用）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`research-space.json` 是研究空间，`lemma.json` 标记这是 OnizukaTex 的仓库。第一次登录时，OnizukaTex 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 OnizukaTex 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
+每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `onizukatex-papers`，私有；以前建的 `lemma-papers` 照常可用）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`research-space.json` 是研究空间，`organizer.json` 是论文列表的文件夹、标签和归档，`lemma.json` 标记这是 OnizukaTex 的仓库。第一次登录时，OnizukaTex 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 OnizukaTex 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
 
 GitHub App 是 `onizukatex`（https://github.com/apps/onizukatex ），公开的 client ID 和名字写在 `app/github/config.ts`。它的权限只有仓库内容读写（和必带的元数据只读），回调地址是 https://onizukatex.pages.dev/ ，安装时同时请求用户授权。
 

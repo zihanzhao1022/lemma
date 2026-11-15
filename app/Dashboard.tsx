@@ -16,6 +16,7 @@ import {
   MoreHorizontal,
   Search,
   Tag as TagIcon,
+  Trash2,
   X,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -53,6 +54,7 @@ import {
   setTag,
   touch,
   tree,
+  withoutPapers,
 } from './organizer';
 import Sidebar, { NameInput } from './Sidebar';
 import ResearchSpaceView from './space/ResearchSpaceView';
@@ -310,8 +312,31 @@ type Editing = { kind: 'new-folder'; parent: string | null } | { kind: 'rename';
 const Dashboard: React.FC = () => {
   const t = useT();
   const lang = useLang();
-  const { account, repo, features, mine, shared, ownerOf, organizer, organize } = useAccount()!;
+  const { account, repo, features, mine, shared, ownerOf, organizer, organize, setToast } = useAccount()!;
   const [view, setView] = useState<View>({ kind: 'all' });
+  /**
+   * Deletes the account's own papers for good, after asking: each from results.json with its PDFs and attachments
+   * (Git's history keeps them). Only archived papers offer it, so nothing is deleted in one step from the list.
+   */
+  const deletePapers = async (papers: { key: string; id: string; title: string }[]) => {
+    if (papers.length === 0) return;
+    const question =
+      papers.length === 1
+        ? t('永久删除「{title}」？它的块、编译好的 PDF 和附件都会从论文仓库里删掉，在这里恢复不了。', { title: papers[0].title })
+        : t('永久删除这 {n} 篇论文？它们的块、编译好的 PDF 和附件都会从论文仓库里删掉，在这里恢复不了。', { n: papers.length });
+    if (!window.confirm(question)) return;
+    const gone: string[] = [];
+    try {
+      for (const paper of papers) {
+        await mine.saveContentOp({ kind: 'delete', collection: 'results', id: paper.id });
+        gone.push(paper.key);
+      }
+    } catch (error) {
+      setToast({ message: () => t('删除失败：{message}', { message: describeSaveError(error) }) });
+    }
+    if (gone.length > 0) organize((current) => withoutPapers(current, gone));
+    setSelected(new Set());
+  };
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<Order>({ by: 'touched', up: false });
@@ -373,7 +398,8 @@ const Dashboard: React.FC = () => {
 
   const loading = mine.access.state === 'loading' || shared.access.state === 'loading';
   // Only what is on screen counts as chosen; changing the view or the search leaves the rest alone.
-  const keys = shown.filter((row) => selected.has(row.key)).map((row) => row.key);
+  const chosenRows = shown.filter((row) => selected.has(row.key));
+  const keys = chosenRows.map((row) => row.key);
   const allChosen = shown.length > 0 && keys.length === shown.length;
   const archive = view.kind === 'archived';
   const paths = folderPaths(organizer);
@@ -655,6 +681,17 @@ const Dashboard: React.FC = () => {
                 {placement.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                 {placement.archived ? t('取消归档') : t('归档')}
               </MenuItem>
+              {placement.archived && row.mine && (
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    void deletePapers([{ key: row.key, id: row.paper.id, title: row.title }]);
+                  }}
+                >
+                  <Trash2 size={14} className="text-red-600" />
+                  <span className="text-red-700">{t('永久删除')}</span>
+                </MenuItem>
+              )}
             </>
           )}
         </Menu>
@@ -736,6 +773,16 @@ const Dashboard: React.FC = () => {
                 {archive ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                 {archive ? t('取消归档') : t('归档')}
               </button>
+              {archive && chosenRows.every((row) => row.mine) && (
+                <button
+                  type="button"
+                  onClick={() => void deletePapers(chosenRows.map((row) => ({ key: row.key, id: row.paper.id, title: row.title })))}
+                  className={`${bar} text-red-700`}
+                >
+                  <Trash2 size={14} />
+                  {t('永久删除')}
+                </button>
+              )}
               <button type="button" onClick={() => setSelected(new Set())} className={`${bar} ml-auto text-gray-500`}>
                 {t('取消选择')}
               </button>

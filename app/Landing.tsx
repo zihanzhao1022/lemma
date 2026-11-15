@@ -434,7 +434,7 @@ const Library: React.FC = () => {
 const Repository: React.FC = () => {
   const t = useT();
   const rows: [number, 'folder' | 'file', string, string?][] = [
-    [0, 'file', 'galley.json', t('文件夹和标签')],
+    [0, 'file', 'organizer.json', t('文件夹和标签')],
     [0, 'folder', 'results/'],
     [1, 'folder', 'made-up-adapters/'],
     [2, 'file', 'paper.json'],

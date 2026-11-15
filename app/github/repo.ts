@@ -123,6 +123,7 @@ This repository keeps papers written with [OnizukaTex](${site}):
 - \`results.json\` lists them, with each paper's information and the LaTeX source of its blocks;
 - \`results/<paper>/\` holds the PDFs OnizukaTex compiled and the files attached to each paper;
 - \`research-space.json\` keeps the research space: the papers and ideas drawn as a graph;
+- \`organizer.json\` keeps how the papers are sorted: folders, tags and what is archived;
 - \`lemma.json\` tells OnizukaTex that this repository is its own.
 
 OnizukaTex reads and writes it through its GitHub App, which can reach only the repositories it was installed on.

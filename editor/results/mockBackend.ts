@@ -25,6 +25,8 @@ interface Store {
   papers: ResultPaper[];
   access?: ResultsSiteAccess;
   space?: ResearchSpace;
+  /** The owner's folders and tags, as organizer.json holds them (see ResultsBackend.loadOrganizer). */
+  organizer?: unknown;
   files: Map<string, Uint8Array>;
   publicJson: string;
   publicFiles: string[];
@@ -166,6 +168,19 @@ export function createMockResultsBackend(key = STORE_KEY): ResultsBackend {
       data.space = structuredClone(space);
       persist(data, key);
       console.info(`[mock private commit] ${message}`, space);
+    },
+
+    async loadOrganizer() {
+      await wait(100);
+      return data.organizer === undefined ? null : structuredClone(data.organizer);
+    },
+
+    async saveOrganizer(organizer, message) {
+      await wait(300);
+      if (failure() === 'network') throw new GitHubError('网络连接失败', 0);
+      data.organizer = structuredClone(organizer);
+      persist(data, key);
+      console.info(`[mock private commit] ${message}`, organizer);
     },
   };
 }

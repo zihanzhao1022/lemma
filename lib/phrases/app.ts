@@ -163,6 +163,16 @@ export const { t, useT, table } = phrases({
   标题: { ja: 'タイトル', en: 'Title' },
   '投稿去向或状态（可以不填）': { ja: '投稿先や状況（空欄でもかまいません）', en: 'Venue or status (optional)' },
   'LaTeX 模板': { ja: 'LaTeX テンプレート', en: 'LaTeX template' },
+  永久删除: { ja: '完全に削除', en: 'Delete permanently' },
+  '永久删除「{title}」？它的块、编译好的 PDF 和附件都会从论文仓库里删掉，在这里恢复不了。': {
+    ja: '「{title}」を完全に削除しますか？ブロック、コンパイル済みの PDF、添付ファイルが論文のリポジトリから削除され、ここでは元に戻せません。',
+    en: 'Delete "{title}" permanently? Its blocks, compiled PDFs and attachments are removed from your papers repository and cannot be restored here.',
+  },
+  '永久删除这 {n} 篇论文？它们的块、编译好的 PDF 和附件都会从论文仓库里删掉，在这里恢复不了。': {
+    ja: 'この {n} 本の論文を完全に削除しますか？ブロック、コンパイル済みの PDF、添付ファイルが論文のリポジトリから削除され、ここでは元に戻せません。',
+    en: 'Delete these {n} papers permanently? Their blocks, compiled PDFs and attachments are removed from your papers repository and cannot be restored here.',
+  },
+  '删除失败：{message}': { ja: '削除できませんでした：{message}', en: 'Could not delete: {message}' },
   'arXiv 预印本（没有指定会议时）': { ja: 'arXiv プレプリント（投稿先が決まっていないとき）', en: 'arXiv preprint (when no venue is set)' },
   '模板的导言区和样式文件会放进论文，之后可以在「导言区与附件」里改。': {
     ja: 'テンプレートのプリアンブルとスタイルファイルが論文に入ります。あとから「プリアンブルと添付ファイル」で変更できます。',
