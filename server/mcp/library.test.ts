@@ -20,7 +20,7 @@ function fakeGitHub(login: string, repos: string[], lemma: string[]) {
     const body = typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
     requests.push({ path: url.pathname, method, init, headers: new Headers(init.headers), body });
     const repoPath = /^\/repos\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
-    if (url.pathname === '/user/installations') return answer({ installations: [{ id: 1, app_slug: 'lemmatex', account: { login }, repository_selection: 'selected' }] });
+    if (url.pathname === '/user/installations') return answer({ installations: [{ id: 1, app_slug: 'onizukatex', account: { login }, repository_selection: 'selected' }] });
     if (url.pathname === '/user/installations/1/repositories') {
       return answer({ repositories: repos.map((name) => ({ name, owner: { login }, private: true, default_branch: 'main' })) });
     }

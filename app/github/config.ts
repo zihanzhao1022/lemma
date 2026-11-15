@@ -6,7 +6,7 @@ export const GITHUB_APP = {
   /** The App's client ID (GitHub → Settings → Developer settings → GitHub Apps → the App). */
   clientId: 'Iv23liUGfsgmwFsTztro',
   /** The App's name in its address: github.com/apps/<slug>. */
-  slug: 'lemmatex',
+  slug: 'onizukatex',
 };
 
 /** The repository name a new account is offered, as GitHub's own form offers one. */

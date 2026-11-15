@@ -59,7 +59,7 @@ npm run preview # 预览构建结果
 
 ## 部署
 
-展示页是 Cloudflare Pages 项目 `lemmatex`（https://lemmatex.pages.dev ），连着这个仓库，每次推送到 main 自动构建和发布：
+展示页是 Cloudflare Pages 项目 `onizukatex`（https://onizukatex.pages.dev ），连着这个仓库，每次推送到 main 自动构建和发布：
 
 - 构建命令：`npm run build`，输出目录 `dist`，Node 版本读取 `.node-version`（22）
 - `functions/api/` 是登录用的三个接口（Pages Functions，和网站同一个域名）：`/api/token` 用 GitHub 返回的 code 换令牌，`/api/refresh` 用只有这几个接口能读的 Cookie 续期，`/api/logout` 退出。代码在 `server/auth.ts`。
@@ -71,7 +71,7 @@ npm run preview # 预览构建结果
 在终端里运行一次（`--scope user`：在哪个目录里打开 Claude Code 都能用）：
 
 ```bash
-claude mcp add --transport http --scope user lemma https://lemmatex.pages.dev/mcp
+claude mcp add --transport http --scope user lemma https://onizukatex.pages.dev/mcp
 ```
 
 然后在 Claude Code 里输入 `/mcp`，选 lemma → Authenticate：浏览器会打开 OnizukaTex 的确认页，允许之后用 GitHub 登录，就连上了。之后可以直接说「列出我的 OnizukaTex 论文」「把实验 3.2 挂到方法 2.1 下面」「改一下引言的第二段」。
@@ -87,7 +87,7 @@ claude mcp add --transport http --scope user lemma https://lemmatex.pages.dev/mc
 
 每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `onizukatex-papers`，私有；以前建的 `lemma-papers` 照常可用）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`research-space.json` 是研究空间，`lemma.json` 标记这是 OnizukaTex 的仓库。第一次登录时，OnizukaTex 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 OnizukaTex 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
 
-GitHub App 是 `lemmatex`（https://github.com/apps/lemmatex ），公开的 client ID 和名字写在 `app/github/config.ts`。它的权限只有仓库内容读写（和必带的元数据只读），回调地址是 https://lemmatex.pages.dev/ ，安装时同时请求用户授权。
+GitHub App 是 `onizukatex`（https://github.com/apps/onizukatex ），公开的 client ID 和名字写在 `app/github/config.ts`。它的权限只有仓库内容读写（和必带的元数据只读），回调地址是 https://onizukatex.pages.dev/ ，安装时同时请求用户授权。
 
 目前每个账号只能管理自己的论文：分享给合作者、"与我共享"、批注和公开链接还没接上，界面上先不显示（见 `app/AccountContext.tsx` 的 `Features`）。
 

@@ -117,7 +117,7 @@ describe('sessions across tabs and sign-outs', () => {
 
 describe("the account's repository", () => {
   beforeEach(() => {
-    GITHUB_APP.slug = 'lemmatex';
+    GITHUB_APP.slug = 'onizukatex';
   });
   afterEach(() => {
     GITHUB_APP.slug = '';
@@ -131,9 +131,9 @@ describe("the account's repository", () => {
       if (url.endsWith('/user/installations?per_page=100')) {
         return ok({
           installations: [
-            { id: 1, app_slug: 'lemmatex', account: { login: 'Ada-Example' }, repository_selection: 'selected' },
+            { id: 1, app_slug: 'onizukatex', account: { login: 'Ada-Example' }, repository_selection: 'selected' },
             { id: 2, app_slug: 'another-app', account: { login: 'ada-example' } },
-            { id: 3, app_slug: 'lemmatex', account: { login: 'some-org' } },
+            { id: 3, app_slug: 'onizukatex', account: { login: 'some-org' } },
           ],
         });
       }
@@ -146,7 +146,7 @@ describe("the account's repository", () => {
   it('is found among hundreds, page by page, and says when OnizukaTex can reach every repository', async () => {
     const many = Array.from({ length: 130 }, (_, index) => answer(`repo-${index}`));
     const { fetchImpl } = fake((url) => {
-      if (url.includes('/user/installations?')) return ok({ installations: [{ id: 1, app_slug: 'lemmatex', account: { login: 'ada-example' }, repository_selection: 'all' }] });
+      if (url.includes('/user/installations?')) return ok({ installations: [{ id: 1, app_slug: 'onizukatex', account: { login: 'ada-example' }, repository_selection: 'all' }] });
       const page = Number(new URL(url).searchParams.get('page'));
       return ok({ repositories: many.slice((page - 1) * 100, page * 100) });
     });
