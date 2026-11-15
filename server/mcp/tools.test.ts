@@ -155,7 +155,7 @@ describe('reading papers', () => {
   it('gives the LaTeX of the blocks asked for, and the preamble', async () => {
     const { library } = fakeLibrary();
     const { text: some } = await tool(library, 'read_blocks', { paper: 'res-a', blocks: ['m1', 'f1'], preamble: true });
-    expect(some).toContain("%%% Preamble of \"A Made-up Study of Gates\" (Lemma's default)\n\\documentclass");
+    expect(some).toContain("%%% Preamble of \"A Made-up Study of Gates\" (OnizukaTex's default)\n\\documentclass");
     expect(some).toContain('%%% Block m1 [text] 2.1 Gate\n\\subsection{Gate}\nThe made-up gate.');
     expect(some).toContain('%%% Block f1 [figure] Figure 1\n\\begin{figure}');
     expect(some).not.toContain('Introduction');
@@ -176,10 +176,10 @@ describe('reading papers', () => {
 });
 
 describe('changing papers', () => {
-  it("changes a block's LaTeX and leaves its PDF for Lemma to bring up to date", async () => {
+  it("changes a block's LaTeX and leaves its PDF for OnizukaTex to bring up to date", async () => {
     const { library, state } = fakeLibrary();
     const result = await tool(library, 'update_block', { paper: 'res-a', block: 'm1', source: '\\subsection{Gate}\nA better made-up gate.' });
-    expect(result.text).toContain('Lemma compiles it the next time');
+    expect(result.text).toContain('OnizukaTex compiles it the next time');
     const m1 = state.papers[0].blocks.find((block) => block.id === 'm1');
     expect(m1).toMatchObject({ kind: 'text', source: '\\subsection{Gate}\nA better made-up gate.', output: output('m1') });
     expect(state.commits[0].message).toBe('results: update block in "A Made-up Study of Gates" (Claude Code)');
@@ -293,6 +293,6 @@ describe('what goes wrong', () => {
     const res = await post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_papers', arguments: {} } }, () => Promise.reject(new GitHubError('GitHub 返回 401', 401)));
     const body = (await res.json()) as { result: { content: { text: string }[]; isError: boolean } };
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0].text).toContain('connect Lemma again');
+    expect(body.result.content[0].text).toContain('connect OnizukaTex again');
   });
 });

@@ -86,7 +86,7 @@ describe('a LaTeX project as a paper', () => {
       ['text', '\\appendix'],
     ]);
     expect(paper!.blocks[7].source).toBe('\\appendix\n\\section{More}\nExtra.');
-    // What Lemma shows itself is left out of the blocks.
+    // What OnizukaTex shows itself is left out of the blocks.
     const all = paper!.blocks.map((block) => block.source).join('\n');
     expect(all).not.toMatch(/\\maketitle|\\bibliography|\\input/);
     expect(paper!.preamble).toContain('\\input{macros}');

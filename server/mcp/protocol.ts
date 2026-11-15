@@ -13,11 +13,11 @@ import { TOOLS } from './tools';
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 
 const INSTRUCTIONS = [
-  "Lemma keeps a person's LaTeX papers as blocks (text, figures, tables) in their own GitHub repository.",
+  "OnizukaTex keeps a person's LaTeX papers as blocks (text, figures, tables) in their own GitHub repository.",
   'Find a paper with list_papers and look at it with get_paper before changing it; read_blocks gives the LaTeX.',
   "Every change is saved at once as a commit to the person's repository.",
-  "LaTeX does not run here: Lemma compiles changed blocks the next time the paper is open there, so keep the LaTeX valid and in the paper's own style, and tell the person to open the paper in Lemma to see the result.",
-  "A paper's logic is a tree of its blocks starting at the introduction (each experiment under the method it tests, for example), plus links drawn between related blocks; Lemma presents the paper and builds its slides along it.",
+  "LaTeX does not run here: OnizukaTex compiles changed blocks the next time the paper is open there, so keep the LaTeX valid and in the paper's own style, and tell the person to open the paper in OnizukaTex to see the result.",
+  "A paper's logic is a tree of its blocks starting at the introduction (each experiment under the method it tests, for example), plus links drawn between related blocks; OnizukaTex presents the paper and builds its slides along it.",
 ].join(' ');
 
 type Id = string | number | null;
@@ -36,8 +36,8 @@ function describe(error: unknown): string {
   if (error instanceof ToolError) return error.message;
   if (error instanceof ConflictError) return 'The paper kept changing elsewhere while saving; look at it again and retry.';
   if (error instanceof GitHubError) {
-    if (error.status === 401) return 'GitHub no longer accepts this sign-in: connect Lemma again in Claude Code (/mcp).';
-    if (error.status === 403 || error.status === 404) return `GitHub refused (${error.status}): Lemma's App may no longer be installed on the repository.`;
+    if (error.status === 401) return 'GitHub no longer accepts this sign-in: connect OnizukaTex again in Claude Code (/mcp).';
+    if (error.status === 403 || error.status === 404) return `GitHub refused (${error.status}): OnizukaTex's App may no longer be installed on the repository.`;
     if (error.status === 0) return 'GitHub could not be reached; try again.';
     return `GitHub answered ${error.status}; try again.`;
   }
@@ -59,7 +59,7 @@ async function handle(message: unknown, who: { github: string; login: string }, 
       return ok(id, {
         protocolVersion: typeof asked === 'string' && VERSIONS.includes(asked) ? asked : VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'lemma', title: 'Lemma', version: '1.0.0' },
+        serverInfo: { name: 'lemma', title: 'OnizukaTex', version: '1.0.0' },
         instructions: INSTRUCTIONS,
       });
     }

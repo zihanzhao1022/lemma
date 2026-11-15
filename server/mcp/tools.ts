@@ -1,7 +1,7 @@
 /**
  * What an MCP client like Claude Code can do with a person's papers: read them, change their blocks and
- * preambles, and build their logic. Each change is one commit of Lemma's own operations (editor/results/ops.ts),
- * stored as the pages store it. LaTeX does not run here: Lemma compiles changed blocks the next time the paper
+ * preambles, and build their logic. Each change is one commit of OnizukaTex's own operations (editor/results/ops.ts),
+ * stored as the pages store it. LaTeX does not run here: OnizukaTex compiles changed blocks the next time the paper
  * is open there (staleBlocks, Workspace).
  */
 import { Relation, cleanRelations, related, startOf, withRelation, withoutRelation } from '../../app/logic/graph';
@@ -36,7 +36,7 @@ const KINDS: ResultBlockKind[] = ['text', 'figure', 'table'];
 /** Longest text a tool gives back in one go. */
 const MAX_TEXT = 200_000;
 
-const REPO: Schema = { type: 'string', description: 'owner/name of the Lemma repository; needed only when the person has several.' };
+const REPO: Schema = { type: 'string', description: 'owner/name of the OnizukaTex repository; needed only when the person has several.' };
 const PAPER: Schema = { type: 'string', description: 'The paper: its ID, slug or title, as list_papers shows them.' };
 const BLOCK: Schema = { type: 'string', description: 'A block ID, as get_paper lists them (blk-…).' };
 
@@ -154,7 +154,7 @@ function describePaper(paper: ResultPaper): string {
   return lines.join('\n');
 }
 
-const compiledLater = 'Lemma compiles it the next time the paper is open there.';
+const compiledLater = 'OnizukaTex compiles it the next time the paper is open there.';
 
 /** The logic after a save, from the list the save returns. */
 const logicAfter = (papers: ResultPaper[], paperId: string): string => {
@@ -166,7 +166,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'list_papers',
     title: 'List papers',
-    description: "List the papers in the person's Lemma repository, with their IDs.",
+    description: "List the papers in the person's OnizukaTex repository, with their IDs.",
     inputSchema: object({}, []),
     annotations: { readOnlyHint: true, openWorldHint: false },
     run: async (_args, library) => {
@@ -208,7 +208,7 @@ export const TOOLS: Tool[] = [
       const name = namesOf(paper);
       const chosen = Array.isArray(args.blocks) && args.blocks.length > 0 ? args.blocks.map((id) => blockOf(paper, id)) : paper.blocks;
       const parts = chosen.map((block) => `%%% Block ${block.id} [${block.kind}] ${name(block.id)}${block.hidden ? ' (hidden from readers)' : ''}\n${block.source ?? ''}`);
-      if (args.preamble === true) parts.unshift(`%%% Preamble of "${paper.title}"${paper.preamble === undefined ? " (Lemma's default)" : ''}\n${paper.preamble ?? DEFAULT_PREAMBLE}`);
+      if (args.preamble === true) parts.unshift(`%%% Preamble of "${paper.title}"${paper.preamble === undefined ? " (OnizukaTex's default)" : ''}\n${paper.preamble ?? DEFAULT_PREAMBLE}`);
       const text = parts.join('\n\n');
       return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}\n\n[Cut here: read fewer blocks at a time.]` : text || `"${paper.title}" has no blocks yet.`;
     },
@@ -234,7 +234,7 @@ export const TOOLS: Tool[] = [
     name: 'update_block',
     title: 'Change a block',
     description:
-      "Replace the LaTeX of one block. Keep its kind: a text block holds text with its headings (\\section…), a figure block one figure environment, a table block one table environment. Lemma compiles it the next time the paper is open there, so compile errors do not show here: keep the LaTeX valid and in the paper's own style.",
+      "Replace the LaTeX of one block. Keep its kind: a text block holds text with its headings (\\section…), a figure block one figure environment, a table block one table environment. OnizukaTex compiles it the next time the paper is open there, so compile errors do not show here: keep the LaTeX valid and in the paper's own style.",
     inputSchema: object({ paper: PAPER, block: BLOCK, source: { type: 'string', description: "The block's new LaTeX, in full." } }, ['paper', 'block', 'source']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     run: async (args, library) => {
@@ -250,7 +250,7 @@ export const TOOLS: Tool[] = [
     name: 'add_block',
     title: 'Add a block',
     description:
-      'Add a block (text, figure or table) to a paper: after or before a block, or at the end. With `under`, it also goes into the logic under that block and, unless after or before says otherwise, into the paper next to that block\'s other branches. Lemma compiles it the next time the paper is open there.',
+      'Add a block (text, figure or table) to a paper: after or before a block, or at the end. With `under`, it also goes into the logic under that block and, unless after or before says otherwise, into the paper next to that block\'s other branches. OnizukaTex compiles it the next time the paper is open there.',
     inputSchema: object(
       {
         paper: PAPER,
@@ -318,7 +318,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'update_preamble',
     title: 'Change the preamble',
-    description: "Replace a paper's preamble: \\documentclass up to, not including, \\begin{document}. Every block is compiled again with it the next time the paper is open in Lemma.",
+    description: "Replace a paper's preamble: \\documentclass up to, not including, \\begin{document}. Every block is compiled again with it the next time the paper is open in OnizukaTex.",
     inputSchema: object({ paper: PAPER, preamble: { type: 'string', description: 'The new preamble, in full.' } }, ['paper', 'preamble']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     run: async (args, library) => {
@@ -328,7 +328,7 @@ export const TOOLS: Tool[] = [
       if (/\\begin\s*\{document\}/.test(preamble)) throw new ToolError('Leave out \\begin{document}: the preamble ends before it.');
       if (preamble === paper.preamble) return 'The paper already has this preamble; nothing changed.';
       await library.save({ kind: 'patchPaper', id: paper.id, fields: { preamble } }, message('update preamble of', paper), [], stillThere(paper.id, []));
-      return `Saved the preamble of "${paper.title}". Lemma compiles every block with it the next time the paper is open there.`;
+      return `Saved the preamble of "${paper.title}". OnizukaTex compiles every block with it the next time the paper is open there.`;
     },
   },
   {
@@ -400,7 +400,7 @@ export const TOOLS: Tool[] = [
     name: 'link_blocks',
     title: 'Link two blocks',
     description:
-      "Draw a link (a dashed line in Lemma's logic view) between two blocks of the logic that bear on each other beyond the tree, e.g. an experiment that tests two methods. Both must be in the logic.",
+      "Draw a link (a dashed line in OnizukaTex's logic view) between two blocks of the logic that bear on each other beyond the tree, e.g. an experiment that tests two methods. Both must be in the logic.",
     inputSchema: object({ paper: PAPER, a: BLOCK, b: BLOCK }, ['paper', 'a', 'b']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     run: async (args, library) => {

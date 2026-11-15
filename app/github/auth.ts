@@ -1,5 +1,5 @@
 /**
- * Signing in with GitHub (the web flow with PKCE) and installing Lemma's App on a repository. Both leave the
+ * Signing in with GitHub (the web flow with PKCE) and installing OnizukaTex's App on a repository. Both leave the
  * site for GitHub and come back to its front page with ?code=…&state=… (installing signs in as well); the
  * code is traded for a session by /api/token (server/auth.ts).
  */

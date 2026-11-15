@@ -343,7 +343,7 @@ export interface ResultPaper extends Hideable {
 }
 
 /**
- * A paper's slides: either drawn in Lemma on 16:9 pages (`visual`), or written as a Beamer document
+ * A paper's slides: either drawn in OnizukaTex on 16:9 pages (`visual`), or written as a Beamer document
  * (`beamer`), whose \lemmablock{label} puts a block of the paper on a frame.
  */
 export interface SlideDeck {

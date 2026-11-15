@@ -37,9 +37,9 @@ interface Found {
 
 type Stage =
   | { kind: 'looking' }
-  /** `everything`: Lemma can reach all the account's repositories, which it should not. */
+  /** `everything`: OnizukaTex can reach all the account's repositories, which it should not. */
   | { kind: 'form'; found: Found[]; everything: boolean }
-  /** Created on GitHub's form, in another tab; Lemma still to be installed on it. */
+  /** Created on GitHub's form, in another tab; OnizukaTex still to be installed on it. */
   | { kind: 'confirm'; name: string; missing: boolean }
   | { kind: 'starting'; repo: LemmaRepo }
   | { kind: 'failed' };
@@ -89,9 +89,9 @@ const Step: React.FC<{ number: number; title: string; last?: boolean; children: 
 );
 
 /**
- * The first time an account signs in: a repository for its papers. Lemma never sees an account's other
+ * The first time an account signs in: a repository for its papers. OnizukaTex never sees an account's other
  * repositories, so the repository is created on GitHub's own form (filled in from here) and the App installed
- * on it; back here, Lemma starts its files in it. An account with a Lemma repository already goes straight on.
+ * on it; back here, OnizukaTex starts its files in it. An account with a OnizukaTex repository already goes straight on.
  */
 const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }> = ({ account, onConnect }) => {
   const t = useT();
@@ -136,13 +136,13 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
       const fetchImpl = authorizedFetch();
       const { repos, everything } = await reachableRepos(account.login, fetchImpl);
       const wanted = newRepoName();
-      // With every repository open to Lemma (perhaps hundreds), only the one just created and those named like
-      // Lemma's are looked at.
-      const likely = (repo: LemmaRepo) => repo.name.toLowerCase() === wanted?.toLowerCase() || /lemma/i.test(repo.name);
+      // With every repository open to OnizukaTex (perhaps hundreds), only the one just created and those named like
+      // OnizukaTex's are looked at.
+      const likely = (repo: LemmaRepo) => repo.name.toLowerCase() === wanted?.toLowerCase() || /lemma|onizuka/i.test(repo.name);
       const found = await repoStatuses(everything ? repos.filter(likely) : repos, fetchImpl);
       const created = wanted ? found.find((item) => item.repo.name.toLowerCase() === wanted.toLowerCase()) : undefined;
       const lemma = found.filter((item) => item.status === 'lemma');
-      // Going on by itself only when Lemma reaches no more than it should; otherwise the page says so first.
+      // Going on by itself only when OnizukaTex reaches no more than it should; otherwise the page says so first.
       if (!everything && created && created.status !== 'other' && created.status !== 'missing') {
         await start(created);
         return;
@@ -151,13 +151,13 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
         connect(lemma[0].repo);
         return;
       }
-      // Lemma was installed on a single empty repository and nothing else: that one is meant.
+      // OnizukaTex was installed on a single empty repository and nothing else: that one is meant.
       const startable = found.filter((item) => item.status === 'empty' || item.status === 'fresh');
       if (!everything && lemma.length === 0 && startable.length === 1 && found.length === 1) {
         await start(startable[0]);
         return;
       }
-      // Halfway through: created on GitHub, perhaps, but Lemma not installed on it yet.
+      // Halfway through: created on GitHub, perhaps, but OnizukaTex not installed on it yet.
       if (wanted && !created) {
         setStage({ kind: 'confirm', name: wanted, missing: true });
         return;
@@ -268,7 +268,7 @@ const Setup: React.FC<{ account: Account; onConnect: (repo: LemmaRepo) => void }
     );
   }
 
-  // Repositories holding other files are listed only when they were chosen for Lemma on purpose.
+  // Repositories holding other files are listed only when they were chosen for OnizukaTex on purpose.
   const usable = stage.found.filter((item) => item.status !== 'missing' && !(stage.everything && item.status === 'other'));
   return (
     <div className="mx-auto max-w-2xl py-14">

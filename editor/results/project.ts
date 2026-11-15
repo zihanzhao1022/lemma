@@ -2,7 +2,7 @@
  * A LaTeX project (an Overleaf download, a zipped folder) as a paper: its main .tex's preamble becomes the
  * paper's, its text is cut into blocks at sections, the abstract, figures and tables (with \input files taken
  * in), its \title and \author become the paper's, and its other files become attachments, the .bib files also
- * as the references.bib Lemma typesets.
+ * as the references.bib OnizukaTex typesets.
  */
 import { ResultBlockKind, ResultPaper } from '../../types';
 import { MAX_UPLOAD, attachmentName, attachmentPath } from './actions';
@@ -154,7 +154,7 @@ export function bibliographyOf(source: string): string[] {
   return names.filter(Boolean);
 }
 
-/** The body without what Lemma shows itself: \maketitle (the paper's title), and the bibliography commands. */
+/** The body without what OnizukaTex shows itself: \maketitle (the paper's title), and the bibliography commands. */
 export function withoutPageParts(body: string): string {
   let out = body;
   for (const command of ['bibliography', 'bibliographystyle', 'nocite']) out = withoutCommand(out, command);
@@ -284,7 +284,7 @@ export async function projectPaper(files: Record<string, Uint8Array>, main: stri
       blocks = blocks.map((block) => ({ ...block, source: replaceEvery(block.source, old, now) }));
     }
   }
-  // Lemma typesets the bibliography from references.bib: the project's .bib files, one after another.
+  // OnizukaTex typesets the bibliography from references.bib: the project's .bib files, one after another.
   if (bibs.length > 0) attachments[REFERENCES_FILE] = new TextEncoder().encode(bibs.map((path) => decode(files[path]).replace(/\s+$/, '')).join('\n\n') + '\n');
   const taken = [...inlined].map((path) => (path.startsWith(base) ? path.slice(base.length) : path));
   return { main, title, authors, preamble, blocks, attachments, renamed, overflow, taken };

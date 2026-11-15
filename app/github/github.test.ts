@@ -126,7 +126,7 @@ describe("the account's repository", () => {
   const repo: LemmaRepo = { owner: 'ada-example', name: 'lemma-papers', branch: 'main', private: true };
   const answer = (name: string, owner = 'ada-example') => ({ name, owner: { login: owner }, private: true, default_branch: 'main' });
 
-  it("is found among the repositories the account installed Lemma's App on", async () => {
+  it("is found among the repositories the account installed OnizukaTex's App on", async () => {
     const { fetchImpl } = fake((url) => {
       if (url.endsWith('/user/installations?per_page=100')) {
         return ok({
@@ -143,7 +143,7 @@ describe("the account's repository", () => {
     expect(await reachableRepos('ada-example', fetchImpl)).toEqual({ repos: [repo], everything: false });
   });
 
-  it('is found among hundreds, page by page, and says when Lemma can reach every repository', async () => {
+  it('is found among hundreds, page by page, and says when OnizukaTex can reach every repository', async () => {
     const many = Array.from({ length: 130 }, (_, index) => answer(`repo-${index}`));
     const { fetchImpl } = fake((url) => {
       if (url.includes('/user/installations?')) return ok({ installations: [{ id: 1, app_slug: 'lemmatex', account: { login: 'ada-example' }, repository_selection: 'all' }] });
@@ -173,7 +173,7 @@ describe("the account's repository", () => {
     expect(found.map((item) => item.repo.name)).toEqual(repos.map((item) => item.name));
   });
 
-  it("is told apart: Lemma's, empty, fresh from GitHub's form, someone else's files, or out of reach", async () => {
+  it("is told apart: OnizukaTex's, empty, fresh from GitHub's form, someone else's files, or out of reach", async () => {
     const status = (marker: number, commits: number, root: string[] = []) =>
       repoStatus(
         repo,

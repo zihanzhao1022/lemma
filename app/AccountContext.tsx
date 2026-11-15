@@ -142,7 +142,7 @@ export const AccountProvider: React.FC<{ account: Account; source: AccountSource
     (paperId: string) => (github ? undefined : ACCOUNTS.find((other) => mockStore(storeKeyOf(other.login)).papers.some((paper) => paper.id === paperId))),
     [github],
   );
-  // Papers changed elsewhere meanwhile (on another computer, or by Claude Code through Lemma's MCP server) show
+  // Papers changed elsewhere meanwhile (on another computer, or by Claude Code through OnizukaTex's MCP server) show
   // when the person comes back to this tab.
   const { reload } = mine;
   useEffect(() => {

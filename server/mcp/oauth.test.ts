@@ -178,7 +178,7 @@ describe('signing in for an MCP client', () => {
     const tokens = (await (await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: CALLBACK, client_id: clientId, code_verifier: VERIFIER, resource: `${SITE}/mcp` })).json()) as Record<string, unknown>;
     expect(tokens).toMatchObject({ token_type: 'Bearer', scope: 'papers' });
     expect(tokens.expires_in).toBeGreaterThan(28_000);
-    // Lemma's tokens carry GitHub's sealed: the client never sees them.
+    // OnizukaTex's tokens carry GitHub's sealed: the client never sees them.
     expect(String(tokens.access_token)).not.toContain('ghu_made_up');
     expect(String(tokens.refresh_token)).not.toContain('ghr_made_up');
 

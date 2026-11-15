@@ -1,4 +1,4 @@
-# Lemma
+# OnizukaTex
 
 实验结果管理 + 科研写作一体化平台，而且很方便展示。
 
@@ -15,7 +15,7 @@ A platform for managing experiment results and writing the paper in one place, m
   - 可视化幻灯片：用论文里编译好的图和表格先生成一套，再拖拽排版、加文字和演讲备注；论文里的块改了，幻灯片上的也跟着变。可以导出 PDF（块保持矢量）和 PowerPoint（文字可编辑，块是 300 dpi 图片）。
   - Beamer：用 LaTeX 写，`\lemmablock{tab:main}` 把论文里编译好的块放到一页上（按块的 `\label` 或块 id），右边实时编译。导出 PDF 就是编译结果，导出 PowerPoint 是每页一张图。
 - **协作和展示**：分享给合作者、页边批注、演示模式（一块一屏，或者放幻灯片）。
-- **在 Claude Code 里用**：Lemma 是一个 MCP 服务器，Claude Code 可以读论文、改块的 LaTeX 和导言区、搭逻辑结构（见下面「连接 Claude Code」）。
+- **在 Claude Code 里用**：OnizukaTex 是一个 MCP 服务器，Claude Code 可以读论文、改块的 LaTeX 和导言区、搭逻辑结构（见下面「连接 Claude Code」）。
 
 LaTeX 在浏览器里编译（SwiftLaTeX 的 pdfTeX，见 `public/texlive/`），不需要编译服务器。
 
@@ -42,7 +42,7 @@ npm run preview # 预览构建结果
 
 | 目录 | 内容 |
 | --- | --- |
-| `app/` | Lemma 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
+| `app/` | OnizukaTex 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
 | `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码；在 PDF 上直接改：`printed.ts`（一段 LaTeX 印出哪些字）、`pageRegions.ts`（源码一行在 PDF 的哪一段）、`pageAlign.ts` 和 `pageMap.ts`（逐字对应，点击与光标）、`pageEdits.ts`（打字、删除、移动光标）、`pageImages.ts`（图片位置和换图） |
 | `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、演示、导出 PDF 和 PowerPoint |
 | `app/logic/` | 论文的逻辑结构；`ForceGraph.tsx` 是它和研究空间共用的力导向图 |
@@ -74,18 +74,18 @@ npm run preview # 预览构建结果
 claude mcp add --transport http --scope user lemma https://lemmatex.pages.dev/mcp
 ```
 
-然后在 Claude Code 里输入 `/mcp`，选 lemma → Authenticate：浏览器会打开 Lemma 的确认页，允许之后用 GitHub 登录，就连上了。之后可以直接说「列出我的 Lemma 论文」「把实验 3.2 挂到方法 2.1 下面」「改一下引言的第二段」。
+然后在 Claude Code 里输入 `/mcp`，选 lemma → Authenticate：浏览器会打开 OnizukaTex 的确认页，允许之后用 GitHub 登录，就连上了。之后可以直接说「列出我的 OnizukaTex 论文」「把实验 3.2 挂到方法 2.1 下面」「改一下引言的第二段」。
 
 - 能做的事：列出论文，看一篇论文的块、逻辑结构、关联线和附件，读块的 LaTeX 和文本附件（比如 `references.bib`）；改、加、删块，改导言区，把块挂到逻辑结构里或拿出来，连或删关联线。分享和公开不在其中。
 - 每次修改都马上作为一次提交存进你的论文仓库，提交说明末尾带「(Claude Code)」。
-- Claude Code 那边不编译 LaTeX：在 Lemma 里打开这篇论文时，改过的块会在后台自动编译；切回 Lemma 的标签页时会重新读取论文。
-- 授权只会交给本机（localhost）上的 Claude Code。要撤销，在 GitHub 的 Settings → Applications → Authorized GitHub Apps 里撤销 Lemma。
+- Claude Code 那边不编译 LaTeX：在 OnizukaTex 里打开这篇论文时，改过的块会在后台自动编译；切回 OnizukaTex 的标签页时会重新读取论文。
+- 授权只会交给本机（localhost）上的 Claude Code。要撤销，在 GitHub 的 Settings → Applications → Authorized GitHub Apps 里撤销 OnizukaTex。
 
 实现在 `server/mcp/`：`oauth.ts` 让网站当 OAuth 授权服务器（用 GitHub 登录，发给客户端的是封好的令牌，`seal.ts`，服务器不存任何东西），`protocol.ts` 是 MCP 接口，`tools.ts` 是各个工具，`library.ts` 用和网页相同的方式读写论文仓库。GitHub App 只允许回到网站首页，所以 GitHub 的回答先到首页，再由 `functions/index.ts` 转给 MCP 的登录流程。
 
 ## 账号和数据
 
-每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `lemma-papers`，私有）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`research-space.json` 是研究空间，`lemma.json` 标记这是 Lemma 的仓库。第一次登录时，Lemma 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 Lemma 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
+每个人用自己的 GitHub 账号登录，论文存在自己账号下的一个仓库里（默认叫 `onizukatex-papers`，私有；以前建的 `lemma-papers` 照常可用）：`results.json` 是论文列表和各块的 LaTeX，`results/<论文>/` 放编译好的 PDF 和附件，`research-space.json` 是研究空间，`lemma.json` 标记这是 OnizukaTex 的仓库。第一次登录时，OnizukaTex 的页面带着填好的名字打开 GitHub 的新建仓库页，再请用户把 OnizukaTex 的 GitHub App 装到这个仓库上；App 只能读写装了它的仓库。
 
 GitHub App 是 `lemmatex`（https://github.com/apps/lemmatex ），公开的 client ID 和名字写在 `app/github/config.ts`。它的权限只有仓库内容读写（和必带的元数据只读），回调地址是 https://lemmatex.pages.dev/ ，安装时同时请求用户授权。
 
@@ -95,7 +95,7 @@ GitHub App 是 `lemmatex`（https://github.com/apps/lemmatex ），公开的 cli
 
 ## 来历
 
-从 [zihanzhao1022.github.io](https://github.com/zihanzhao1022/zihanzhao1022.github.io) 的“论文结果”页面拆出来。`editor/` 里还留着一些主页编辑器的代码（个人资料、新闻等表单，`editor/config.ts` 里主页的 GitHub App 和 Worker 地址），Lemma 用不到（它的登录在 `app/github/`），以后再整理。
+从 [zihanzhao1022.github.io](https://github.com/zihanzhao1022/zihanzhao1022.github.io) 的“论文结果”页面拆出来。`editor/` 里还留着一些主页编辑器的代码（个人资料、新闻等表单，`editor/config.ts` 里主页的 GitHub App 和 Worker 地址），OnizukaTex 用不到（它的登录在 `app/github/`），以后再整理。
 
 ## 许可
 

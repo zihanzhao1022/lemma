@@ -120,7 +120,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     [owner, access, busy, setToast, t],
   );
 
-  // Blocks changed where LaTeX does not run (Claude Code, through Lemma's MCP server) compile once the paper is
+  // Blocks changed where LaTeX does not run (Claude Code, through OnizukaTex's MCP server) compile once the paper is
   // open here. What would not compile is tried again only once it changed.
   const tried = useRef(new Set<string>());
   useEffect(() => {

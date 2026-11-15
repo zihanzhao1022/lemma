@@ -171,7 +171,7 @@ export async function commitResults(
 
 /**
  * The owner's backend; `cache` keeps the files this browser has read (see lib/fileCache). Without `publicApi`
- * (Lemma, where every paper is private) nothing is ever published. `branch` is the private repository's.
+ * (OnizukaTex, where every paper is private) nothing is ever published. `branch` is the private repository's.
  */
 export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi | null, cache?: FileCache, branch = EDITOR_CONFIG.branch): ResultsBackend {
   const files = new Map<string, Promise<Uint8Array>>();

@@ -200,7 +200,7 @@ function connectMock(session: Session, onChange: (state: PresenceState) => void)
 
 /**
  * Presence for the signed-in owner or collaborator (see components/presence.ts). With `enabled` false it
- * connects to nothing: Lemma's GitHub accounts have no comments or readers yet.
+ * connects to nothing: OnizukaTex's GitHub accounts have no comments or readers yet.
  */
 export function usePresence(session: Session, enabled = true): PresenceValue {
   const [state, setState] = useState<PresenceState>({ viewers: [] });

@@ -69,7 +69,7 @@ const GitHubPages: React.FC = () => {
       current = false;
     };
   }, [setProblem]);
-  // The repository this browser remembers may have been deleted, or Lemma uninstalled from it.
+  // The repository this browser remembers may have been deleted, or OnizukaTex uninstalled from it.
   useEffect(() => {
     if (!login || !repo) return undefined;
     let current = true;
@@ -205,7 +205,7 @@ const MockPages: React.FC = () => {
   );
 };
 
-/** Lemma: experiment results and research writing in one place, kept in each account's own GitHub repository. */
+/** OnizukaTex: experiment results and research writing in one place, kept in each account's own GitHub repository. */
 const App: React.FC = () => <HashRouter>{MOCK_MODE ? <MockPages /> : <GitHubPages />}</HashRouter>;
 
 export default App;

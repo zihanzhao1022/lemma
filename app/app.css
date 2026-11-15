@@ -231,39 +231,27 @@ body {
   }
 }
 
-/* The wordmark, set like the TeX and LaTeX logos but looser: a small raised E tucked after the L (in the mark's
-   violet), the first M lifted a little, the second dropped below the line, a small A raised higher still. */
-.lemma-wordmark {
+/* The wordmark: Onizuka, then TeX as Knuth sets its logo (the E lowered half an ex, the letters drawn in close),
+   in the mark's violet. */
+.brand-wordmark {
   font-family: 'Source Serif 4', 'Source Serif Pro', Georgia, serif;
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
 }
-.lemma-wordmark > span {
+.brand-wordmark > span,
+.brand-wordmark .tex > span {
   display: inline-block;
 }
-.lemma-wordmark .up {
-  font-size: 0.72em;
-  transform: translateY(-0.28em);
-}
-.lemma-wordmark .e {
-  margin-left: -0.27em;
-  margin-right: -0.04em;
+.brand-wordmark .tex {
+  margin-left: 0.04em;
   color: #6d28d9;
 }
-.lemma-wordmark .rise {
-  margin-left: -0.02em;
-  margin-right: -0.06em;
-  transform: translateY(-0.12em);
+.brand-wordmark .tex .e {
+  margin-left: -0.1667em;
+  margin-right: -0.125em;
+  transform: translateY(0.22em);
 }
-.lemma-wordmark .down {
-  margin-left: -0.06em;
-  margin-right: -0.12em;
-  transform: translateY(0.2em);
-}
-.lemma-wordmark .a {
-  transform: translateY(-0.3em);
-}
-.on-dark .lemma-wordmark .e {
+.on-dark .brand-wordmark .tex {
   color: #a78bfa;
 }

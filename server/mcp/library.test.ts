@@ -7,7 +7,7 @@ const PAPERS: ResultPaper[] = [{ id: 'res-a', slug: 'made-up', title: 'A Made-up
 const answer = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 /**
- * A made-up GitHub for `login`: Lemma's App installed on the repositories named, those in `lemma` holding
+ * A made-up GitHub for `login`: OnizukaTex's App installed on the repositories named, those in `lemma` holding
  * lemma.json and results.json, saving as the Git data API does.
  */
 function fakeGitHub(login: string, repos: string[], lemma: string[]) {
@@ -59,11 +59,11 @@ describe("the person's papers through GitHub", () => {
     expect(seen[0]).not.toHaveProperty('cache');
     const headers = new Headers(seen[0].headers);
     expect(headers.get('Authorization')).toBe('Bearer ghu_made_up');
-    expect(headers.get('User-Agent')).toBe('Lemma');
+    expect(headers.get('User-Agent')).toBe('OnizukaTex');
     expect(headers.get('Accept')).toBe('application/vnd.github.raw+json');
   });
 
-  it("finds the Lemma repository among those the App was installed on, reads its papers and saves to it", async () => {
+  it("finds the OnizukaTex repository among those the App was installed on, reads its papers and saves to it", async () => {
     const github = fakeGitHub('ada-example', ['dotfiles', 'lemma-papers'], ['lemma-papers']);
     const library = await openLibrary('ghu_made_up', 'ada-example', undefined, github.fetchImpl);
     expect(library.repo).toBe('ada-example/lemma-papers');
@@ -76,7 +76,7 @@ describe("the person's papers through GitHub", () => {
     expect(github.requests.find((request) => request.method === 'PATCH')?.body).toEqual({ sha: 'commit-2', force: false });
     for (const request of github.requests) {
       expect(request.init).not.toHaveProperty('cache');
-      expect(request.headers.get('User-Agent')).toBe('Lemma');
+      expect(request.headers.get('User-Agent')).toBe('OnizukaTex');
       expect(request.headers.get('Authorization')).toBe('Bearer ghu_made_up');
     }
   });
@@ -86,11 +86,11 @@ describe("the person's papers through GitHub", () => {
     await expect(openLibrary('ghu_revoked', 'di-example', undefined, refused)).rejects.toMatchObject({ status: 401 });
   });
 
-  it('says when there is no Lemma repository, or several to choose from', async () => {
+  it('says when there is no OnizukaTex repository, or several to choose from', async () => {
     await expect(openLibrary('ghu', 'bo-example', undefined, fakeGitHub('bo-example', ['dotfiles'], []).fetchImpl)).rejects.toThrow(ToolError);
     const several = fakeGitHub('cy-example', ['lemma-a', 'lemma-b'], ['lemma-a', 'lemma-b']);
     await expect(openLibrary('ghu', 'cy-example', undefined, several.fetchImpl)).rejects.toThrow('cy-example/lemma-a, cy-example/lemma-b');
     expect((await openLibrary('ghu', 'cy-example', 'cy-example/lemma-b', several.fetchImpl)).repo).toBe('cy-example/lemma-b');
-    await expect(openLibrary('ghu', 'cy-example', 'cy-example/elsewhere', several.fetchImpl)).rejects.toThrow('not one of your Lemma repositories');
+    await expect(openLibrary('ghu', 'cy-example', 'cy-example/elsewhere', several.fetchImpl)).rejects.toThrow('not one of your OnizukaTex repositories');
   });
 });

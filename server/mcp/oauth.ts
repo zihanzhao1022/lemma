@@ -1,11 +1,11 @@
 /**
- * Lemma as an OAuth authorization server for MCP clients such as Claude Code (the MCP authorization spec:
+ * OnizukaTex as an OAuth authorization server for MCP clients such as Claude Code (the MCP authorization spec:
  * RFC 9728 resource metadata, RFC 8414 server metadata, RFC 7591 registration, PKCE). People sign in with
- * GitHub through Lemma's App; the client gets Lemma's own tokens, which carry the GitHub ones sealed (seal.ts).
+ * GitHub through OnizukaTex's App; the client gets OnizukaTex's own tokens, which carry the GitHub ones sealed (seal.ts).
  *
  * The App allows GitHub to send people back only to the site's front page, so GitHub's answer lands there and
  * functions/index.ts hands it here by its state. Codes go only to addresses on the person's own computer, and
- * only after they said yes on Lemma's page in their own browser: a link someone else made gets them nothing.
+ * only after they said yes on OnizukaTex's page in their own browser: a link someone else made gets them nothing.
  */
 import { GITHUB_APP } from '../../app/github/config';
 import { ACCESS_SECONDS, Env, REFRESH_SECONDS, TokenAnswer, askGitHub, configured, githubHeaders, readCookie } from '../auth';
@@ -22,7 +22,7 @@ const MINUTE = 60_000;
 const CODE_LIFE = 5 * MINUTE;
 const CONSENT_LIFE = 10 * MINUTE;
 const CLIENT_LIFE = 5 * 365 * 24 * 60 * MINUTE;
-/** Lemma's access token runs out a little before the GitHub token it carries. */
+/** OnizukaTex's access token runs out a little before the GitHub token it carries. */
 const MARGIN = MINUTE;
 
 /** The MCP endpoint: what the tokens are for. */
@@ -49,7 +49,7 @@ const oauthError = (error: string, description: string, status = 400): Response 
 /** RFC 9728: the MCP endpoint, and where its tokens come from. */
 export function protectedResource(request: Request): Response {
   const origin = originOf(request);
-  return json({ resource: resourceOf(origin), authorization_servers: [origin], scopes_supported: [SCOPE], bearer_methods_supported: ['header'], resource_name: 'Lemma' });
+  return json({ resource: resourceOf(origin), authorization_servers: [origin], scopes_supported: [SCOPE], bearer_methods_supported: ['header'], resource_name: 'OnizukaTex' });
 }
 
 /** RFC 8414: the site as an authorization server. */
@@ -72,7 +72,7 @@ export function authorizationServer(request: Request): Response {
 export function unauthorized(request: Request, invalid: boolean): Response {
   const challenge = `Bearer resource_metadata="${originOf(request)}/.well-known/oauth-protected-resource/mcp", scope="${SCOPE}"${invalid ? ', error="invalid_token"' : ''}`;
   return json(
-    { error: invalid ? 'invalid_token' : 'unauthorized', error_description: invalid ? 'The token is not valid or has expired.' : 'Sign in to Lemma first.' },
+    { error: invalid ? 'invalid_token' : 'unauthorized', error_description: invalid ? 'The token is not valid or has expired.' : 'Sign in to OnizukaTex first.' },
     401,
     { 'WWW-Authenticate': challenge },
   );
@@ -229,7 +229,7 @@ const grantOf = (tokens: TokenAnswer & { access_token: string }, login: string):
 
 /**
  * GitHub's answer for an MCP client, at the front page (functions/index.ts): the GitHub code traded for the
- * person's tokens, sealed into a code of Lemma's own for the client.
+ * person's tokens, sealed into a code of OnizukaTex's own for the client.
  */
 export async function githubReturned(request: Request, env: Env): Promise<Response> {
   const lang = languageOf(request);
@@ -285,14 +285,14 @@ async function tokensFor(secret: string, grant: Grant, clientId: string, origin:
   );
 }
 
-/** POST /api/mcp/token: Lemma's tokens for a code (with its PKCE verifier) or for a refresh token. */
+/** POST /api/mcp/token: OnizukaTex's tokens for a code (with its PKCE verifier) or for a refresh token. */
 export async function token(request: Request, env: Env): Promise<Response> {
   if (!configured(env)) return oauthError('temporarily_unavailable', 'Signing in is not set up on this site.', 503);
   const secret = env.GITHUB_CLIENT_SECRET;
   const origin = originOf(request);
   const params = await paramsOf(request);
   const resource = params.get('resource');
-  if (resource !== null && !ours(resource, origin)) return oauthError('invalid_target', 'Lemma gives tokens for its MCP endpoint only.');
+  if (resource !== null && !ours(resource, origin)) return oauthError('invalid_target', 'OnizukaTex gives tokens for its MCP endpoint only.');
   const clientId = params.get('client_id');
   const grantType = params.get('grant_type');
   if (grantType === 'authorization_code') {
@@ -320,7 +320,7 @@ export async function token(request: Request, env: Env): Promise<Response> {
     if (!access) {
       // Only GitHub's word that the refresh token is dead ends the sign-in; an outage may pass.
       return tokens.error === 'bad_refresh_token'
-        ? oauthError('invalid_grant', 'GitHub no longer accepts this sign-in; connect Lemma again.')
+        ? oauthError('invalid_grant', 'GitHub no longer accepts this sign-in; connect OnizukaTex again.')
         : oauthError('temporarily_unavailable', `GitHub did not renew the sign-in (${tokens.error ?? 'no token'}).`, 503);
     }
     return tokensFor(secret, grantOf({ ...tokens, access_token: access }, kept.login), kept.clientId, origin);
@@ -328,7 +328,7 @@ export async function token(request: Request, env: Env): Promise<Response> {
   return oauthError('unsupported_grant_type', 'Use authorization_code or refresh_token.');
 }
 
-/** Who calls the MCP endpoint: the GitHub token and account its Lemma token carries; null without a valid one. */
+/** Who calls the MCP endpoint: the GitHub token and account its OnizukaTex token carries; null without a valid one. */
 export async function caller(request: Request, env: Env): Promise<{ github: string; login: string } | null> {
   if (!configured(env)) return null;
   const match = /^Bearer\s+([A-Za-z0-9_-]+)\s*$/i.exec(request.headers.get('Authorization') ?? '');

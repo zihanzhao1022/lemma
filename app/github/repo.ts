@@ -1,6 +1,6 @@
 /**
- * The repository an account keeps its papers in. Lemma's App reaches only the repositories the account
- * installed it on; one of them is Lemma's when it has a lemma.json, which Lemma writes into an empty
+ * The repository an account keeps its papers in. OnizukaTex's App reaches only the repositories the account
+ * installed it on; one of them is OnizukaTex's when it has a lemma.json, which OnizukaTex writes into an empty
  * repository the first time (with a README saying what the files are).
  */
 import { toBase64 } from '../../editor/results/backend';
@@ -15,8 +15,8 @@ export interface LemmaRepo {
 }
 
 /**
- * Lemma's (it has lemma.json); empty, or fresh (only what GitHub's form adds: a README, a licence, a
- * .gitignore), which Lemma can start; holding other files; or out of reach.
+ * OnizukaTex's (it has lemma.json); empty, or fresh (only what GitHub's form adds: a README, a licence, a
+ * .gitignore), which OnizukaTex can start; holding other files; or out of reach.
  */
 export type RepoStatus = 'lemma' | 'empty' | 'fresh' | 'other' | 'missing';
 
@@ -55,13 +55,13 @@ const fromAnswer = (repo: RepoAnswer): LemmaRepo => ({ owner: repo.owner.login, 
 
 export interface Reachable {
   repos: LemmaRepo[];
-  /** Lemma was installed on all of the account's repositories, not just the one for its papers. */
+  /** OnizukaTex was installed on all of the account's repositories, not just the one for its papers. */
   everything: boolean;
 }
 
 const PAGE = 100;
 
-/** The account's own repositories that Lemma's App was installed on. */
+/** The account's own repositories that OnizukaTex's App was installed on. */
 export async function reachableRepos(login: string, fetchImpl: typeof fetch): Promise<Reachable> {
   const installations = await getJson<{ installations: { id: number; app_slug: string; account: { login: string }; repository_selection?: string }[] }>(
     fetchImpl,
@@ -83,7 +83,7 @@ export async function reachableRepos(login: string, fetchImpl: typeof fetch): Pr
   return { repos, everything: mine.some((item) => item.repository_selection === 'all') };
 }
 
-/** Whether a repository is Lemma's, empty, or holds other files. */
+/** Whether a repository is OnizukaTex's, empty, or holds other files. */
 export async function repoStatus(repo: LemmaRepo, fetchImpl: typeof fetch): Promise<RepoStatus> {
   const marker = await fetchImpl(`${API}/repos/${repo.owner}/${repo.name}/contents/${MARKER_PATH}`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
   if (marker.ok) return 'lemma';
@@ -116,16 +116,16 @@ export async function repoStatuses(repos: LemmaRepo[], fetchImpl: typeof fetch, 
   return found;
 }
 
-const readme = (site: string): string => `# Papers in Lemma
+const readme = (site: string): string => `# Papers in OnizukaTex
 
-This repository keeps papers written with [Lemma](${site}):
+This repository keeps papers written with [OnizukaTex](${site}):
 
 - \`results.json\` lists them, with each paper's information and the LaTeX source of its blocks;
-- \`results/<paper>/\` holds the PDFs Lemma compiled and the files attached to each paper;
+- \`results/<paper>/\` holds the PDFs OnizukaTex compiled and the files attached to each paper;
 - \`research-space.json\` keeps the research space: the papers and ideas drawn as a graph;
-- \`lemma.json\` tells Lemma that this repository is its own.
+- \`lemma.json\` tells OnizukaTex that this repository is its own.
 
-Lemma reads and writes it through its GitHub App, which can reach only the repositories it was installed on.
+OnizukaTex reads and writes it through its GitHub App, which can reach only the repositories it was installed on.
 Keep it private while the papers are unpublished.
 `;
 
@@ -139,12 +139,12 @@ async function putFile(repo: LemmaRepo, path: string, text: string, message: str
 }
 
 /**
- * Starts Lemma's files in an empty or fresh repository (an empty one also gets its default branch from the
+ * Starts OnizukaTex's files in an empty or fresh repository (an empty one also gets its default branch from the
  * first commit). A README already there stays.
  */
 export async function initializeRepo(repo: LemmaRepo, status: 'empty' | 'fresh', site: string, fetchImpl: typeof fetch): Promise<LemmaRepo> {
-  if (status === 'empty') await putFile(repo, 'README.md', readme(site), 'Set up Lemma', fetchImpl);
-  await putFile(repo, MARKER_PATH, `${JSON.stringify({ lemma: 1 }, null, 2)}\n`, 'Mark the repository as Lemma\'s', fetchImpl);
+  if (status === 'empty') await putFile(repo, 'README.md', readme(site), 'Set up OnizukaTex', fetchImpl);
+  await putFile(repo, MARKER_PATH, `${JSON.stringify({ lemma: 1 }, null, 2)}\n`, 'Mark the repository as OnizukaTex\'s', fetchImpl);
   const answer = await getJson<RepoAnswer>(fetchImpl, `/repos/${repo.owner}/${repo.name}`);
   return answer.body ? fromAnswer(answer.body) : repo;
 }

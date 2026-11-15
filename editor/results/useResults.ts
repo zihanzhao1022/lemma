@@ -741,7 +741,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
 
   /**
    * Compiles the paper's blocks whose PDFs are out of date because they were changed where LaTeX does not run
-   * (Claude Code, through Lemma's MCP server: server/mcp), in the background, and saves their PDFs. Editing goes
+   * (Claude Code, through OnizukaTex's MCP server: server/mcp), in the background, and saves their PDFs. Editing goes
    * on meanwhile and wins: a PDF is kept only while its block's source is still the one compiled (setOutputs).
    */
   const compileStale = useCallback(

@@ -1,5 +1,5 @@
 /**
- * The pages a person sees while connecting Claude Code (or another MCP client) to Lemma: the question whether to
+ * The pages a person sees while connecting Claude Code (or another MCP client) to OnizukaTex: the question whether to
  * let it in, and what went wrong. In the person's language (Chinese, Japanese or English), on the site itself.
  */
 
@@ -7,42 +7,42 @@ export type Lang = 'zh' | 'ja' | 'en';
 
 const WORDS = {
   zh: {
-    title: '允许 {client} 使用你的 Lemma 论文？',
+    title: '允许 {client} 使用你的 OnizukaTex 论文？',
     body: '它可以读取你的论文，修改块的 LaTeX、导言区和逻辑结构；每次修改都作为一次提交存进你的 GitHub 仓库。',
     where: '用 GitHub 登录之后，授权交给这台电脑上的 {where}。',
     allow: '允许，用 GitHub 登录',
     deny: '取消',
-    revoke: '以后可以在 GitHub 的 {link} 里撤销 Lemma 的授权。',
+    revoke: '以后可以在 GitHub 的 {link} 里撤销 OnizukaTex 的授权。',
     revokeLink: '已授权的应用',
-    badClient: '这个连接链接无效。请回到 Claude Code，重新连接 Lemma。',
-    expired: '这次连接已经过期。请回到 Claude Code，重新连接 Lemma。',
-    unavailable: 'Lemma 的登录服务还没有设置好。',
+    badClient: '这个连接链接无效。请回到 Claude Code，重新连接 OnizukaTex。',
+    expired: '这次连接已经过期。请回到 Claude Code，重新连接 OnizukaTex。',
+    unavailable: 'OnizukaTex 的登录服务还没有设置好。',
     problem: '没能连接',
   },
   ja: {
-    title: '{client} に Lemma の論文の利用を許可しますか？',
+    title: '{client} に OnizukaTex の論文の利用を許可しますか？',
     body: '論文を読み、ブロックの LaTeX、プリアンブル、論理構成を変更できます。変更はそのたびに GitHub リポジトリへのコミットとして保存されます。',
     where: 'GitHub でログインすると、このコンピューターの {where} に認可が渡されます。',
     allow: '許可して GitHub でログイン',
     deny: 'キャンセル',
-    revoke: 'Lemma の認可は、後から GitHub の {link} で取り消せます。',
+    revoke: 'OnizukaTex の認可は、後から GitHub の {link} で取り消せます。',
     revokeLink: '認可済みのアプリ',
-    badClient: 'この接続リンクは無効です。Claude Code に戻って、もう一度 Lemma に接続してください。',
-    expired: 'この接続は期限が切れました。Claude Code に戻って、もう一度 Lemma に接続してください。',
-    unavailable: 'Lemma のログインはまだ設定されていません。',
+    badClient: 'この接続リンクは無効です。Claude Code に戻って、もう一度 OnizukaTex に接続してください。',
+    expired: 'この接続は期限が切れました。Claude Code に戻って、もう一度 OnizukaTex に接続してください。',
+    unavailable: 'OnizukaTex のログインはまだ設定されていません。',
     problem: '接続できませんでした',
   },
   en: {
-    title: 'Let {client} use your Lemma papers?',
+    title: 'Let {client} use your OnizukaTex papers?',
     body: 'It can read your papers and change their blocks’ LaTeX, their preambles and their logic; each change is saved as a commit to your GitHub repository.',
     where: 'Once you sign in with GitHub, the authorization goes to {where} on this computer.',
     allow: 'Allow and sign in with GitHub',
     deny: 'Cancel',
-    revoke: 'You can revoke Lemma’s authorization later under GitHub’s {link}.',
+    revoke: 'You can revoke OnizukaTex’s authorization later under GitHub’s {link}.',
     revokeLink: 'authorized apps',
-    badClient: 'This connection link is not valid. Go back to Claude Code and connect Lemma again.',
-    expired: 'This connection has expired. Go back to Claude Code and connect Lemma again.',
-    unavailable: 'Signing in to Lemma is not set up yet.',
+    badClient: 'This connection link is not valid. Go back to Claude Code and connect OnizukaTex again.',
+    expired: 'This connection has expired. Go back to Claude Code and connect OnizukaTex again.',
+    unavailable: 'Signing in to OnizukaTex is not set up yet.',
     problem: 'Could not connect',
   },
 } satisfies Record<Lang, Record<string, string>>;
@@ -94,7 +94,7 @@ const HEADERS: Record<string, string> = {
 };
 
 const page = (lang: Lang, body: string): string =>
-  `<!doctype html><html lang="${lang === 'zh' ? 'zh-CN' : lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Lemma</title><style>${STYLE}</style></head><body><main><div class="mark">Lemma</div>${body}</main></body></html>`;
+  `<!doctype html><html lang="${lang === 'zh' ? 'zh-CN' : lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OnizukaTex</title><style>${STYLE}</style></head><body><main><div class="mark">OnizukaTex</div>${body}</main></body></html>`;
 
 /**
  * Whether to let `client` in. The client names itself, so the page also shows where on this computer the

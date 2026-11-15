@@ -1,6 +1,6 @@
 /**
- * A person's papers as the MCP tools see them: their Lemma repository, read and saved with their GitHub token
- * exactly as Lemma's own pages do (commitResults: the edit applied to the latest results.json, one commit).
+ * A person's papers as the MCP tools see them: their OnizukaTex repository, read and saved with their GitHub token
+ * exactly as OnizukaTex's own pages do (commitResults: the edit applied to the latest results.json, one commit).
  */
 import { LemmaRepo, reachableRepos, repoLabel, repoStatuses } from '../../app/github/repo';
 import { GitHubError, createGitHubApi } from '../../editor/github';
@@ -34,7 +34,7 @@ export function githubFetch(token: string, fetchImpl: typeof fetch = (input, ini
     const headers = new Headers(rest.headers);
     if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
     if (!headers.has('Accept')) headers.set('Accept', 'application/vnd.github+json');
-    headers.set('User-Agent', 'Lemma');
+    headers.set('User-Agent', 'OnizukaTex');
     headers.set('X-GitHub-Api-Version', '2022-11-28');
     return fetchImpl(input, { ...rest, headers });
   };
@@ -44,7 +44,7 @@ export function githubFetch(token: string, fetchImpl: typeof fetch = (input, ini
 const found = new Map<string, { repos: LemmaRepo[]; at: number }>();
 const FOUND_LIFE = 5 * 60_000;
 
-/** The person's Lemma repositories: those Lemma's App was installed on that have its lemma.json. */
+/** The person's OnizukaTex repositories: those OnizukaTex's App was installed on that have its lemma.json. */
 async function lemmaRepos(login: string, fetchImpl: typeof fetch): Promise<LemmaRepo[]> {
   const key = login.toLowerCase();
   const kept = found.get(key);
@@ -63,14 +63,14 @@ async function lemmaRepos(login: string, fetchImpl: typeof fetch): Promise<Lemma
 export async function openLibrary(token: string, login: string, wanted?: string, fetchImpl?: typeof fetch): Promise<Library> {
   const github = githubFetch(token, fetchImpl);
   const repos = await lemmaRepos(login, github);
-  if (repos.length === 0) throw new ToolError(`${login} has no Lemma repository yet: sign in at Lemma and set one up first.`);
+  if (repos.length === 0) throw new ToolError(`${login} has no OnizukaTex repository yet: sign in at OnizukaTex and set one up first.`);
   const names = repos.map(repoLabel).join(', ');
   let repo: LemmaRepo | undefined = repos[0];
   if (wanted) {
     repo = repos.find((item) => repoLabel(item).toLowerCase() === wanted.toLowerCase());
-    if (!repo) throw new ToolError(`${wanted} is not one of your Lemma repositories (${names}).`);
+    if (!repo) throw new ToolError(`${wanted} is not one of your OnizukaTex repositories (${names}).`);
   } else if (repos.length > 1) {
-    throw new ToolError(`You have several Lemma repositories (${names}): say which one with "repo".`);
+    throw new ToolError(`You have several OnizukaTex repositories (${names}): say which one with "repo".`);
   }
   const api = createGitHubApi(token, { owner: repo.owner, repo: repo.name, branch: repo.branch }, github);
   return {

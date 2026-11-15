@@ -1,7 +1,7 @@
 /**
  * The LaTeX templates a new paper can start from: each venue's official preamble and style files (kept in
  * public/templates/<id>/, see its README for where each came from), with the paper's title and its author put in.
- * Without a venue a paper starts from the arXiv preprint style. Every preamble also loads what Lemma's table and
+ * Without a venue a paper starts from the arXiv preprint style. Every preamble also loads what OnizukaTex's table and
  * figure tools write (colours in cells, merged cells, rules), where the venue allows it.
  */
 
@@ -28,7 +28,7 @@ export function latexText(text: string): string {
   return text.trim().replace(/[\\~^%&$#_{}]/g, (char) => SPECIAL[char] ?? `\\${char}`);
 }
 
-/** What Lemma's table and figure tools write needs these; amssymb clashes with fonts some classes load. */
+/** What OnizukaTex's table and figure tools write needs these; amssymb clashes with fonts some classes load. */
 const tools = ({ amssymb = true } = {}): string[] => [
   amssymb ? '\\usepackage{amsmath,amssymb}' : '\\usepackage{amsmath}',
   '\\usepackage{graphicx}',
@@ -262,7 +262,7 @@ export const TEMPLATES: PaperTemplate[] = [
   },
   {
     // acmart is in TeX Live; its fonts already give amssymb's symbols, and loading both fails. Its title must
-    // come after the abstract, so the paper starts with the abstract and \maketitle (Lemma then adds none).
+    // come after the abstract, so the paper starts with the abstract and \maketitle (OnizukaTex then adds none).
     id: 'acm',
     name: 'ACM (KDD · WWW · SIGIR · CHI …)',
     venues: /\b(?:ACM|SIGKDD|KDD|WWW|TheWebConf|SIGIR|CIKM|WSDM|RecSys|CHI|UIST|CSCW|SIGMOD|FAccT|ACM ?MM)\b/i,

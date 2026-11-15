@@ -1,7 +1,7 @@
 import { SiteContent } from '../types';
 
 /**
- * The site content the shared results components expect around a paper. Lemma has no homepage of its own, so
+ * The site content the shared results components expect around a paper. OnizukaTex has no homepage of its own, so
  * every list is empty; the papers come from the accounts' repositories.
  */
 export const bundledContent: SiteContent = {

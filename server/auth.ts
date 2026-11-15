@@ -1,5 +1,5 @@
 /**
- * Signing in to Lemma with GitHub, run by the Cloudflare Pages Functions in functions/api on the site's own
+ * Signing in to OnizukaTex with GitHub, run by the Cloudflare Pages Functions in functions/api on the site's own
  * origin. GitHub's token endpoint needs the App's client secret and has no CORS, so the browser cannot call it.
  * The browser keeps the access token (8 hours); the refresh token (6 months) stays in a cookie that only these
  * endpoints can read, so a signed-in browser renews its access without asking again. Nothing is stored here.
@@ -48,7 +48,7 @@ export function readCookie(request: Request, name: string): string | null {
 export const githubHeaders = (authorization: string): Record<string, string> => ({
   Accept: 'application/vnd.github+json',
   Authorization: authorization,
-  'User-Agent': 'Lemma',
+  'User-Agent': 'OnizukaTex',
   'X-GitHub-Api-Version': '2022-11-28',
 });
 
