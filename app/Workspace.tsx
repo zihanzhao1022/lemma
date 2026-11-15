@@ -71,7 +71,8 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   const [presenting, setPresenting] = useState<Presenting>(null);
   const [sharingOpen, setSharingOpen] = useState(false);
   // The page's blocks, the whole paper as one LaTeX document with its PDF, its slides, or its logic as a tree.
-  const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic'>('blocks');
+  // Its owner starts writing; whoever it is shared with reads its blocks (the other views are the owner's).
+  const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic'>(owner ? 'write' : 'blocks');
   // The writing, slide and logic views stay mounted once opened, so switching back and forth keeps their state.
   const [opened, setOpened] = useState<{ write?: boolean; slides?: boolean; logic?: boolean }>({});
   const bar = useRef<HTMLDivElement>(null);
@@ -286,8 +287,8 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                 <div role="group" aria-label={t('显示方式')} className="mr-3 flex rounded-lg bg-black/[0.05] p-0.5 text-[13px]">
                   {(
                     [
-                      ['blocks', <LayoutList key="icon" size={14} />, t('分块')],
                       ['write', <FileCode2 key="icon" size={14} />, t('写作')],
+                      ['blocks', <LayoutList key="icon" size={14} />, t('分块')],
                       ['slides', <MonitorPlay key="icon" size={14} />, t('幻灯片')],
                       ['logic', <Network key="icon" size={14} />, t('逻辑')],
                     ] as const

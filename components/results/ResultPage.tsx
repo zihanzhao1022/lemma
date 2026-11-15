@@ -28,6 +28,9 @@ import './resultPage.css';
 import { Reader, avatarUrl, usePresence } from '../presence';
 import { useReportBlockInView } from './readingPosition';
 
+/** The typeset view, where one types on the PDF itself; put away for now, the web page is the article's view. */
+const TYPESET_VIEW = false;
+
 // The web page of a paper, with KaTeX: loaded only for whoever asks for it.
 const HtmlArticle = lazy(() => import('./HtmlArticle'));
 
@@ -300,7 +303,8 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
   const [commentColumn, setCommentColumn] = useState<HTMLElement | null>(null);
   // The whole article in place of the blocks: its pages hold many blocks, which it finds by where they are.
   const article = useRef<ArticleViewHandle>(null);
-  // The typeset PDF or the web page; each reader's choice, kept in this browser.
+  // The typeset PDF or the web page; each reader's choice, kept in this browser. For now the typeset view (and
+  // typing on it) is put away: every article shows as the web page (TYPESET_VIEW).
   const [articleView, setArticleView] = useState<'pdf' | 'web'>(() => {
     try {
       return typeof window !== 'undefined' && window.localStorage.getItem('lemma.articleView') === 'web' ? 'web' : 'pdf';
@@ -349,9 +353,9 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
   };
   // Typeset as one article once a save has stored it, or here at once for whoever edits it.
   const asArticle = Boolean(paper.article) || (editing && Boolean(editMode.saveResults) && access?.state === 'private');
-  // Or as a web page set like its template, for whoever has its code.
-  const canWeb = paper.blocks.some((block) => block.source?.trim());
-  const asWeb = canWeb && articleView === 'web';
+  // Or as a web page set like its template, for whoever has its code, or edits a paper with no blocks yet.
+  const canWeb = paper.blocks.some((block) => block.source?.trim()) || (editing && paper.blocks.length === 0);
+  const asWeb = canWeb && (!TYPESET_VIEW || articleView === 'web');
   const allThreads = presence?.comments?.paper === paper.id ? presence.comments.threads : [];
   const openThreads = allThreads.filter((thread) => !thread.resolved);
   const columnShown = Boolean(presence) && (draft !== null || (pinned ?? openThreads.length > 0));
@@ -526,7 +530,7 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
           <ResultsUnavailable />
           {!inApp && <Notices paper={paper} access={access} editing={editing} />}
           <div ref={readingArea}>
-            {canWeb && (asArticle || asWeb) && (
+            {TYPESET_VIEW && canWeb && (asArticle || asWeb) && (
               <div className="mb-3 inline-flex rounded-lg bg-gray-100 p-0.5 text-xs" role="group" aria-label={t('文章的显示方式')}>
                 {(['pdf', 'web'] as const).map((value) => (
                   <button
