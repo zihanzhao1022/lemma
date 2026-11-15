@@ -150,7 +150,7 @@ const Sheet: React.FC = () => {
   );
 };
 
-/** \begin{lemma} or \end{lemma}, in the editor's colors: the page reads as one lemma environment. */
+/** \begin{document} or \end{document}, in the editor's colors: the page reads as one LaTeX document. */
 const LatexTag: React.FC<{ command: 'begin' | 'end' }> = ({ command }) => (
   <p
     className={`inline-flex items-center rounded-lg bg-[#f5f5f7] px-3 py-1.5 font-mono text-[15px] text-[#6e6e73] ${command === 'begin' ? 'g-in g-rise' : ''}`}
@@ -158,7 +158,7 @@ const LatexTag: React.FC<{ command: 'begin' | 'end' }> = ({ command }) => (
   >
     <span className="text-violet-700">{`\\${command}`}</span>
     <span>{'{'}</span>
-    <span className="text-[#1d1d1f]">lemma</span>
+    <span className="text-[#1d1d1f]">document</span>
     <span>{'}'}</span>
   </p>
 );
@@ -479,7 +479,7 @@ const Landing: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) => {
       <section data-shown="" className="relative">
         {/* A screen high, under the bar (and the made-up accounts' notice above it). */}
         <div className={`mx-auto flex ${MOCK_MODE ? 'min-h-[calc(100svh-5.25rem)]' : 'min-h-[calc(100svh-3rem)]'} max-w-[1120px] flex-col items-center px-4 pb-16 pt-[clamp(1.5rem,4vh,3rem)] sm:px-6`}>
-          {/* The page opens a lemma environment, closed by \end{lemma} at the bottom. */}
+          {/* The page opens a document, closed by \end{document} at the bottom. */}
           <div className="w-full max-w-[60rem]">
             <LatexTag command="begin" />
             <h1 className="galley-display mt-5 text-[clamp(2rem,1rem+4.6vw,4.75rem)] text-[#1d1d1f]">
