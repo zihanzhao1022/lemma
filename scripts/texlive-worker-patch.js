@@ -108,6 +108,10 @@ function kpse_find_file_impl(nameptr, format, _mustexist) {
 //   bibtex {}
 //       Runs BibTeX on the main file's .aux, which the last compile left in the working directory (the next
 //       compile then reads the .bbl). Replies {cmd: 'bibtex', result, status, log}.
+//   useformat {fileid, data}
+//       Which format later compiles load. With data: writes it as fileid (replacing the format written
+//       before) and uses it; with fileid only: uses the format written before under that name; without
+//       fileid: the bundle's own format again. Replies {cmd: 'useformat', result: 'ok' | 'failed'}.
 function handleExtraCommand(cmd, data) {
   if (cmd === 'setbundle') {
     self.bundleBase = data.base || '';
@@ -136,6 +140,26 @@ function handleExtraCommand(cmd, data) {
       self.postMessage({ result: 'ok', cmd: 'readfile', data: text });
     } catch (err) {
       self.postMessage({ result: 'failed', cmd: 'readfile' });
+    }
+    return true;
+  }
+  if (cmd === 'useformat') {
+    const key = '10/swiftlatexpdftex.fmt';
+    if (self.baseFormat === undefined) self.baseFormat = texlive200_cache[key];
+    try {
+      if (data.data) {
+        if (self.ownFormat) FS.unlink(self.ownFormat);
+        self.ownFormat = undefined;
+        FS.writeFile(TEXCACHEROOT + '/' + data.fileid, new Uint8Array(data.data));
+        self.ownFormat = TEXCACHEROOT + '/' + data.fileid;
+      }
+      const path = data.fileid ? TEXCACHEROOT + '/' + data.fileid : self.baseFormat;
+      if (!path || (data.fileid && path !== self.ownFormat)) throw new Error('No such format');
+      texlive200_cache[key] = path;
+      self.postMessage({ result: 'ok', cmd: 'useformat' });
+    } catch (err) {
+      if (self.baseFormat) texlive200_cache[key] = self.baseFormat;
+      self.postMessage({ result: 'failed', cmd: 'useformat' });
     }
     return true;
   }

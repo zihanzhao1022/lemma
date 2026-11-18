@@ -43,7 +43,7 @@ npm run preview # 预览构建结果
 | 目录 | 内容 |
 | --- | --- |
 | `app/` | OnizukaTex 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
-| `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码；在 PDF 上直接改：`printed.ts`（一段 LaTeX 印出哪些字）、`pageRegions.ts`（源码一行在 PDF 的哪一段）、`pageAlign.ts` 和 `pageMap.ts`（逐字对应，点击与光标）、`pageEdits.ts`（打字、删除、移动光标）、`pageImages.ts`（图片位置和换图） |
+| `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码；在 PDF 上直接改：`printed.ts`（一段 LaTeX 印出哪些字）、`pageRegions.ts`（源码一行在 PDF 的哪一段）、`pageAlign.ts` 和 `pageMap.ts`（逐字对应，点击与光标）、`pageEdits.ts`（打字、删除、移动光标）、`pageImages.ts`（图片位置和换图）；`preambleFormat.ts`（导言区在另一个引擎里预编译成格式，之后的编译只排正文） |
 | `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、演示、导出 PDF 和 PowerPoint |
 | `app/logic/` | 论文的逻辑结构；`ForceGraph.tsx` 是它和研究空间共用的力导向图 |
 | `app/space/` | 我的研究空间：论文和想法组成的图 |
