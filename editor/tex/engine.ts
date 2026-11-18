@@ -70,6 +70,8 @@ interface Manifest {
   preload: Record<string, string>;
   /** "format/request" → file name below files/; the worker fetches them itself if they were not handed over. */
   files: Record<string, string>;
+  /** Files of `files` only some runs need (building a format): the worker fetches them when TeX asks. */
+  ondemand?: string[];
   /** Requests known to have no file, so the worker never asks the remote server for them. */
   missing?: string[];
 }
@@ -97,7 +99,7 @@ const REMOTE_CACHE = 'texlive-remote-v1';
 const BUNDLE_CACHE = 'texlive-bundle-';
 /** A compile that runs longer is stuck (e.g. a macro that expands forever); its worker is replaced. */
 const COMPILE_TIMEOUT_MS = 45_000;
-/** The first build downloads LaTeX's own files and the hyphenation patterns (about 160 files); later ones take a second. */
+/** A build reads LaTeX's own files and the hyphenation patterns (about 200 files) from the site's bundle; it takes a second or two. */
 const FORMAT_TIMEOUT_MS = 180_000;
 /** pdflatex.ini of TeX Live, with LaTeX's \dump held back until the preamble has been read too. */
 const FORMAT_INI = String.raw`\input pdftexconfig.tex
@@ -154,11 +156,11 @@ async function bundleCache(version: string | undefined): Promise<Cache | null> {
 }
 
 /**
- * Every file of the site's bundle, fetched side by side (from Cache Storage after the first time) rather than
+ * Every file of the site's bundle (those only format builds read, for a builder alone), fetched side by side (from Cache Storage after the first time) rather than
  * one at a time while TeX waits. Only the preload files are required: the worker fetches any other file it
  * did not get here when TeX asks for it.
  */
-async function bundledFiles(manifest: Manifest): Promise<PreloadFile[]> {
+async function bundledFiles(manifest: Manifest, forFormats: boolean): Promise<PreloadFile[]> {
   const cache = await bundleCache(manifest.version);
   const load = async (key: string, fileid: string, gzipped: boolean): Promise<PreloadFile> => {
     const url = assetUrl(`files/${gzipped ? `${fileid}.gz` : fileid}`);
@@ -170,9 +172,14 @@ async function bundledFiles(manifest: Manifest): Promise<PreloadFile[]> {
     }
     return { key, fileid, data: gzipped ? await gunzip(res) : await res.arrayBuffer() };
   };
+  const later = new Set(forFormats ? [] : manifest.ondemand ?? []);
   const [required, optional] = await Promise.all([
     Promise.all(Object.entries(manifest.preload).map(([key, fileid]) => load(key, fileid, true))),
-    Promise.all(Object.entries(manifest.files).map(([key, fileid]) => load(key, fileid, false).catch(() => null))),
+    Promise.all(
+      Object.entries(manifest.files)
+        .filter(([key]) => !later.has(key))
+        .map(([key, fileid]) => load(key, fileid, false).catch(() => null)),
+    ),
   ]);
   return [...required, ...optional.filter((file): file is PreloadFile => file !== null)];
 }
@@ -359,7 +366,7 @@ class WorkerEngine implements TexEngine {
   }
 }
 
-async function startEngine(onCrash: () => void): Promise<WorkerEngine> {
+async function startEngine(onCrash: () => void, forFormats = false): Promise<WorkerEngine> {
   const worker = new Worker(assetUrl('swiftlatexpdftex.js'));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const stalled = new Promise<never>((_, reject) => {
@@ -367,7 +374,7 @@ async function startEngine(onCrash: () => void): Promise<WorkerEngine> {
   });
   try {
     // Saves wait for compiles in one queue, so a stalled start must fail rather than hold it forever.
-    return await Promise.race([setUp(worker, onCrash), stalled]);
+    return await Promise.race([setUp(worker, onCrash, forFormats), stalled]);
   } catch (error) {
     worker.terminate();
     throw error instanceof Error ? error : new PhraseError(() => t(LOAD_FAILED));
@@ -376,7 +383,7 @@ async function startEngine(onCrash: () => void): Promise<WorkerEngine> {
   }
 }
 
-async function setUp(worker: Worker, onCrash: () => void): Promise<WorkerEngine> {
+async function setUp(worker: Worker, onCrash: () => void, forFormats: boolean): Promise<WorkerEngine> {
   await new Promise<void>((resolve, reject) => {
     worker.onmessage = (event: MessageEvent<WorkerReply>) => {
       if (event.data.result === 'ok' && !event.data.cmd) resolve();
@@ -388,15 +395,18 @@ async function setUp(worker: Worker, onCrash: () => void): Promise<WorkerEngine>
   if (!res.ok) throw new PhraseError(() => t(LOAD_FAILED));
   const manifest = (await res.json()) as Manifest;
   worker.postMessage({ cmd: 'setbundle', base: assetUrl('files/'), files: manifest.files, missing: manifest.missing ?? [] });
-  const [bundled, remote] = await Promise.all([bundledFiles(manifest), cachedRemoteFiles()]);
+  const [bundled, remote] = await Promise.all([bundledFiles(manifest, forFormats), cachedRemoteFiles()]);
   const engine = new WorkerEngine(worker, onCrash);
   await engine.preload([...bundled, ...remote]);
   return engine;
 }
 
-/** A second engine, for building formats beside the shared one (startup downloads come from Cache Storage by now). */
+/**
+ * A second engine, for building formats beside the shared one. It is handed the files only builds read at
+ * startup too (some 6 MB, downloaded side by side the first time), rather than asking for each of them in turn.
+ */
 export async function startFormatBuilder(): Promise<FormatBuilder> {
-  return startEngine(() => undefined);
+  return startEngine(() => undefined, true);
 }
 
 let started: Promise<TexEngine> | null = null;
