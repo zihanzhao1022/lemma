@@ -60,6 +60,10 @@ function readArticle(text: string, preamble: string): { blocks: PageBlock[]; con
   return { blocks, context };
 }
 
+/** KaTeX's HTML for each formula drawn lately (by macros, style and code): typing elsewhere draws none of them again. */
+const MATH_HTML = new Map<string, string>();
+const MATH_CACHE_SIZE = 2000;
+
 /** Where the preamble's offsets start among the page's: the title and the authors live there, apart from main.tex's. */
 const PRE = 1_000_000_000;
 
@@ -350,6 +354,10 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   // Remounts the text after an input method has written into it, so React draws it again from the source.
   const [epoch, setEpoch] = useState(0);
   const composing = useRef<{ from: number; to: number } | null>(null);
+  // A paragraph just begun after the paragraph that ends at `after` (Enter at its end): the source has its blank line
+  // [from, at) and nothing else yet, so LaTeX, and the page as read from it, have no paragraph there. It is shown
+  // empty until the first thing typed into it, so the caret has somewhere to go.
+  const [opened, setOpened] = useState<{ after: number; from: number; at: number } | null>(null);
 
   useLayoutEffect(() => {
     const offset = caretAfter.current;
@@ -423,6 +431,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
 
   const replace = (from: number, to: number, insertText: string, kind?: string) => {
     if (from !== to && !removable(from, to)) return;
+    setOpened(null);
     if (from >= PRE) {
       // The title and the authors are the preamble's.
       change(from - PRE, to - PRE, insertText, kind, 'preamble');
@@ -437,6 +446,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /** The character before an offset, of whichever text it is in. */
   const charBefore = (offset: number) => (offset >= PRE ? preamble[offset - PRE - 1] : source[offset - 1]) ?? '';
   const undo = (redo: boolean) => {
+    setOpened(null);
     const head = history(redo);
     if (head) caretAfter.current = head.part === 'preamble' ? head.offset + PRE : head.offset;
   };
@@ -458,14 +468,33 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       if (from === null || to === null) return;
       const [start, end] = from <= to ? [from, to] : [to, from];
       const where = placeOf(range.startContainer);
+      const elementOf = (node: Node | null | undefined) => (node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement | null | undefined));
+      const holder = elementOf(range.startContainer);
+      // The caret in the paragraph just begun. Backspace's range starts at the end of the paragraph before it.
+      const inOpened = Boolean(opened && [range.startContainer, range.endContainer, window.getSelection()?.anchorNode].some((node) => elementOf(node)?.closest('[data-opened]')));
       const type = event.inputType;
       if (type === 'historyUndo' || type === 'historyRedo') {
         undo(type === 'historyRedo');
         return;
       }
       if (type === 'insertParagraph' || type === 'insertLineBreak') {
-        if (where === 'paragraph') replace(start, end, '\n\n', 'type');
-        else if (where === 'item') replace(start, end, '\n\\item ', 'type');
+        // An empty paragraph is no paragraph to LaTeX: a second Enter there adds nothing.
+        if (inOpened) return;
+        if (where === 'paragraph') {
+          const paragraphEnd = Number(holder?.closest<HTMLElement>('[data-kind="paragraph"]')?.dataset.e);
+          replace(start, end, '\n\n', 'type');
+          // At the paragraph's end: the new paragraph has no text yet, so it is shown empty for the caret.
+          if (start === end && Number.isFinite(paragraphEnd) && start >= paragraphEnd) setOpened({ after: paragraphEnd, from: start, at: start + 2 });
+        } else if (where === 'item') replace(start, end, '\n\\item ', 'type');
+        return;
+      }
+      if (inOpened && opened && type.startsWith('delete')) {
+        // Backspace takes the new paragraph back; Delete has nothing to remove in it.
+        if (type.includes('Backward')) {
+          change(opened.from, opened.at, '', 'delete');
+          caretAfter.current = opened.from;
+          setOpened(null);
+        }
         return;
       }
       if (type.startsWith('insert')) {
@@ -542,12 +571,21 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /* ------------------------------------------------------------------ drawing the text */
 
   const footnotes = useRef(0);
+  const mathMacros = read.context.definitions.math;
+  const macrosKey = useMemo(() => JSON.stringify(mathMacros), [mathMacros]);
   const math = (tex: string, display: boolean) => {
+    const cacheKey = `${display ? 'D' : 'T'}${macrosKey}\u0000${tex}`;
+    const cached = MATH_HTML.get(cacheKey);
+    if (cached !== undefined) return cached;
+    let html: string;
     try {
-      return katex.renderToString(tex, { displayMode: display, throwOnError: false, output: 'html', macros: { ...read.context.definitions.math }, strict: 'ignore' });
+      html = katex.renderToString(tex, { displayMode: display, throwOnError: false, output: 'html', macros: { ...mathMacros }, strict: 'ignore' });
     } catch {
-      return tex;
+      html = tex;
     }
+    if (MATH_HTML.size >= MATH_CACHE_SIZE) MATH_HTML.delete(MATH_HTML.keys().next().value!);
+    MATH_HTML.set(cacheKey, html);
+    return html;
   };
 
   /** Content shown inside a command that is not edited here (a macro's text): looks only, no source places. */
@@ -590,24 +628,26 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     return shown;
   };
 
+  // Keys follow the place among the siblings, not the offset in the source: typing shifts the offsets of everything
+  // after it, and a key that moved would rebuild those elements (and draw their pictures again) on every keystroke.
   const inline = (items: Inline[]): React.ReactNode[] =>
-    items.map((item) => {
+    items.map((item, index) => {
       switch (item.kind) {
         case 'text': {
           const classes = textClasses(item);
           const node = (
-            <span key={`t${item.starts[0]}`} data-run={item.starts[0]} ref={registerRun(item)} className={classes || undefined} style={lookStyle(item.look)}>
+            <span key={`t${index}`} data-run={item.starts[0]} ref={registerRun(item)} className={classes || undefined} style={lookStyle(item.look)}>
               {item.text}
             </span>
           );
-          if (item.styles.includes('sup')) return <sup key={`t${item.starts[0]}`}>{node}</sup>;
-          if (item.styles.includes('sub')) return <sub key={`t${item.starts[0]}`}>{node}</sub>;
+          if (item.styles.includes('sup')) return <sup key={`t${index}`}>{node}</sup>;
+          if (item.styles.includes('sub')) return <sub key={`t${index}`}>{node}</sub>;
           return node;
         }
         case 'math':
           return (
             <span
-              key={`m${item.from}`}
+              key={`m${index}`}
               className={`html-atom${item.display ? ' html-equation' : ''}`}
               contentEditable={false}
               data-s={item.from}
@@ -618,38 +658,38 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
             />
           );
         case 'rule':
-          return <span key={`u${item.from}`} className="html-rule" contentEditable={false} data-s={item.from} data-e={item.to} style={ruleStyle(item)} />;
+          return <span key={`u${index}`} className="html-rule" contentEditable={false} data-s={item.from} data-e={item.to} style={ruleStyle(item)} />;
         case 'cite':
           return (
-            <span key={`c${item.from}`} className="html-atom html-cite" contentEditable={false} data-s={item.from} data-e={item.to} data-cite={item.keys.join(' ')} title={item.keys.join(', ')}>
+            <span key={`c${index}`} className="html-atom html-cite" contentEditable={false} data-s={item.from} data-e={item.to} data-cite={item.keys.join(' ')} title={item.keys.join(', ')}>
               {citationText(item.command, item.keys, numbering, style, item.pre, item.post)}
             </span>
           );
         case 'ref':
           return (
-            <span key={`r${item.from}`} className="html-atom" contentEditable={false} data-s={item.from} data-e={item.to} title={item.labels.join(', ')}>
+            <span key={`r${index}`} className="html-atom" contentEditable={false} data-s={item.from} data-e={item.to} title={item.labels.join(', ')}>
               {refText(item.command, item.labels)}
             </span>
           );
         case 'link':
           return (
-            <a key={`l${item.from}`} className="html-atom html-tt text-purple-800" contentEditable={false} data-s={item.from} data-e={item.to} href={item.href} target="_blank" rel="noreferrer">
+            <a key={`l${index}`} className="html-atom html-tt text-purple-800" contentEditable={false} data-s={item.from} data-e={item.to} href={item.href} target="_blank" rel="noreferrer">
               {item.text}
             </a>
           );
         case 'footnote': {
           footnotes.current += 1;
           return (
-            <span key={`f${item.from}`} className="html-atom html-footnote" contentEditable={false} data-s={item.from} data-e={item.to} title={plainText(item.content.map((part) => (part.kind === 'text' ? part.text : '')).join(''))}>
+            <span key={`f${index}`} className="html-atom html-footnote" contentEditable={false} data-s={item.from} data-e={item.to} title={plainText(item.content.map((part) => (part.kind === 'text' ? part.text : '')).join(''))}>
               {footnotes.current}
             </span>
           );
         }
         case 'break':
-          return <br key={`b${item.from}`} />;
+          return <br key={`b${index}`} />;
         case 'raw':
           return (
-            <span key={`x${item.from}`} className="html-atom html-raw" contentEditable={false} data-s={item.from} data-e={item.to}>
+            <span key={`x${index}`} className="html-atom html-raw" contentEditable={false} data-s={item.from} data-e={item.to}>
               {item.content ? shown(item.content) : item.text}
             </span>
           );
@@ -685,7 +725,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       if (element.kind === 'heading' && element.level >= HEADINGS_RUN_IN && next?.kind === 'paragraph') {
         const number = numbering.numbers.get(element);
         nodes.push(
-          <p key={`runin${element.from}-${index}`} data-kind="paragraph" data-s={next.from} data-e={next.to} className="noindent">
+          <p key={`runin-${index}`} data-kind="paragraph" data-s={next.from} data-e={next.to} className="noindent">
             <span className="html-runin" data-kind="heading" data-s={element.from} data-e={element.to}>
               {number && (
                 <span className="html-number" contentEditable={false}>
@@ -697,16 +737,30 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
             {inline(next.content)}
           </p>,
         );
+        if (opened && next.to === opened.after) nodes.push(openedParagraph(opened.at));
         index += 1;
         continue;
       }
       nodes.push(draw(element, index));
+      if (opened && element.kind === 'paragraph' && element.to === opened.after) nodes.push(openedParagraph(opened.at));
     }
     return nodes;
   };
 
+  /** The paragraph just begun (`opened`), empty: a zero-width character holds the caret at the source offset `at`. */
+  const openedParagraph = (at: number): React.ReactNode => {
+    const run: TextRun = { kind: 'text', text: '\u200b', starts: [at], ends: [at], styles: [] };
+    return (
+      <p key="opened" data-kind="paragraph" data-opened="" data-s={at} data-e={at}>
+        <span data-run={at} ref={registerRun(run)}>
+          {run.text}
+        </span>
+      </p>
+    );
+  };
+
   const draw = (element: Element, index: number): React.ReactNode => {
-    const key = `${element.kind}${element.from}-${index}`;
+    const key = `${element.kind}-${index}`;
     switch (element.kind) {
       case 'heading': {
         const Tag = (['h2', 'h2', 'h2', 'h3', 'h4', 'h5', 'h5'] as const)[Math.max(0, Math.min(6, element.level + 1))];
@@ -741,12 +795,12 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         return (
           <figure key={key} className={element.wide ? 'wide' : undefined}>
             {element.captionFirst && caption(element, true)}
-            {element.graphics.map((graphic) => {
+            {element.graphics.map((graphic, graphicIndex) => {
               const name = attachmentNamesOf(attachments).find((item) => samePicture(item, graphic.path));
               return name && attachments?.[name] ? (
-                <Picture key={graphic.from} name={name} data={attachments[name]} graphic={graphic} onClick={(event) => pickPicture(graphic, event)} />
+                <Picture key={`${graphicIndex}:${name}`} name={name} data={attachments[name]} graphic={graphic} onClick={(event) => pickPicture(graphic, event)} />
               ) : (
-                <span key={graphic.from} className="html-atom inline-block border border-dashed border-gray-300 px-3 py-6 text-xs text-gray-400" contentEditable={false} data-s={graphic.from} data-e={graphic.to}>
+                <span key={`${graphicIndex}:${graphic.path}`} className="html-atom inline-block border border-dashed border-gray-300 px-3 py-6 text-xs text-gray-400" contentEditable={false} data-s={graphic.from} data-e={graphic.to}>
                   {graphic.path}
                 </span>
               );
@@ -763,8 +817,8 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
                 <tbody>
                   {element.rows.map((row, rowIndex) => (
                     <tr key={rowIndex} className={[row.above && `above-${row.above}`, row.below && `below-${row.below}`].filter(Boolean).join(' ') || undefined} style={row.background ? { background: row.background } : undefined}>
-                      {row.cells.map((cell) => (
-                        <td key={cell.from} colSpan={cell.span > 1 ? cell.span : undefined} className={cell.wrap ? 'wrap' : undefined} style={{ textAlign: cell.align === 'c' ? 'center' : cell.align === 'r' ? 'right' : 'left', ...(cell.background ? { background: cell.background } : {}) }} data-kind="cell" data-s={cell.from} data-e={cell.to}>
+                      {row.cells.map((cell, cellIndex) => (
+                        <td key={cellIndex} colSpan={cell.span > 1 ? cell.span : undefined} className={cell.wrap ? 'wrap' : undefined} style={{ textAlign: cell.align === 'c' ? 'center' : cell.align === 'r' ? 'right' : 'left', ...(cell.background ? { background: cell.background } : {}) }} data-kind="cell" data-s={cell.from} data-e={cell.to}>
                           {inline(cell.content)}
                         </td>
                       ))}
@@ -780,8 +834,8 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         const Tag = element.ordered ? 'ol' : 'ul';
         return (
           <Tag key={key}>
-            {element.items.map((item) => (
-              <li key={item.from} data-kind="item" data-s={item.from} data-e={item.to}>
+            {element.items.map((item, itemIndex) => (
+              <li key={itemIndex} data-kind="item" data-s={item.from} data-e={item.to}>
                 {drawAll(item.children)}
               </li>
             ))}
