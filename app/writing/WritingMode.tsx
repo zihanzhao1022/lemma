@@ -9,13 +9,14 @@ import { bibliographyStyle, packageSetsStyle } from '../../editor/results/bibtex
 import { REFERENCES_FILE } from '../../editor/results/compile';
 import { citedKeys, describeFailure } from '../../editor/results/numbering';
 import { ResultsOp, applyResultsOp, resultsCommitMessage } from '../../editor/results/ops';
-import { getTexEngine } from '../../editor/tex/engine';
+import { getTexEngine, type TexFormat } from '../../editor/tex/engine';
 import { parseAuxCitations, parseAuxLabels, parseErrors } from '../../editor/tex/log';
 import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper } from '../../types';
 import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, locate, markableInputs, parseMarks, placeOf, withMarks } from './document';
 import { fillFloatCache, withCachedFloats } from './floatCache';
+import { preambleFormat, rejectFormat, splitForFormat } from './preambleFormat';
 import { SHADOWED, attachedKey, attachedName, editableText, isLatex } from './files';
 import type { Spot } from './pageAlign';
 import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSinceText } from './pageEdits';
@@ -31,6 +32,8 @@ import { inverseSearch } from './sourceSearch';
 
 const MAIN = 'main.tex';
 const PREAMBLE = 'preamble.tex';
+/** How long typing in the code pauses before a compile: a compile takes a fraction of a second, and typing during one asks for the next. */
+const CODE_PAUSE_MS = 300;
 
 type Texts = Record<string, string>;
 
@@ -264,13 +267,29 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         const state = carried.current;
         const bibKey = JSON.stringify([keys, bib, style]);
         const bibtex = cites && (bibKey !== state.bibKey || state.bbl === undefined);
-        const pass = (aux: string | undefined, bbl: string | undefined, withBibtex: boolean) =>
+        // The preamble from a format of its own once one is built for it (preambleFormat.ts).
+        const split = splitForFormat(doc);
+        let format = preambleFormat(split.source, inputs);
+        const run = (aux: string | undefined, bbl: string | undefined, withBibtex: boolean, preamble: TexFormat | undefined) =>
           engine.compile({
-            main: doc.main,
+            main: preamble ? split.main : doc.main,
             files: { ...inputs, ...(aux ? { 'main.aux': aux } : {}), ...(bbl && !withBibtex ? { 'main.bbl': bbl } : {}) },
             bibtex: withBibtex,
             read: ['main.gpos', 'main.bbl'],
+            ...(preamble ? { format: preamble } : {}),
           });
+        const pass = async (aux: string | undefined, bbl: string | undefined, withBibtex: boolean) => {
+          if (!format) return run(aux, bbl, withBibtex, undefined);
+          const out = await run(aux, bbl, withBibtex, format);
+          if (out.pdf || out.status === -254) return out;
+          // No PDF from the format: the whole paper decides whether the format or the text was at fault.
+          const whole = await run(aux, bbl, withBibtex, undefined);
+          if (whole.pdf) {
+            rejectFormat(format);
+            format = undefined;
+          }
+          return whole;
+        };
         let out = await pass(state.aux, cites ? state.bbl : undefined, bibtex);
         const bbl = cites ? (bibtex ? out.written?.['main.bbl'] : state.bbl) : undefined;
         // Like latexmk: once more when the run changed the labels or citations it read.
@@ -319,7 +338,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
   const first = useRef(true);
   useEffect(() => {
     if (!visible || !texts || !attachments) return undefined;
-    const timer = window.setTimeout(() => void compile(), first.current || urgent.current ? 0 : 1200);
+    const timer = window.setTimeout(() => void compile(), first.current || urgent.current ? 0 : CODE_PAUSE_MS);
     first.current = false;
     urgent.current = false;
     return () => window.clearTimeout(timer);

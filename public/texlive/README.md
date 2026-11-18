@@ -12,6 +12,7 @@
 
 - `preload`：每次编译都要用、体积大的文件（格式文件和字体映射表），存为 `files/<文件名>.gz`，页面解压后用 `preload` 消息交给 Worker；
 - `files`：其余自带文件，存为 `files/<文件名>`，`"格式编号/请求名"` 对应文件名；
+- `ondemand`：`files` 里只有构建格式时才用的文件（LaTeX 自己的源文件和断字模式，约 6 MB）。页面启动引擎时不下载它们，Worker 在 TeX 要找时才从网站取；
 - `missing`：已知服务器上不存在的键（见下面的 `files.txt` 一节）。
 
 ## 对 Worker 脚本的修改
@@ -22,7 +23,7 @@
 - 远程请求的超时是 30 秒。服务器回答"文件不存在"（301 或 404）或请求失败（断网、超时）之后，这个 Worker 在存活期间不再请求同一个文件。
 - 所有者自己的文件名不会发给远程服务器，见"什么会离开浏览器"。
 - 编译后不再自动运行 BibTeX，改为由 `bibtex` 命令按需运行（论文有 references.bib 时，编译参考文献用）。
-- 新增消息 `setbundle`、`preload`、`readfile`，下载文件后发出消息 `fetched`。
+- 新增消息 `setbundle`、`preload`、`readfile`、`useformat`，下载文件后发出消息 `fetched`。
 
 ## Worker 消息
 
@@ -34,6 +35,7 @@
   - `missing`：`manifest.json` 的 `missing`。Worker 对这些键直接回答"不存在"，不发请求。可以省略。
 - `{cmd:'preload', files:[{key, fileid, data}]}`：把文件写进 Worker 的文件系统。`key` 是 `格式编号/请求名`，`fileid` 是文件名，`data` 是文件内容（ArrayBuffer，已解压）。回复 `{cmd:'preload', result:'ok'}`，出错时 `result` 为 `'failed'`。
 - `{cmd:'readfile', url}`：读工作目录里的文件，`url` 是相对工作目录的路径，例如 `main.log`。回复 `{cmd:'readfile', result:'ok', data}`，`data` 是 UTF-8 文本；读不到时 `result` 为 `'failed'`，没有 `data`。
+- `{cmd:'useformat', fileid, data}`：之后的编译载入哪个格式文件。带 `data`（ArrayBuffer）时把它写成 `fileid`（替换之前写入的那个）并使用；只有 `fileid` 时使用之前写入的同名格式；两者都没有时换回自带的 `swiftlatexpdftex.fmt`。回复 `{cmd:'useformat', result:'ok'}`，出错时 `result` 为 `'failed'`，并换回自带格式。写作模式用它载入预编译了导言区的格式（`app/writing/preambleFormat.ts`）。
 - 原有消息不变：`flushcache`、`mkdir`、`writefile`、`setmainfile`、`compilelatex`（回复 `{cmd:'compile', result, status, log, pdf}`）、`settexliveurl`。
 
 Worker 发给页面：
@@ -63,5 +65,7 @@ TeX 找的其他文件名，比如 `\usepackage{xxx}` 的 `xxx.sty`，只有在�
 ## 修改自带的文件
 
 编辑 `files.txt`（每行 `格式编号/请求名<TAB>文件名`），然后在仓库根目录运行 `node scripts/fetch-texlive.mjs`。脚本需要 Node 18 以上和 `unzip` 命令，会清空并重新生成 `files/`、`manifest.json`、Worker 和许可证文件。
+
+可选的第三栏写 `ondemand`，表示这个文件只在构建格式时用（`compileformat`：`latex.ltx`、`hyphen.cfg` 和各语言的断字模式等），记进 `manifest.json` 的 `ondemand`，页面启动时不预载。这些文件的清单是在浏览器里构建一次格式、记下 Worker 向远程服务器要过的全部文件得到的。
 
 文件名一栏写 `-`，表示这个键已知在服务器上不存在，例如 `26/prdefault.cfg<TAB>-`：默认导言区每次编译都会找它，找不到也不影响结果。脚本会向服务器确认它确实回答 301 或 404（回答 200 就报错），再把它记进 `manifest.json` 的 `missing`。页面用 `setbundle` 把 `missing` 交给 Worker 后，Worker 不会再为这些键发请求。

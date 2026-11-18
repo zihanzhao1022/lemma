@@ -13,7 +13,9 @@
  * files.txt has one line per file: "<format>/<requested name>", a TAB, and the file name the server
  * answers with. A file name of "-" marks a key that is known NOT to exist on the server (TeX probes for
  * it on every run): the script checks that the server really answers 301 or 404, and lists the key under
- * "missing" in manifest.json so the worker never asks for it.
+ * "missing" in manifest.json so the worker never asks for it. An optional third column "ondemand" marks a file
+ * that only some runs need (building a format: LaTeX's own sources and the hyphenation patterns): the site
+ * still serves it, but the page does not hand it to the worker at startup ("ondemand" in manifest.json).
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -92,15 +94,16 @@ async function assertMissing(key) {
   if (res.status !== 301 && res.status !== 404) throw new Error(`${key} is marked missing in files.txt but the server answered ${res.status}`);
 }
 
-/** Reads files.txt into [{ key, name }]; name is "-" for a key known not to exist on the server. */
+/** Reads files.txt into [{ key, name, ondemand }]; name is "-" for a key known not to exist on the server. */
 function readFileList() {
   const entries = [];
   const keys = new Set();
   const names = new Set();
   for (const line of readFileSync(join(OUT, 'files.txt'), 'utf8').split('\n')) {
     if (!line.trim()) continue;
-    const [key, name, ...extra] = line.trim().split('\t');
-    if (!key || !name || extra.length) throw new Error(`Bad line in files.txt: ${line}`);
+    const [key, name, mark, ...extra] = line.trim().split('\t');
+    if (!key || !name || extra.length || (mark !== undefined && mark !== 'ondemand')) throw new Error(`Bad line in files.txt: ${line}`);
+    if (mark && (name === '-' || PRELOAD.has(key))) throw new Error(`Only a bundled file that is not preloaded can be on demand: ${line}`);
     if (!/^\d+\/[^\s/]+$/.test(key)) throw new Error(`Bad key in files.txt: ${key}`);
     if (keys.has(key)) throw new Error(`Duplicate key: ${key}`);
     keys.add(key);
@@ -108,7 +111,7 @@ function readFileList() {
       if (names.has(name)) throw new Error(`Duplicate file name: ${name}`);
       names.add(name);
     }
-    entries.push({ key, name });
+    entries.push({ key, name, ondemand: mark === 'ondemand' });
   }
   return entries;
 }
@@ -135,9 +138,9 @@ mkdirSync(join(OUT, 'files'), { recursive: true });
 
 // The version names the bundle's contents, so browsers that keep the files (Cache Storage) fetch them again
 // when they change.
-const manifest = { version: '', preload: {}, files: {}, missing: [] };
+const manifest = { version: '', preload: {}, files: {}, ondemand: [], missing: [] };
 const written = [];
-for (const { key, name } of entries) {
+for (const { key, name, ondemand } of entries) {
   if (name === '-') {
     await assertMissing(key);
     manifest.missing.push(key);
@@ -153,6 +156,7 @@ for (const { key, name } of entries) {
       writeFileSync(join(OUT, 'files', name), data);
       written.push({ name, data });
       manifest.files[key] = name;
+      if (ondemand) manifest.ondemand.push(key);
     }
   }
   process.stdout.write('.');
