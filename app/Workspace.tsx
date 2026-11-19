@@ -15,6 +15,7 @@ import { hashText, staleBlocks } from '../editor/results/numbering';
 import { resultsCommitMessage } from '../editor/results/ops';
 import { UploadPlan, planUpload } from '../editor/results/uploads';
 import { describeSaveError } from '../editor/backend';
+import { LOCALES, getLang } from '../lib/i18n';
 import { findPaper } from '../lib/results';
 import { useT } from '../lib/phrases/app';
 import { EditRequest, ResultPaper, SlideDeck } from '../types';
@@ -45,7 +46,7 @@ const TOOL =
  * What is being presented: the paper block by block (along its sections, or along the logic its author built, from
  * a block), or its slides (a Beamer deck once compiled).
  */
-type Presenting = null | { blocks: string | null; along: 'paper' | 'logic' } | { deck: SlideDeck; start: number; beamerPdf?: Uint8Array };
+type Presenting = null | { blocks: string | null; along: 'paper' | 'logic' } | { deck: SlideDeck; start: number; beamerPdf?: Uint8Array; html?: string };
 
 /**
  * A paper opened by its owner or by someone it is shared with: the results page with its editors, sharing and
@@ -241,10 +242,20 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
       setPresenting({ deck, start: 0 });
       return;
     }
-    // A Beamer deck shows once compiled (at once when the slide view already compiled it); one that does not
-    // compile closes again and says so.
-    const showing = (current: Presenting): current is { deck: SlideDeck; start: number; beamerPdf?: Uint8Array } => current !== null && 'deck' in current && current.deck === deck;
+    // A Beamer deck shows once compiled (at once when the slide view already compiled it); an HTML deck once its
+    // file is read and its blocks are in place; one that does not compile, or cannot be read, closes again and says so.
+    const showing = (current: Presenting): current is { deck: SlideDeck; start: number; beamerPdf?: Uint8Array; html?: string } => current !== null && 'deck' in current && current.deck === deck;
     setPresenting({ deck, start: 0 });
+    if (deck.kind === 'html') {
+      import('./slides/htmlPage')
+        .then(async ({ htmlPage, loadHtmlDeck }) => htmlPage(await loadHtmlDeck(paper, deck, access.readFile), paper, access.readFile, 'present', LOCALES[getLang()]))
+        .then((page) => setPresenting((current) => (showing(current) ? { ...current, html: page } : current)))
+        .catch(() => {
+          setPresenting((current) => (showing(current) ? null : current));
+          setToast({ message: () => t('幻灯片打不开') });
+        });
+      return;
+    }
     import('./slides/beamer')
       .then(({ compileBeamer }) => compileBeamer(paper, deck.beamer ?? '', access.readFile))
       .then(({ pdf }) => {
@@ -349,7 +360,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                   top={top}
                   visible={mode === 'slides'}
                   active={presenting === null}
-                  onPresent={(deck, start, beamerPdf) => setPresenting({ deck, start, beamerPdf })}
+                  onPresent={(deck, start, beamerPdf, html) => setPresenting({ deck, start, beamerPdf, html })}
                 />
               </Suspense>
             )}
@@ -419,7 +430,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
             )}
             {presenting && 'deck' in presenting && (
               <Suspense fallback={null}>
-                <Present paper={paper} deck={presenting.deck} readFile={access.readFile} start={presenting.start} beamerPdf={presenting.beamerPdf} onClose={() => setPresenting(null)} />
+                <Present paper={paper} deck={presenting.deck} readFile={access.readFile} start={presenting.start} beamerPdf={presenting.beamerPdf} htmlPage={presenting.html} onClose={() => setPresenting(null)} />
               </Suspense>
             )}
           </PresenceContext.Provider>

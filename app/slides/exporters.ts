@@ -28,6 +28,42 @@ function download(data: Uint8Array, name: string, type: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/** An HTML deck's page as the file to take away: one page, its blocks and its runtime inside it. */
+export function exportHtml(page: string, title: string): void {
+  download(new TextEncoder().encode(page), fileName(title, 'html'), 'text/html');
+}
+
+/**
+ * Opens the print dialog for an HTML deck's page, one slide to a page, from a frame that cannot reach the app. The
+ * frame is taken away once the page says it has printed (or after two minutes).
+ */
+export function printPage(page: string): Promise<void> {
+  return new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts allow-modals');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none';
+    let timer = 0;
+    const done = () => {
+      window.removeEventListener('message', listen);
+      window.clearTimeout(timer);
+      frame.remove();
+      resolve();
+    };
+    function listen(event: MessageEvent) {
+      if (event.source !== frame.contentWindow) return;
+      const type = (event.data as { type?: string } | null)?.type;
+      if (type === 'ready') {
+        frame.contentWindow?.postMessage({ type: 'print' }, '*');
+        timer = window.setTimeout(done, 120_000);
+      } else if (type === 'printed') done();
+    }
+    window.addEventListener('message', listen);
+    frame.srcdoc = page;
+    document.body.append(frame);
+  });
+}
+
 const pngBytes = (canvas: HTMLCanvasElement): Promise<Uint8Array> =>
   new Promise((resolve, reject) =>
     canvas.toBlob((blob) => (blob ? blob.arrayBuffer().then((buffer) => resolve(new Uint8Array(buffer)), reject) : reject(new Error('png'))), 'image/png'),

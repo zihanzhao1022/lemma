@@ -1,8 +1,10 @@
 import React, { useEffect, useImperativeHandle, useRef } from 'react';
 import { autocompletion, closeBrackets, closeBracketsKeymap, CompletionContext, completionKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { StreamLanguage, bracketMatching, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { StreamLanguage, StreamParser, bracketMatching, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { css as cssMode } from '@codemirror/legacy-modes/mode/css';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
+import { html as htmlMode } from '@codemirror/legacy-modes/mode/xml';
 import { Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state';
@@ -63,7 +65,11 @@ interface Props {
   onRun?: () => void;
   onSave?: () => void;
   className?: string;
+  /** What the text is: LaTeX (the default), or HTML or CSS, as a slide deck's are. Read when the editor is made. */
+  language?: 'tex' | 'html' | 'css';
 }
+
+const MODES = { tex: stex, html: htmlMode, css: cssMode } as const;
 
 function completions(names: React.MutableRefObject<{ macros: string[]; colors: string[]; labels: string[] }>) {
   return (context: CompletionContext) => {
@@ -109,9 +115,9 @@ const theme = EditorView.theme({
   '.cm-code-flash': { animation: 'writing-flash 1.6s ease-out' },
 });
 
-/** A LaTeX code editor (CodeMirror 6) with highlighting, completion and problem markers. */
+/** A code editor (CodeMirror 6), LaTeX unless told otherwise, with highlighting, completion (of LaTeX) and problem markers. */
 const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor(
-  { value, onChange, problems = [], macros = [], colors = [], labels = [], placeholder, onRun, onSave, className = '' },
+  { value, onChange, problems = [], macros = [], colors = [], labels = [], placeholder, onRun, onSave, className = '', language = 'tex' },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
@@ -167,9 +173,9 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
           highlightActiveLine(),
           highlightSelectionMatches(),
           lintGutter(),
-          StreamLanguage.define(stex),
+          StreamLanguage.define(MODES[language] as unknown as StreamParser<unknown>),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          autocompletion({ override: [completions(names)] }),
+          autocompletion({ override: language === 'tex' ? [completions(names)] : [] }),
           EditorView.lineWrapping,
           readOnly.current.of([]),
           hint.current.of(placeholder ? emptyHint(placeholder) : []),

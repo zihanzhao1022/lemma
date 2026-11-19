@@ -1,0 +1,128 @@
+/*
+  The kit every HTML deck sits on: white pages, serif titles, tables set as the paper sets them, and a small
+  vocabulary of motion (see runtime.js). A deck changes it with a few variables in its own <style id="deck">.
+
+  What moves, and how:
+    changing slides   the old slide goes out and the new one comes in a moment later (0.32 s)
+    a step            colour or opacity changes (0.4 s); the one thing that moves is the highlight band (0.6 s)
+  Everything else is still.
+*/
+:root {
+  --ink: #1d1d1f;
+  --mute: #6e6e73;
+  --faint: #a1a1a6;
+  --dim: #94949a;
+  --line: #e8e8ec;
+  --accent: #23509a;
+  --accent-mid: #9db4d8;
+  --band: #eef2f9;
+  --serif: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", Times, "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
+  --speed: 1;
+  --ease: cubic-bezier(.32, .72, 0, 1);
+  --ease-io: cubic-bezier(.4, 0, .2, 1);
+  --d-fade: calc(.4s * var(--speed));
+  --d-move: calc(.6s * var(--speed));
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --speed: .001; }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; }
+body { display: grid; place-items: center; color: var(--ink); -webkit-font-smoothing: antialiased; font-family: var(--sans); }
+.stage { position: relative; width: min(100vw, 177.78vh); aspect-ratio: 16 / 9; background: #fff; container-type: size; overflow: hidden; }
+.slide { position: absolute; inset: 0; display: none; }
+.slide.on { display: block; }
+
+/* ---- a page: title, content, caption, foot ---- */
+.slide > .title { position: absolute; left: 6.5cqw; right: 6.5cqw; top: 5cqw; margin: 0; font: 600 3.1cqw/1.25 var(--serif); }
+.content { position: absolute; left: 6.5cqw; right: 6.5cqw; top: 13.5cqw; bottom: 8cqw; display: flex; flex-direction: column; }
+.content > p, .content > ul, .content > ol { font-size: 2.2cqw; line-height: 1.45; margin: 0 0 1.4cqw; }
+.content ul, .content ol { padding-left: 2.4cqw; }
+.content li { margin: .6cqw 0; }
+.caption { margin: 1.7cqw 0 0; font: 1.5cqw/1.5 var(--serif); color: var(--mute); }
+.caption b { font-weight: 600; color: var(--ink); }
+.foot { position: absolute; left: 6.5cqw; right: 6.5cqw; bottom: 2.6cqw; display: flex; justify-content: space-between; font-size: 1.2cqw; color: var(--faint); }
+.cover .foot { display: none; }
+.facts { margin: 0; display: grid; grid-template-columns: 11cqw 1fr; row-gap: 2cqw; font-size: 2.2cqw; line-height: 1.45; }
+.facts dt { color: var(--mute); }
+.facts dd { margin: 0; }
+b, strong { font-weight: 700; }
+u { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .3em; }
+code { font-family: ui-monospace, Menlo, monospace; font-size: .92em; }
+.sc { font-variant: small-caps; }
+.sf { font-family: var(--sans); }
+.rule-inline, .n .rule { display: inline-block; background: currentColor; }
+svg { max-width: 100%; height: auto; }
+
+/* ---- the title page, and the page before a part ---- */
+.slide.cover.on, .slide.divider.on { display: flex; flex-direction: column; justify-content: center; padding: 0 8cqw; }
+.cover > .title, .divider > .title { position: static; font-size: 4.6cqw; line-height: 1.2; }
+.cover .authors { margin: 3cqw 0 0; font-size: 2.3cqw; }
+.cover .venue { margin: 1cqw 0 0; font-size: 1.9cqw; color: var(--mute); }
+.divider .part { margin: 0 0 1.6cqw; font-size: 1.7cqw; letter-spacing: .12em; color: var(--mute); }
+.divider.sub > .title { font-size: 3.6cqw; }
+.divider .nav { margin: 4cqw 0 0; padding: 0; list-style: none; font-size: 1.9cqw; line-height: 2; color: var(--faint); }
+.divider .nav li.cur { color: var(--ink); font-weight: 600; }
+.divider .nav .n { display: inline-block; width: 8cqw; font-size: 1.5cqw; letter-spacing: .06em; }
+
+/* ---- a block of the paper ---- */
+.block { position: relative; }
+.block.pic { flex: 1 1 0; min-height: 0; }
+.block.pic img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: left top; }
+.block.missing { font-size: 1.8cqw; color: var(--faint); border: 1px dashed var(--line); padding: 3cqw; text-align: center; }
+
+/* ---- a table, set the way the paper sets it ---- */
+.block.tbl { flex: 0 0 auto; }
+.block.tbl table { position: relative; z-index: 1; width: 100%; border-collapse: collapse; font: 2cqw/1.2 var(--serif); font-variant-numeric: tabular-nums; }
+.block.tbl th, .block.tbl td { padding: 1cqw 2cqw; font-weight: 400; white-space: nowrap; transition: color var(--d-fade) var(--ease-io); }
+.block.tbl td.wrap, .block.tbl th.wrap { white-space: normal; }
+.block.tbl th:first-child, .block.tbl td:first-child { padding-left: .7cqw; }
+.block.tbl thead th { height: 3.9cqw; padding-top: 0; padding-bottom: 0; font-size: 1.85cqw; }
+.block.tbl tbody th { font-weight: 500; }
+.block.tbl .n { display: inline-block; }
+.block.tbl .n math { font-size: 1em; }
+/* the rules (\toprule, \midrule, \bottomrule): a line along the top or bottom of the row they touch, drawn as the
+   row's own background so that it is whole across the columns, on screen and on paper alike */
+.block.tbl tr[data-above="thick"] { --ta: max(.14cqw, 1px); }
+.block.tbl tr[data-above="thin"] { --ta: max(.07cqw, .75px); }
+.block.tbl tr[data-below="thick"] { --tb: max(.14cqw, 1px); }
+.block.tbl tr[data-below="thin"] { --tb: max(.07cqw, .75px); }
+.block.tbl tr[data-above], .block.tbl tr[data-below] {
+  background-image: linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink));
+  background-size: 100% var(--ta, 0), 100% var(--tb, 0);
+  background-position: top, bottom;
+  background-repeat: no-repeat;
+}
+/* what is not in focus goes grey, still readable */
+.block.tbl table[data-f] th, .block.tbl table[data-f] td { color: var(--dim); }
+.block.tbl table[data-f] .k { color: var(--ink); }
+.block.tbl .band { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 0; border-radius: .45cqw; background: var(--band); opacity: 0;
+  transition: transform var(--d-move) var(--ease), width var(--d-move) var(--ease), height var(--d-move) var(--ease), opacity var(--d-fade) var(--ease-io); }
+.block.tbl .band.on { opacity: 1; }
+
+/* ---- steps: what appears when the talk gets to it ---- */
+[data-step] { opacity: 0; transition: opacity var(--d-fade) var(--ease-io); }
+[data-step].shown { opacity: 1; }
+
+/* ---- changing slides: the old one goes out, the new one comes in a moment later, so that two slides' text is never
+   on screen at half strength together (a plain cross-fade smears it) ---- */
+@keyframes vt-out { to { opacity: 0; } }
+@keyframes vt-in { from { opacity: 0; } }
+::view-transition-group(root) { animation-duration: calc(.32s * var(--speed)); }
+::view-transition-old(root) { animation: vt-out calc(.14s * var(--speed)) var(--ease-io) both; mix-blend-mode: normal; }
+::view-transition-new(root) { animation: vt-in calc(.2s * var(--speed)) var(--ease-io) calc(.12s * var(--speed)) both; mix-blend-mode: normal; }
+
+/* ---- on paper: one slide to a page, every step shown ---- */
+@page { size: 13.333in 7.5in; margin: 0; }
+@media print {
+  html, body { height: auto; overflow: visible; display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .stage { width: auto; aspect-ratio: auto; overflow: visible; container-type: normal; }
+  .slide, .slide.on { display: block; position: relative; inset: auto; width: 13.333in; height: 7.5in; overflow: hidden; container-type: size; break-after: page; page-break-after: always; }
+  .slide.cover, .slide.divider, .slide.cover.on, .slide.divider.on { display: flex; }
+  .slide:last-child { break-after: auto; page-break-after: auto; }
+  [data-step] { opacity: 1 !important; }
+  .block.tbl .band { display: none; }
+  .block.tbl table[data-f] th, .block.tbl table[data-f] td { color: var(--ink) !important; }
+}

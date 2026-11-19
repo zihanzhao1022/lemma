@@ -12,6 +12,7 @@ A platform for managing experiment results and writing the paper in one place, m
 - **我的研究空间**：论文列表上方的一张图，节点可以是论文、论文里的块（文字、图、表）和你的想法（问题、方向、笔记）。把论文从下面的列表拖进来，或者用「添加」找论文和块；全屏时左边是文件夹和论文，论文展开就是它的块，都能直接拖进图里。拖到一个节点上就挂到它下面，再连上关联线，梳理一个课题的思路。点块能看到它编译好的样子，双击论文或块就打开那篇论文（块会滚动到它的位置，链接是 `?block=`）。
 - **逻辑结构**：每篇论文里，把块挂成一棵树（实验挂在它检验的方法下面），演示和幻灯片按它走。
 - **幻灯片**：每篇论文一套，第一次选做法：
+  - HTML 幻灯片（推荐）：一套用 HTML 写的幻灯片，存在论文仓库里的 `results/<论文>/slides.html`（页与页之间是 `<!-- slide: id -->` 一行，历史记录按页读得懂；results.json 里只放它的哈希）。白底、衬线标题、表格按论文的排法（三线、粗体、下划线）。`<lemma-block ref="tab:main">` 把论文里的表格或图放到一页上；表格是真的 HTML 表格，加上 `focus="…"` 就能一步步聚焦到某一行、某一格（每步是一个 CSS 选择器，其余变灰，一块浅色高亮带移动）。换页是旧页淡出、新页淡入。页面在沙箱框架里运行，页面里写的脚本不会执行。导出单个 .html 文件（块和运行时都在里面）和 PDF（走浏览器的打印，每页一张幻灯片）；不导出 PowerPoint。起始稿按论文的逻辑结构生成：封面、每部分前的分隔页、每个图表一页。
   - 可视化幻灯片：用论文里编译好的图和表格先生成一套，再拖拽排版、加文字和演讲备注；论文里的块改了，幻灯片上的也跟着变。可以导出 PDF（块保持矢量）和 PowerPoint（文字可编辑，块是 300 dpi 图片）。
   - Beamer：用 LaTeX 写，`\lemmablock{tab:main}` 把论文里编译好的块放到一页上（按块的 `\label` 或块 id），右边实时编译。导出 PDF 就是编译结果，导出 PowerPoint 是每页一张图。
 - **协作和展示**：分享给合作者、页边批注、演示模式（一块一屏，或者放幻灯片）。
@@ -44,7 +45,7 @@ npm run preview # 预览构建结果
 | --- | --- |
 | `app/` | OnizukaTex 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
 | `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码；在 PDF 上直接改：`printed.ts`（一段 LaTeX 印出哪些字）、`pageRegions.ts`（源码一行在 PDF 的哪一段）、`pageAlign.ts` 和 `pageMap.ts`（逐字对应，点击与光标）、`pageEdits.ts`（打字、删除、移动光标）、`pageImages.ts`（图片位置和换图）；`preambleFormat.ts`（导言区在另一个引擎里预编译成格式，之后的编译只排正文） |
-| `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、演示、导出 PDF 和 PowerPoint |
+| `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、HTML 幻灯片（`htmlDeck.ts` 文件格式和起始稿，`blockHtml.ts` 把论文的块放进页面，`kit.css` 和 `runtime.js` 是页面的样式和运行时，`deckDocument.ts` 拼成一页完整的 HTML 并加上内容安全策略，`HtmlFrame.tsx` 是沙箱框架，`HtmlEditor.tsx` 是编辑器）、演示、导出 PDF、PowerPoint 和 HTML |
 | `app/logic/` | 论文的逻辑结构；`ForceGraph.tsx` 是它和研究空间共用的力导向图 |
 | `app/space/` | 我的研究空间：论文和想法组成的图 |
 | `app/example/` | 内置的虚构示例论文（预先编译好的 PDF） |

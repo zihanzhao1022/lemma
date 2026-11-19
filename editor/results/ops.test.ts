@@ -201,6 +201,12 @@ describe('referencedPaths', () => {
     ]);
   });
 
+  it("lists an HTML deck's file, and not the file of a deck of another kind", () => {
+    const html = { kind: 'html' as const, slides: [], html: { hash: 'abc' } };
+    expect(referencedPaths([paper('p1', { files: [], blocks: [], slides: html })])).toEqual(new Set(['results/p1/slides.html']));
+    expect(referencedPaths([paper('p1', { files: [], blocks: [], slides: { kind: 'beamer', slides: [], beamer: '' } })]).size).toBe(0);
+  });
+
   it("keeps the PDF of a block's kept version", () => {
     const output = { pdf: 'results/p1/b1-aaaa.pdf', width: 1, height: 1 };
     const alternate = { kind: 'figure' as const, source: 'Figure', output: { pdf: 'results/p1/b1-bbbb.pdf', width: 1, height: 1 } };

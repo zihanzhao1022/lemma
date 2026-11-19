@@ -1,5 +1,6 @@
 import { ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck } from '../../types';
 import { ContentOp, applyListOp } from '../ops';
+import { slidesPath } from './slidesFile';
 
 /** What the paper form edits. Blocks, preamble, attachments and visibility change through their own operations. */
 const INFO_FIELDS = ['slug', 'title', 'authors', 'venue', 'year', 'summary', 'viewers', 'editors', 'collaboratorIds'] as const;
@@ -189,7 +190,7 @@ export function touchedPapers(op: ResultsOp): string[] {
   }
 }
 
-/** Every private file the papers still refer to: compiled PDFs (kept versions' too) and attachments. */
+/** Every private file the papers still refer to: compiled PDFs (kept versions' too), attachments and HTML decks. */
 export function referencedPaths(papers: ResultPaper[]): Set<string> {
   const paths = new Set<string>();
   for (const paper of papers) {
@@ -200,6 +201,7 @@ export function referencedPaths(papers: ResultPaper[]): Set<string> {
     if (paper.references) paths.add(paper.references.pdf);
     if (paper.article) paths.add(paper.article.pdf);
     for (const name of paper.files ?? []) paths.add(`results/${paper.id}/files/${name}`);
+    if (paper.slides?.kind === 'html') paths.add(slidesPath(paper.id));
   }
   return paths;
 }

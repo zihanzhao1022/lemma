@@ -4,6 +4,7 @@ import type { ReadFile } from '../../editor/results/actions';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper, SlideDeck } from '../../types';
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from './deck';
+import HtmlPresent from './HtmlPresent';
 import SlideView, { drawPdf } from './SlideView';
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
   start: number;
   /** A Beamer deck's compiled PDF: each page is a slide. */
   beamerPdf?: Uint8Array;
+  /** An HTML deck's page, once it is made. */
+  htmlPage?: string;
   onClose: () => void;
 }
 
@@ -43,7 +46,7 @@ const PdfSlide: React.FC<{ data: Uint8Array; page: number; width: number }> = ({
  * The deck full screen, one slide at a time, as large as the screen allows: arrow keys, space, a click or a tap
  * move on; Esc ends. The slide number shows in a corner, the speaker's notes under the slide when asked for.
  */
-const Present: React.FC<Props> = ({ paper, deck, readFile, start, beamerPdf, onClose }) => {
+const SlidePresent: React.FC<Props> = ({ paper, deck, readFile, start, beamerPdf, onClose }) => {
   const t = useT();
   const [pages, setPages] = useState(deck.kind === 'visual' ? deck.slides.length : 0);
   const [at, setAt] = useState(start);
@@ -142,5 +145,8 @@ const Present: React.FC<Props> = ({ paper, deck, readFile, start, beamerPdf, onC
     </div>
   );
 };
+
+/** An HTML deck is its own page in a frame; the others are drawn here. */
+const Present: React.FC<Props> = (props) => (props.deck.kind === 'html' ? <HtmlPresent page={props.htmlPage} onClose={props.onClose} /> : <SlidePresent {...props} />);
 
 export default Present;

@@ -100,7 +100,7 @@ export function partsAbove(paper: ResultPaper, id: string): string[] {
 }
 
 /** Each figure and table with the parts it is the first of: their titles, outermost first, and how deep each is. */
-function partsOpened(paper: ResultPaper, blocks: ResultBlock[]): Record<string, { title: string; depth: number }[]> {
+export function partsOpened(paper: ResultPaper, blocks: ResultBlock[]): Record<string, { title: string; depth: number }[]> {
   const titles = headingTitles(paper, false);
   const opened = new Set<string>();
   const found: Record<string, { title: string; depth: number }[]> = {};

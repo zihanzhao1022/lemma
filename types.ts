@@ -343,14 +343,21 @@ export interface ResultPaper extends Hideable {
 }
 
 /**
- * A paper's slides: either drawn in OnizukaTex on 16:9 pages (`visual`), or written as a Beamer document
- * (`beamer`), whose \lemmablock{label} puts a block of the paper on a frame.
+ * A paper's slides: drawn in OnizukaTex on 16:9 pages (`visual`), written as a Beamer document (`beamer`), whose
+ * \lemmablock{label} puts a block of the paper on a frame, or written as HTML (`html`), whose
+ * <lemma-block ref="label"> does the same.
  */
 export interface SlideDeck {
-  kind: 'visual' | 'beamer';
+  kind: 'visual' | 'beamer' | 'html';
   slides: Slide[];
   /** A Beamer deck's LaTeX source, from \documentclass to \end{document}. */
   beamer?: string;
+  /**
+   * An HTML deck is a file of its own in the papers repository (results/<paper>/slides.html, see
+   * editor/results/slidesFile.ts); here only the hash of its text, which readFile keeps the file under and which
+   * shows when another tab or Claude Code changed it.
+   */
+  html?: { hash: string };
 }
 
 export interface Slide {
