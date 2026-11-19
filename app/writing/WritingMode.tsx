@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronRight, Crosshair, Download, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Crosshair, Download, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
 import { describeSaveError } from '../../editor/backend';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
@@ -27,6 +27,7 @@ import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSinceText } fro
 import { graphicsOf, replaceGraphic } from './pageImages';
 import { RegionMap, atomRange, caretToSpot, clickToCaret, lineAt, lineStarts, mapRegion } from './pageMap';
 import type { PageText } from './pageRegions';
+import { DEFAULT_PANES, Divider, usePanes, useWidth } from './panes';
 import PdfPages, { CaretSpot, PageClick, PdfClick, PdfPagesHandle } from './PdfPages';
 import { printedUnits } from './printed';
 import SourceEditor, { SourceEditorHandle, SourceFile } from './SourceEditor';
@@ -167,6 +168,13 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
   const [compiling, setCompiling] = useState(false);
   const [listing, setListing] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [panes, setPanes] = usePanes();
+  const sideRef = useRef<HTMLElement>(null);
+  const codeRef = useRef<HTMLElement>(null);
+  const pagesRef = useRef<HTMLElement>(null);
+  // The toolbars' words show as the columns have room for them, not the window.
+  const codeWidth = useWidth(codeRef);
+  const pagesWidth = useWidth(pagesRef);
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useMessage();
   const saved = useRef<Texts | null>(null);
@@ -838,7 +846,12 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
   return (
     <div className={`fixed inset-x-0 bottom-0 z-20 flex bg-white ${visible ? '' : 'hidden'}`} style={{ top }}>
       {/* A plain column, not a flex one: rows of a flex column shrink once the list is longer than the window. */}
-      <nav aria-label={t('文件和大纲')} className="hidden w-56 shrink-0 overflow-y-auto border-r border-black/[0.06] bg-[#f5f5f7] p-3 text-[13px] lg:block">
+      <nav
+        ref={sideRef}
+        aria-label={t('文件和大纲')}
+        className={`hidden shrink-0 overflow-y-auto bg-[#f5f5f7] p-3 text-[13px] ${panes.sideOpen ? 'lg:block' : ''}`}
+        style={{ width: panes.side }}
+      >
         <p className="px-2 pb-1 text-xs font-medium text-gray-500">{t('文件')}</p>
         {fileRow(MAIN, <FileCode2 size={15} className="shrink-0 text-violet-600" />)}
         {texts?.[REFERENCES_FILE] !== undefined && fileRow(REFERENCES_FILE, <FileText size={15} className="shrink-0 text-gray-400" />)}
@@ -862,33 +875,50 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
           </button>
         ))}
       </nav>
+      {panes.sideOpen && (
+        <Divider
+          label={t('拖动调整宽度，双击恢复')}
+          className="hidden lg:block"
+          onMove={(x) => setPanes({ side: x - (sideRef.current?.getBoundingClientRect().left ?? 0) })}
+          onReset={() => setPanes({ side: DEFAULT_PANES.side })}
+        />
+      )}
 
-      <section className="flex min-w-0 flex-1 flex-col border-r border-black/[0.06]">
+      <section ref={codeRef} className="flex min-w-0 flex-col" style={{ flex: `${panes.split} 1 0%` }}>
         <div className="flex h-11 shrink-0 items-center gap-1 border-b border-black/[0.06] px-3">
+          <button
+            type="button"
+            onClick={() => setPanes({ sideOpen: !panes.sideOpen })}
+            className={`${bar} -ml-1 mr-1 hidden lg:inline-flex`}
+            aria-label={panes.sideOpen ? t('收起文件和大纲') : t('展开文件和大纲')}
+            title={panes.sideOpen ? t('收起文件和大纲') : t('展开文件和大纲')}
+          >
+            {panes.sideOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+          </button>
           <span className="mr-2 min-w-0 truncate text-sm font-medium text-gray-800">{preview ?? attachedName(active) ?? active}</span>
           {preview && attachments?.[preview] && <span className="shrink-0 text-xs text-gray-400">{sizeOf(attachments[preview].length)}</span>}
           {!preview && active === MAIN && (
             <>
               <button type="button" onClick={() => editor.current?.splitBlock() || setProblem(() => t('把光标放在一个块中间的某一行，再从那里分块'))} className={bar} title={t('从光标所在的行开始一个新块')}>
                 <Scissors size={14} />
-                <span className="hidden xl:inline">{t('从这里分块')}</span>
+                <span className={codeWidth >= 640 ? '' : 'hidden'}>{t('从这里分块')}</span>
               </button>
               <button type="button" onClick={() => showInPdf(editor.current?.cursorLine() ?? 1)} disabled={marks.length === 0} className={bar} title={t('在 PDF 里找到光标所在的行')}>
                 <Crosshair size={14} />
-                <span className="hidden xl:inline">{t('定位到 PDF')}</span>
+                <span className={codeWidth >= 640 ? '' : 'hidden'}>{t('定位到 PDF')}</span>
               </button>
               <button type="button" onClick={openTableRules} className={bar} title={t('为光标所在的表格设置颜色、最优标记和数字格式')}>
                 <Table2 size={14} />
-                <span className="hidden xl:inline">{t('表格规则')}</span>
+                <span className={codeWidth >= 640 ? '' : 'hidden'}>{t('表格规则')}</span>
               </button>
             </>
           )}
-          <span className="ml-auto hidden whitespace-nowrap text-xs text-gray-400 lg:inline">{saving ? t('保存中…') : dirty ? t('有未保存的修改') : t('已保存')}</span>
+          <span className={`ml-auto whitespace-nowrap text-xs text-gray-400 ${codeWidth >= 480 ? '' : 'hidden'}`}>{saving ? t('保存中…') : dirty ? t('有未保存的修改') : t('已保存')}</span>
           <button
             type="button"
             onClick={() => void save()}
             disabled={!dirty || saving}
-            className="galley-press ml-auto shrink-0 whitespace-nowrap rounded-lg bg-violet-700 px-3 py-1 text-[13px] font-medium text-white hover:bg-violet-800 disabled:bg-gray-200 disabled:text-gray-500 lg:ml-2"
+            className={`galley-press shrink-0 whitespace-nowrap rounded-lg bg-violet-700 px-3 py-1 text-[13px] font-medium text-white hover:bg-violet-800 disabled:bg-gray-200 disabled:text-gray-500 ${codeWidth >= 480 ? 'ml-2' : 'ml-auto'}`}
             title={t('保存（⌘S）')}
           >
             {t('保存')}
@@ -924,7 +954,17 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         </div>
       </section>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <Divider
+        label={t('拖动调整宽度，双击恢复')}
+        onMove={(x) => {
+          const code = codeRef.current?.getBoundingClientRect();
+          const pages = pagesRef.current?.getBoundingClientRect();
+          if (code && pages && pages.right > code.left) setPanes({ split: (x - code.left) / (pages.right - code.left) });
+        }}
+        onReset={() => setPanes({ split: DEFAULT_PANES.split })}
+      />
+
+      <section ref={pagesRef} className="flex min-w-0 flex-col" style={{ flex: `${1 - panes.split} 1 0%` }}>
         <div className="flex h-11 shrink-0 items-center gap-1 border-b border-black/[0.06] px-3">
           <button type="button" onClick={() => void compile()} disabled={compiling || !texts} className="galley-press inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-gray-900 px-3 py-1 text-[13px] font-medium text-white hover:bg-gray-700 disabled:opacity-60">
             {compiling ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -951,8 +991,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
               <span className="text-gray-400">{t('{s} 秒', { s: compiled.seconds.toFixed(1) })}</span>
             ) : null}
           </span>
-          <span className="ml-auto hidden truncate text-xs text-gray-400 xl:inline">{t('单击 PDF 里的文字直接修改，双击跳到它的代码')}</span>
-          <span className="ml-auto flex shrink-0 items-center xl:ml-2">
+          <span className={`ml-auto truncate text-xs text-gray-400 ${pagesWidth >= 820 ? '' : 'hidden'}`}>{t('单击 PDF 里的文字直接修改，双击跳到它的代码')}</span>
+          <span className={`flex shrink-0 items-center ${pagesWidth >= 820 ? 'ml-2' : 'ml-auto'}`}>
             <button
               type="button"
               onClick={() => compiled?.pdf && downloadFile(compiled.pdf, fileName(paper.title, 'pdf'), 'application/pdf')}
@@ -961,7 +1001,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
               title={t('下载右边这份 PDF')}
             >
               <Download size={14} />
-              <span className="hidden xl:inline">{t('导出 PDF')}</span>
+              <span className={pagesWidth >= 600 ? '' : 'hidden'}>{t('导出 PDF')}</span>
             </button>
             <button type="button" onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} aria-label={t('缩小')} title={t('缩小')} className={bar}>
               <Minus size={14} />

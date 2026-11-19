@@ -338,6 +338,9 @@ export const { t, useT, table } = phrases({
   没有保存: { ja: '保存されていません', en: 'Not saved' },
   '导出 PDF': { ja: 'PDF に書き出す', en: 'Export PDF' },
   '下载右边这份 PDF': { ja: '右の PDF をダウンロード', en: 'Download the PDF on the right' },
+  '收起文件和大纲': { ja: 'ファイルとアウトラインを隠す', en: 'Hide files and outline' },
+  '展开文件和大纲': { ja: 'ファイルとアウトラインを表示', en: 'Show files and outline' },
+  '拖动调整宽度，双击恢复': { ja: 'ドラッグで幅を変更、ダブルクリックで元に戻す', en: 'Drag to resize; double-click to reset' },
   '导出 PowerPoint': { ja: 'PowerPoint に書き出す', en: 'Export PowerPoint' },
   // HTML slides
   'HTML 幻灯片': { ja: 'HTML スライド', en: 'HTML slides' },
