@@ -211,7 +211,9 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, hideBlock, deleteBlock, prepare, counted],
   );
 
-  // The writing view fills the window under the paper's bar; the page itself stops scrolling meanwhile.
+  // The writing view fills the window under the paper's bar; the page itself stops scrolling meanwhile. The bar
+  // comes once the paper is open: a view opened at first is measured again then.
+  const barShown = access.state !== 'loading' && Boolean(paper);
   useLayoutEffect(() => {
     if (mode === 'blocks') return undefined;
     window.scrollTo(0, 0);
@@ -227,7 +229,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
       window.removeEventListener('scroll', measure);
       document.body.style.overflow = overflow;
     };
-  }, [mode]);
+  }, [mode, barShown]);
   useEffect(() => {
     if (mode !== 'blocks') setOpened((current) => (current[mode] ? current : { ...current, [mode]: true }));
   }, [mode]);
