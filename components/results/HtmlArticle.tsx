@@ -896,9 +896,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     const element = sectionOf(id);
     const origin = wrapper.current?.getBoundingClientRect();
     if (!element || !origin) return [];
-    return Array.from(element.getClientRects())
-      .filter((rect) => rect.width > 0 && rect.height > 0)
-      .map((rect) => new DOMRect(rect.left - origin.left, rect.top - origin.top, rect.width, rect.height));
+    return clientBoxes(element).map((rect) => new DOMRect(rect.left - origin.left, rect.top - origin.top, rect.width, rect.height));
   };
 
   const onMouseMove = (event: React.MouseEvent) => {
@@ -922,7 +920,8 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       }
       const target = blockAtPoint(moved.clientX, moved.clientY);
       if (!target || target === id || target === 'references') return setDrag({ id });
-      const rect = Array.from(sectionOf(target)?.getClientRects() ?? []).find((box) => moved.clientX >= box.left && moved.clientX <= box.right && moved.clientY >= box.top && moved.clientY <= box.bottom);
+      const section = sectionOf(target);
+      const rect = (section ? clientBoxes(section) : []).find((box) => moved.clientX >= box.left && moved.clientX <= box.right && moved.clientY >= box.top && moved.clientY <= box.bottom);
       setDrag({ id, target: { id: target, after: rect ? moved.clientY > rect.top + rect.height / 2 : false } });
     };
     const up = () => {
@@ -1201,6 +1200,25 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     </EditModeContext.Provider>
   );
 });
+
+/**
+ * A block's boxes on screen, in reading order: the pieces of its section in each column it runs through,
+ * and the wide figures and tables in it, which span the columns outside those pieces (column-span: all).
+ * A section holding nothing but a wide table has no pieces of its own.
+ */
+function clientBoxes(section: HTMLElement): DOMRect[] {
+  const boxes = Array.from(section.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+  for (const wide of section.querySelectorAll<HTMLElement>('figure.wide, .html-table.wide')) {
+    const rect = wide.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    // In one column it stays inside the section's own box.
+    if (boxes.some((box) => rect.left >= box.left - 1 && rect.right <= box.right + 1 && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1)) continue;
+    // Before what the block goes on with below it.
+    const after = boxes.findIndex((box) => box.top >= rect.bottom - 1);
+    boxes.splice(after < 0 ? boxes.length : after, 0, rect);
+  }
+  return boxes;
+}
 
 const attachmentNamesOf = (files: Record<string, Uint8Array> | null | undefined) => Object.keys(files ?? {});
 
