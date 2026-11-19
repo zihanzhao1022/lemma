@@ -373,6 +373,14 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
       const above = line.number > 1 ? state.doc.line(line.number - 1).text : '';
       // Not on a marker, and not right under one: the block above would be left empty.
       if (readMarker(line.text) || readMarker(above) || line.number === 1) return false;
+      // Only inside a block: not in the preamble above the first one, nor at or past \end{document}.
+      let inBlock = false;
+      for (let n = line.number; n >= 1 && !inBlock; n -= 1) {
+        const text = state.doc.line(n).text;
+        if (/^\s*\\end\s*\{document\}/.test(text)) return false;
+        inBlock = readMarker(text) !== null;
+      }
+      if (!inBlock) return false;
       editor.dispatch({ changes: { from: line.from, insert: `${markerLine(newBlockId(), 'text')}\n` }, filter: false });
       return true;
     },

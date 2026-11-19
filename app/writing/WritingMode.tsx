@@ -14,7 +14,7 @@ import { parseAuxCitations, parseAuxLabels, parseErrors } from '../../editor/tex
 import { useMessage } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper } from '../../types';
-import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, locate, markableInputs, parseMarks, placeOf, withMarks } from './document';
+import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, joinMain, locate, markableInputs, parseMarks, placeOf, splitMain, withMarks } from './document';
 import { fillFloatCache, withCachedFloats } from './floatCache';
 import { preambleFormat, rejectFormat, splitForFormat } from './preambleFormat';
 import { bodyRuleEdits, tableBlockAt, tableBlocks } from './tableRules';
@@ -34,7 +34,6 @@ import type { SourceSnapshot } from './sourceMapping';
 import { inverseSearch } from './sourceSearch';
 
 const MAIN = 'main.tex';
-const PREAMBLE = 'preamble.tex';
 /** How long typing pauses before the tables' rules recolour them (editor/results/table/rules.ts). */
 const TABLE_RULES_PAUSE_MS = 400;
 /** How long typing in the code pauses before a compile: a compile takes a fraction of a second, and typing during one asks for the next. */
@@ -79,9 +78,9 @@ interface PageEdit {
 const decode = (data: Uint8Array): string => new TextDecoder().decode(data);
 const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
 
-/** The writing view's files, as the paper has them: its text, preamble and bibliography, and the attachments written as text. */
+/** The writing view's files, as the paper has them: main.tex (its preamble and its blocks), its bibliography, and the attachments written as text. */
 function textsOf(paper: ResultPaper, files: Record<string, Uint8Array>): Texts {
-  const texts: Texts = { [MAIN]: bodyOf(paper.blocks), [PREAMBLE]: preambleOf(paper), ...(files[REFERENCES_FILE] ? { [REFERENCES_FILE]: decode(files[REFERENCES_FILE]) } : {}) };
+  const texts: Texts = { [MAIN]: joinMain(preambleOf(paper), bodyOf(paper.blocks)), ...(files[REFERENCES_FILE] ? { [REFERENCES_FILE]: decode(files[REFERENCES_FILE]) } : {}) };
   for (const [name, data] of Object.entries(files)) {
     if (name === REFERENCES_FILE) continue;
     const text = editableText(name, data);
@@ -90,11 +89,16 @@ function textsOf(paper: ResultPaper, files: Record<string, Uint8Array>): Texts {
   return texts;
 }
 
-/** Whether a file of the writing view differs between two sets of texts; main.tex by its blocks' code. */
-const changedIn = (a: Texts, b: Texts, name: string): boolean =>
-  name === MAIN ? JSON.stringify(blocksOf(a[MAIN] ?? '')) !== JSON.stringify(blocksOf(b[MAIN] ?? '')) : a[name] !== b[name];
+/** What main.tex holds as the paper stores it: its preamble and its blocks' code (the text itself when it has no \begin{document}). */
+const mainContent = (text: string): string => {
+  const parts = splitMain(text);
+  return parts ? JSON.stringify([parts.preamble, blocksOf(parts.body)]) : text;
+};
 
-/** Whether two sets of texts hold the same paper: the same blocks with the same code, preamble, bibliography and attachments. */
+/** Whether a file of the writing view differs between two sets of texts; main.tex by its preamble and its blocks' code. */
+const changedIn = (a: Texts, b: Texts, name: string): boolean => (name === MAIN ? mainContent(a[MAIN] ?? '') !== mainContent(b[MAIN] ?? '') : a[name] !== b[name]);
+
+/** Whether two sets of texts hold the same paper: the same preamble, blocks with the same code, bibliography and attachments. */
 const sameTexts = (a: Texts, b: Texts): boolean => [...new Set([...Object.keys(a), ...Object.keys(b), MAIN])].every((name) => !changedIn(a, b, name));
 
 /** The attachments whose text changed since `saved`, as the bytes to store; references.bib among them. */
@@ -245,15 +249,23 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
         pendingMapping = editor.current?.captureSnapshot(snapshot);
         const started = performance.now();
         const engine = await getTexEngine();
-        const body = snapshot[MAIN] ?? '';
-        const preamble = snapshot[PREAMBLE] ?? '';
+        const parts = splitMain(snapshot[MAIN] ?? '');
+        if (!parts) {
+          const issues = [{ message: t('main.tex 里要有一行 \\begin{document}，导言区写在它前面') }];
+          setCompiled((previous) => (previous ? { ...previous, issues } : { sources: {}, fileNames: [MAIN], marks: [], issues, seconds: 0 }));
+          pendingMapping?.dispose();
+          pendingMapping = undefined;
+          continue;
+        }
+        const { body, preamble } = parts;
         const bib = snapshot[REFERENCES_FILE];
         const keys = citedKeys(body);
         const style = bibliographyStyle({ ...paper, preamble });
         const cites = bib !== undefined && keys.length > 0;
         // Tables already set are taken from their boxes; the others are set now and cached once typing pauses.
         const cached = withCachedFloats(body, preamble, carried.current.aux);
-        const doc = fullDocument(preamble, cached.body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null);
+        // Marked with main.tex's own line numbers, the preamble's lines above the body's.
+        const doc = fullDocument(preamble, cached.body, cites ? { style: packageSetsStyle(preamble, files) ? null : style, file: REFERENCES_FILE } : null, { bodyLine: parts.bodyLine });
         // The attachments as they are being edited.
         const inputs: Record<string, string | Uint8Array> = { ...files, ...(bib !== undefined ? { [REFERENCES_FILE]: encode(bib) } : {}), ...changedFiles(snapshot, saved.current ?? {}) };
         const sources = { ...inputs };
@@ -306,10 +318,8 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
           const attached = issue.file ? attachedKey(issue.file.replace(/^\.\//, '')) : '';
           if (issue.file && issue.line !== undefined && snapshot[attached] !== undefined) return { message: issue.message, file: attached, line: issue.line };
           if (issue.file || issue.line === undefined) return { message: issue.file ? `${issue.file}: ${issue.message}` : issue.message };
-          if (issue.line >= doc.bodyStart && issue.line < doc.bodyStart + doc.bodyLines) return { message: issue.message, file: MAIN, line: issue.line - doc.bodyStart + 1 };
-          if (issue.line >= doc.preambleStart && issue.line < doc.preambleStart + doc.preambleLines) {
-            return { message: issue.message, file: PREAMBLE, line: issue.line - doc.preambleStart + 1 };
-          }
+          if (issue.line >= doc.bodyStart && issue.line < doc.bodyStart + doc.bodyLines) return { message: issue.message, file: MAIN, line: issue.line - doc.bodyStart + parts.bodyLine };
+          if (issue.line >= doc.preambleStart && issue.line < doc.preambleStart + doc.preambleLines) return { message: issue.message, file: MAIN, line: issue.line - doc.preambleStart + 1 };
           return { message: issue.message };
         });
         if (!out.pdf && issues.length === 0) issues.push({ message: out.reason ?? t('没有生成 PDF') });
@@ -382,12 +392,17 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     const files = filesRef.current;
     if (!current || !files || !saved.current || saving) return;
     if (sameTexts(current, saved.current)) return;
+    const parts = splitMain(current[MAIN] ?? '');
+    if (!parts) {
+      setProblem(() => t('main.tex 里要有一行 \\begin{document}，导言区写在它前面'));
+      return;
+    }
     setSaving(true);
     setProblem(null);
     try {
-      const changes = blockChanges(paper.blocks, blocksOf(current[MAIN] ?? ''), newBlockId);
+      const changes = blockChanges(paper.blocks, blocksOf(parts.body), newBlockId);
       const ops: ResultsOp[] = [];
-      if (current[PREAMBLE] !== saved.current[PREAMBLE]) ops.push({ kind: 'patchPaper', id: paper.id, fields: { preamble: current[PREAMBLE] } });
+      if (parts.preamble !== splitMain(saved.current[MAIN] ?? '')?.preamble) ops.push({ kind: 'patchPaper', id: paper.id, fields: { preamble: parts.preamble } });
       for (const change of changes.put) {
         // A table is saved as its rules write it, even when typing stopped only now.
         const block = change.block.kind === 'table' && change.block.source ? { ...change.block, source: applyRules(change.block.source) } : change.block;
@@ -421,7 +436,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     } finally {
       setSaving(false);
     }
-  }, [paper, onSave, saving, setProblem]);
+  }, [paper, onSave, saving, setProblem, t]);
 
   /* ------------------------------------------------------------------ table rules */
 
@@ -464,7 +479,6 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       texts
         ? [
             { name: MAIN, text: texts[MAIN] ?? '', blocks: true },
-            { name: PREAMBLE, text: texts[PREAMBLE] ?? '' },
             ...(texts[REFERENCES_FILE] !== undefined ? [{ name: REFERENCES_FILE, text: texts[REFERENCES_FILE], latex: false }] : []),
             ...Object.entries(texts).flatMap(([key, text]) => {
               const name = attachedName(key);
@@ -482,7 +496,11 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     return byFile;
   }, [compiled]);
 
-  const headings = useMemo(() => headingsOf(texts?.[MAIN] ?? ''), [texts]);
+  // The body's headings, at their lines in main.tex.
+  const headings = useMemo(() => {
+    const parts = splitMain(texts?.[MAIN] ?? '');
+    return parts ? headingsOf(parts.body).map((heading) => ({ ...heading, line: heading.line + parts.bodyLine - 1 })) : [];
+  }, [texts]);
   const marks = compiled?.marks ?? [];
 
   const showInPdf = (line: number) => {
@@ -822,7 +840,6 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       <nav aria-label={t('文件和大纲')} className="hidden w-56 shrink-0 overflow-y-auto border-r border-black/[0.06] bg-[#f5f5f7] p-3 text-[13px] lg:block">
         <p className="px-2 pb-1 text-xs font-medium text-gray-500">{t('文件')}</p>
         {fileRow(MAIN, <FileCode2 size={15} className="shrink-0 text-violet-600" />)}
-        {fileRow(PREAMBLE, <FileCode2 size={15} className="shrink-0 text-gray-400" />, t('导言区 preamble.tex'))}
         {texts?.[REFERENCES_FILE] !== undefined && fileRow(REFERENCES_FILE, <FileText size={15} className="shrink-0 text-gray-400" />)}
         {folderRows(tree, 0)}
         <p className="mt-5 px-2 pb-1 text-xs font-medium text-gray-500">{t('大纲')}</p>
@@ -1013,7 +1030,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
           </div>
           <TableRulesPanel
             source={(texts[MAIN] ?? '').slice(rulesBlock.from, rulesBlock.to)}
-            preamble={texts[PREAMBLE] ?? ''}
+            preamble={splitMain(texts[MAIN] ?? '')?.preamble ?? ''}
             onChange={(next) => replaceInMain(rulesBlock.from, rulesBlock.to, next)}
           />
         </div>

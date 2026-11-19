@@ -253,7 +253,10 @@ export const { t, useT, table } = phrases({
   有未保存的修改: { ja: '未保存の変更があります', en: 'Unsaved changes' },
   文件和大纲: { ja: 'ファイルとアウトライン', en: 'Files and outline' },
   文件: { ja: 'ファイル', en: 'Files' },
-  '导言区 preamble.tex': { ja: 'プリアンブル preamble.tex', en: 'Preamble preamble.tex' },
+  'main.tex 里要有一行 \\begin{document}，导言区写在它前面': {
+    ja: 'main.tex には \\begin{document} の行が必要です。プリアンブルはその前に書きます',
+    en: 'main.tex needs a \\begin{document} line, with the preamble above it',
+  },
   大纲: { ja: 'アウトライン', en: 'Outline' },
   '写下 \\section，这里就会列出章节': { ja: '\\section を書くと、ここに節が並びます', en: 'Write a \\section and the sections show up here' },
   '把光标放在一个块中间的某一行，再从那里分块': {

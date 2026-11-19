@@ -31,6 +31,38 @@ export function bodyOf(blocks: ResultBlock[]): string {
   return `${blocks.map((block) => `${markerLine(block.id, block.kind)}\n${editableSource(block.source ?? '')}`).join('\n\n')}\n`;
 }
 
+/** The writing view's whole main.tex: the preamble, then the blocks between \begin{document} and \end{document}. */
+export const joinMain = (preamble: string, body: string): string =>
+  `${preamble.replace(/\s+$/, '')}\n\n\\begin{document}\n\n${body.replace(/\s+$/, '')}\n\n\\end{document}\n`;
+
+export interface MainParts {
+  /** Up to the \begin{document} line, ending in one newline. */
+  preamble: string;
+  /** From the line after \begin{document} up to the \end{document} line. */
+  body: string;
+  /** Where the body starts in main.tex: its offset and its line (1-based). */
+  bodyAt: number;
+  bodyLine: number;
+}
+
+const BEGIN_DOCUMENT = /^[ \t]*\\begin\s*\{document\}[^\n]*(\n|$)/m;
+const END_DOCUMENT = /^[ \t]*\\end\s*\{document\}/m;
+
+/** A whole main.tex as its preamble and its body; null without a \begin{document} line. */
+export function splitMain(text: string): MainParts | null {
+  const begin = BEGIN_DOCUMENT.exec(text);
+  if (!begin) return null;
+  const bodyAt = begin.index + begin[0].length;
+  const ending = END_DOCUMENT.exec(text.slice(bodyAt));
+  const end = ending ? bodyAt + ending.index : text.length;
+  return {
+    preamble: `${text.slice(0, begin.index).replace(/\s+$/, '')}\n`,
+    body: text.slice(bodyAt, end),
+    bodyAt,
+    bodyLine: text.slice(0, bodyAt).split('\n').length,
+  };
+}
+
 export interface BodyBlock {
   id: string;
   kind: ResultBlockKind;
@@ -137,7 +169,7 @@ function floatContentStart(lines: string[], line: number, offset: number): { lin
  * in text environments, outside braces, math and verbatim, and never where a line goes on from a % comment.
  * Lines stay where they were, so TeX's line numbers still match main.tex.
  */
-export function withMarks(body: string, file = 0): string {
+export function withMarks(body: string, file = 0, firstLine = 1): string {
   const mark = (kind: string, line: number) => file === 0 ? `\\galley${kind}{${line}}` : `\\galley${kind}at{${file}}{${line}}`;
   const lines = body.split('\n');
   const environments: string[] = ['document'];
@@ -148,7 +180,7 @@ export function withMarks(body: string, file = 0): string {
   const delayed = new Map<number, { offset: number; text: string }[]>();
   return lines
     .map((line, index) => {
-      const n = index + 1;
+      const n = index + firstLine;
       if (verbatim) {
         if (line.includes(`\\end{${verbatim}}`)) {
           verbatim = null;
@@ -409,7 +441,12 @@ export function documentHead(preamble: string): { head: string[]; own: string } 
   return { head, own };
 }
 
-export function fullDocument(preamble: string, body: string, bibliography: { style: string | null; file: string } | null, { titleFile }: { titleFile?: number } = {}): FullDocument {
+export function fullDocument(
+  preamble: string,
+  body: string,
+  bibliography: { style: string | null; file: string } | null,
+  { titleFile, bodyLine = 1 }: { titleFile?: number; bodyLine?: number } = {},
+): FullDocument {
   const { head, own } = documentHead(titleFile ? withTitleMarks(preamble, titleFile) : preamble);
   const text = body.replace(/\s+$/, '');
   // The page shows the paper's title itself, so the blocks leave \maketitle out; the whole paper opens with it,
@@ -424,7 +461,7 @@ export function fullDocument(preamble: string, body: string, bibliography: { sty
   ];
   const opening = before.join('\n');
   return {
-    main: `${opening}\n${withMarks(text)}\n${after.join('\n')}`,
+    main: `${opening}\n${withMarks(text, 0, bodyLine)}\n${after.join('\n')}`,
     preambleStart: head.length + 1,
     preambleLines: own.split('\n').length,
     bodyStart: opening.split('\n').length + 1,

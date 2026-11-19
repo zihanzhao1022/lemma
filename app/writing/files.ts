@@ -1,6 +1,6 @@
 import { ATTACHMENT_TYPES, IMAGE_TYPES, extensionOf } from '../../editor/results/actions';
 
-/** The writing view's key for an attachment, apart from its own main.tex, preamble.tex and references.bib. */
+/** The writing view's key for an attachment, apart from its own main.tex and references.bib. */
 export const ATTACHED = 'files/';
 export const attachedKey = (name: string): string => `${ATTACHED}${name}`;
 export const attachedName = (key: string): string | null => (key.startsWith(ATTACHED) ? key.slice(ATTACHED.length) : null);

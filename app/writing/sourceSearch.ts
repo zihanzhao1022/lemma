@@ -220,7 +220,7 @@ export function inverseSearch(sources: Record<string, string>, marks: Mark[], hi
     }
   } else {
     for (const file of Object.keys(sources)) {
-      if (file === 'main.tex' || file === 'preamble.tex' || file.endsWith('.tex')) regions.push({ file, range: file === preferred ? located ?? undefined : undefined });
+      if (file === 'main.tex' || file.endsWith('.tex')) regions.push({ file, range: file === preferred ? located ?? undefined : undefined });
     }
   }
   let best: (SourceLocation & { score: number }) | null = null;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ResultBlock } from '../../types';
-import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, locate, markableInputs, markerLine, parseMarks, placeOf, withMarks, withTitleMarks } from './document';
+import { Mark, blockChanges, blocksOf, bodyOf, findWord, fullDocument, headingsOf, joinMain, locate, markableInputs, markerLine, parseMarks, placeOf, splitMain, withMarks, withTitleMarks } from './document';
 
 const blocks: ResultBlock[] = [
   { id: 'blk-a', kind: 'text', source: '\\section{Results}\nOurs keeps the made-up accuracy.' },
@@ -295,5 +295,33 @@ describe('withTitleMarks', () => {
 
   it('leaves the authors of an ACM paper unmarked: acmart reads them before marks exist', () => {
     expect(withTitleMarks('\\documentclass[sigconf]{acmart}\n\\title{T}\n\\author{A}', 1)).toBe('\\documentclass[sigconf]{acmart}\n\\title{\\leavevmode\\galleytextat{1}{2}T}\n\\author{A}');
+  });
+});
+
+describe('main.tex with its preamble', () => {
+  const preamble = '\\documentclass{article}\n\\usepackage{booktabs}\n';
+  const body = `${markerLine('a', 'text')}\nHello.\n\n${markerLine('b', 'text')}\nWorld.\n`;
+
+  it('splits back into the preamble and the blocks it was joined from', () => {
+    const main = joinMain(preamble, body);
+    const parts = splitMain(main)!;
+    expect(parts.preamble).toBe(preamble);
+    expect(blocksOf(parts.body)).toEqual(blocksOf(body));
+    expect(main.slice(parts.bodyAt)).toMatch(/^\n%% galley-block a text/);
+    expect(main.split('\n')[parts.bodyLine - 1]).toBe('');
+    expect(main.split('\n')[parts.bodyLine]).toBe(markerLine('a', 'text'));
+  });
+
+  it('stops the body at \\end{document} and needs a \\begin{document}', () => {
+    const parts = splitMain('\\documentclass{article}\n  \\begin{document}\nText\n\\end{document}\nafter\n')!;
+    expect(parts.body).toBe('Text\n');
+    expect(parts.bodyLine).toBe(3);
+    expect(splitMain('% \\begin{document}\nText\n')).toBeNull();
+  });
+
+  it('marks the body with main.tex lines', () => {
+    const doc = fullDocument(preamble, 'Text here.', null, { bodyLine: 5 });
+    expect(doc.main).toContain('\\galleytext{5}');
+    expect(doc.main).not.toContain('\\galleytext{1}');
   });
 });
