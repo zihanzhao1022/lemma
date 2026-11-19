@@ -351,6 +351,10 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /* ------------------------------------------------------------------ typing */
 
   const caretAfter = useRef<number | null>(null);
+  // The caret where the page cannot show it: after a space typed at a paragraph's end, which neither LaTeX nor the
+  // page prints until something follows it. The page's caret stays at `node`/`offset`, before the space; typing
+  // there goes on from `at`, after it.
+  const hiddenCaret = useRef<{ at: number; node: Node; offset: number } | null>(null);
   // Remounts the text after an input method has written into it, so React draws it again from the source.
   const [epoch, setEpoch] = useState(0);
   const composing = useRef<{ from: number; to: number } | null>(null);
@@ -364,6 +368,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     if (offset === null || !editor.current) return;
     caretAfter.current = null;
     const place = fromSource(offset);
+    hiddenCaret.current = null;
     if (!place) return;
     const selection = window.getSelection();
     const range = document.createRange();
@@ -371,7 +376,14 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
+    if (toSource(place.node, place.offset) !== offset) hiddenCaret.current = { at: offset, node: place.node, offset: place.offset };
   });
+
+  /** The source offset of a collapsed caret at a point of the page: past what the page cannot show (hiddenCaret). */
+  const caretSource = (node: Node, offset: number): number | null => {
+    const hidden = hiddenCaret.current;
+    return hidden && hidden.node === node && hidden.offset === offset ? hidden.at : null;
+  };
 
   /** The character or atom just before (-1) or after (1) a point of the text, as a source range. */
   const besideCaret = (node: Node, offset: number, direction: -1 | 1): { from: number; to: number } | null => {
@@ -463,8 +475,11 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       event.preventDefault();
       const range = rangeOf(event);
       if (!range) return;
-      const from = toSource(range.startContainer, range.startOffset);
-      const to = toSource(range.endContainer, range.endOffset);
+      // A deletion's range is what it would take, not the caret: the caret is the selection.
+      const selection = window.getSelection();
+      const hidden = selection?.isCollapsed && selection.anchorNode ? caretSource(selection.anchorNode, selection.anchorOffset) : null;
+      const from = hidden ?? toSource(range.startContainer, range.startOffset);
+      const to = hidden ?? toSource(range.endContainer, range.endOffset);
       if (from === null || to === null) return;
       const [start, end] = from <= to ? [from, to] : [to, from];
       const where = placeOf(range.startContainer);
@@ -505,6 +520,11 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         return;
       }
       if (type.startsWith('delete')) {
+        // Backspace after a space the page does not show takes that space.
+        if (hidden !== null && type.includes('Backward') && /\s/.test(charBefore(hidden))) {
+          replace(hidden - 1, hidden, '', 'delete');
+          return;
+        }
         if (start !== end) {
           replace(start, end, '', 'delete');
           return;
@@ -531,8 +551,9 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       const selection = window.getSelection();
       if (!selection?.rangeCount) return;
       const range = selection.getRangeAt(0);
-      const from = toSource(range.startContainer, range.startOffset);
-      const to = toSource(range.endContainer, range.endOffset);
+      const hidden = range.collapsed ? caretSource(range.startContainer, range.startOffset) : null;
+      const from = hidden ?? toSource(range.startContainer, range.startOffset);
+      const to = hidden ?? toSource(range.endContainer, range.endOffset);
       composing.current = from !== null && to !== null ? { from: Math.min(from, to), to: Math.max(from, to) } : null;
     };
     const compositionEnd = (event: CompositionEvent) => {
