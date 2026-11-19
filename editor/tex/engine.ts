@@ -6,6 +6,7 @@
  */
 import { N_, PhraseError } from '../../lib/i18n';
 import { t } from '../../lib/phrases/results';
+import { withKnownCompat } from './compat';
 
 export interface CompileInput {
   /** The text of main.tex. */
@@ -269,7 +270,7 @@ class WorkerEngine implements TexEngine {
   build(preamble: string, files: Record<string, string | Uint8Array>): Promise<FormatBuild> {
     const run = this.queue.then(async (): Promise<FormatBuild> => {
       this.writeInputs(files);
-      this.post({ cmd: 'writefile', url: 'pdflatex.ini', src: `${FORMAT_INI}${preamble}\n\\dump\n` });
+      this.post({ cmd: 'writefile', url: 'pdflatex.ini', src: `${FORMAT_INI}${withKnownCompat(preamble)}\n\\dump\n` });
       const reply = await this.request({ cmd: 'compileformat' }, 'compile', [], FORMAT_TIMEOUT_MS);
       const log = reply.log ?? '';
       if (reply.status === -254) this.retire(log);
@@ -317,7 +318,10 @@ class WorkerEngine implements TexEngine {
     [...dirs]
       .sort((a, b) => a.split('/').length - b.split('/').length)
       .forEach((dir) => this.post({ cmd: 'mkdir', url: dir }));
-    for (const [path, content] of Object.entries(files)) this.post({ cmd: 'writefile', url: path, src: content });
+    for (const [path, content] of Object.entries(files)) {
+      const text = typeof content === 'string' && /\.(tex|sty|cls)$/.test(path);
+      this.post({ cmd: 'writefile', url: path, src: text ? withKnownCompat(content) : content });
+    }
   }
 
   private async run({ main, files = {}, bibtex = false, read = [], format }: CompileInput): Promise<CompileOutput> {
@@ -326,7 +330,7 @@ class WorkerEngine implements TexEngine {
       return { ok: false, status: this.dead ? -254 : -1, log: reason, reason };
     }
     this.writeInputs(files);
-    this.post({ cmd: 'writefile', url: 'main.tex', src: main });
+    this.post({ cmd: 'writefile', url: 'main.tex', src: withKnownCompat(main) });
     this.post({ cmd: 'setmainfile', url: 'main.tex' });
 
     let reply = await this.request({ cmd: 'compilelatex' }, 'compile', [], COMPILE_TIMEOUT_MS);
