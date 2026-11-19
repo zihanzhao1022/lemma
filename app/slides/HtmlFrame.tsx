@@ -7,6 +7,16 @@ export interface FrameState {
   slides: number;
   /** The steps the shown slide has. */
   steps: number;
+  /** The text of the shown slide's <aside class="notes">, for the speaker. */
+  notes: string;
+  /** Every slide is shown at once. */
+  overview: boolean;
+}
+
+/** A slide whose layout is wrong: something spills over it or its content area, or runs into its title or foot. */
+export interface SlideProblem {
+  slide: number;
+  kinds: ('overflow' | 'overlap')[];
 }
 
 export interface HtmlFrameHandle {
@@ -16,6 +26,8 @@ export interface HtmlFrameHandle {
   print: () => void;
   /** Gives the keyboard to the frame. */
   focus: () => void;
+  /** Shows every slide at once, or the one slide again. */
+  overview: (on: boolean) => void;
 }
 
 interface Props {
@@ -27,6 +39,12 @@ interface Props {
   onReady?: () => void;
   /** Escape was pressed inside the page. */
   onClose?: () => void;
+  /** What the page found wrong with its slides' layout, when it loaded. */
+  onProblems?: (problems: SlideProblem[]) => void;
+  /** A slide was clicked in the overview of the editor's preview. */
+  onPick?: (slide: number) => void;
+  /** P was pressed inside the page (the speaker's view). */
+  onPresenterKey?: () => void;
   /** Takes the keyboard when the page loads, so the arrow keys turn the slides at once. */
   autoFocus?: boolean;
   /** The page may open the print dialog. */
@@ -40,17 +58,38 @@ interface Props {
  * the page's content security policy lets run) but it has no origin of its own to speak of, so no storage, no
  * cookies, no way to the parent but messages. Its markup can come from anywhere.
  */
-const HtmlFrame = forwardRef<HtmlFrameHandle, Props>(function HtmlFrame({ html, title, onState, onReady, onClose, autoFocus, allowPrint, className, style }, ref) {
+const HtmlFrame = forwardRef<HtmlFrameHandle, Props>(function HtmlFrame({ html, title, onState, onReady, onClose, onProblems, onPick, onPresenterKey, autoFocus, allowPrint, className, style }, ref) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const latest = useRef({ onState, onReady, onClose, autoFocus });
-  latest.current = { onState, onReady, onClose, autoFocus };
+  const latest = useRef({ onState, onReady, onClose, onProblems, onPick, onPresenterKey, autoFocus });
+  latest.current = { onState, onReady, onClose, onProblems, onPick, onPresenterKey, autoFocus };
 
   useEffect(() => {
     const listen = (event: MessageEvent) => {
       if (!frame.current || event.source !== frame.current.contentWindow) return;
-      const message = event.data as { type?: string } & Partial<FrameState>;
+      // What the page says is data: numbers and text are read as such, nothing else.
+      const message = event.data as { type?: string; key?: unknown; slides?: unknown } & Partial<Omit<FrameState, 'slides'>>;
+      const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
       if (message?.type === 'state') {
-        latest.current.onState?.({ slide: message.slide ?? 0, step: message.step ?? 0, slides: message.slides ?? 0, steps: message.steps ?? 0 });
+        latest.current.onState?.({
+          slide: number(message.slide),
+          step: number(message.step),
+          slides: number(message.slides),
+          steps: number(message.steps),
+          notes: typeof message.notes === 'string' ? message.notes : '',
+          overview: message.overview === true,
+        });
+      } else if (message?.type === 'problems' && Array.isArray(message.slides)) {
+        const kinds = ['overflow', 'overlap'] as const;
+        latest.current.onProblems?.(
+          (message.slides as { slide?: unknown; kinds?: unknown }[]).map((item) => ({
+            slide: number(item?.slide),
+            kinds: kinds.filter((kind) => Array.isArray(item?.kinds) && item.kinds.includes(kind)),
+          })),
+        );
+      } else if (message?.type === 'pick') {
+        latest.current.onPick?.(number(message.slide));
+      } else if (message?.type === 'key' && message.key === 'p') {
+        latest.current.onPresenterKey?.();
       } else if (message?.type === 'ready') {
         if (latest.current.autoFocus) frame.current.contentWindow?.focus();
         latest.current.onReady?.();
@@ -68,6 +107,7 @@ const HtmlFrame = forwardRef<HtmlFrameHandle, Props>(function HtmlFrame({ html, 
       go: (slide, step) => frame.current?.contentWindow?.postMessage({ type: 'goto', slide, step }, '*'),
       print: () => frame.current?.contentWindow?.postMessage({ type: 'print' }, '*'),
       focus: () => frame.current?.contentWindow?.focus(),
+      overview: (on) => frame.current?.contentWindow?.postMessage({ type: 'overview', on }, '*'),
     }),
     [],
   );

@@ -117,6 +117,14 @@ describe('the MCP endpoint', () => {
       'remove_from_logic',
       'link_blocks',
       'unlink_blocks',
+      'slides_guide',
+      'get_slides',
+      'create_slides',
+      'update_deck',
+      'update_slide',
+      'add_slide',
+      'move_slide',
+      'delete_slide',
     ]);
     for (const item of listed.result.tools) {
       expect(item).toMatchObject({ inputSchema: { type: 'object' } });

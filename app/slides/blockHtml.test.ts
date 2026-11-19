@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ResultBlock, ResultPaper } from '../../types';
-import { findBlock, refsIn, resolveBlocks, tableHtml } from './blockHtml';
+import { axisFor, chartHtml, findBlock, refsIn, resolveBlocks, tableHtml } from './blockHtml';
 
 const TABLE = String.raw`\begin{table}[t]
 \centering
@@ -105,5 +105,65 @@ describe('resolving the tags of a slide', () => {
 
   it('leaves markup without tags as it is', async () => {
     expect(await resolveBlocks('<p>none</p>', target, pictureOf)).toBe('<p>none</p>');
+  });
+});
+
+describe('a chart of a table column', () => {
+  const chart = (given: Record<string, string>) => chartHtml(block('t1'), '\\documentclass{article}', given);
+  const html = (given: Record<string, string>) => {
+    const made = chart(given);
+    return 'html' in made ? made.html : '';
+  };
+
+  it('draws a bar for each row with a number in the column, named by its row and column as the cells are', () => {
+    const out = html({ col: 'EM' });
+    expect(out.match(/class="row/g)).toHaveLength(3);
+    expect(out).toContain('<div class="row" style="--v:22.4"><span class="lab">Method A</span>');
+    expect(out).toContain('<span class="val" data-row="Method A" data-col="EM">22.4</span>');
+    // The axis ends a little past the largest number, with a line at each step.
+    expect(out).toContain('<div class="plot" style="--max:50;--lab:11cqw;--tail:6cqw">');
+    expect(out).toContain('<i style="--x:40" data-t="40"></i>');
+  });
+
+  it('draws the row whose number is bold in the accent colour, or the one named', () => {
+    expect(html({ col: 'EM' })).toContain('<div class="row ours" style="--v:42.2"><span class="lab">Ours</span>');
+    expect(html({ col: 'EM', ours: 'Method B' })).toContain('<div class="row ours" style="--v:27.1">');
+  });
+
+  it('with a base row, marks it and the gain over it at a step, and lets both numbers travel', () => {
+    const out = html({ col: 'em', base: 'Method B', step: '2' });
+    expect(out).toContain('<div class="marker" data-step="2" style="--b:27.1"><em>Method B 27.1</em></div>');
+    expect(out).toContain('<i class="gain" data-step="2"></i><span class="gainlab" data-step="2">+15.1</span>');
+    expect(out).toContain('data-row="Ours" data-col="EM" data-move=""');
+    expect(out).toContain('data-row="Method B" data-col="EM" data-move=""');
+    expect(out).not.toContain('data-row="Method A" data-col="EM" data-move');
+  });
+
+  it('takes the rows asked for, in that order, a column by its number, and an axis end', () => {
+    const out = html({ col: '3', rows: 'Ours; Method A', max: '30' });
+    expect(out.match(/<span class="lab">([^<]*)</g)).toEqual(['<span class="lab">Ours<', '<span class="lab">Method A<']);
+    expect(out).toContain('data-col="Time (s)"');
+    expect(out).toContain('--max:30');
+  });
+
+  it('says what is wrong instead', () => {
+    expect(chart({ col: 'BLEU' })).toEqual({ problem: 'no-column', column: 'BLEU' });
+    expect(chart({ col: '0' })).toEqual({ problem: 'no-column', column: '0' });
+    expect(chartHtml(block('f1', { kind: 'figure' }), '', { col: 'EM' })).toEqual({ problem: 'not-table' });
+  });
+
+  it('is put on a slide by its tag, next to blocks', async () => {
+    const out = await resolveBlocks('<lemma-block ref="tab:main"></lemma-block><lemma-chart ref="tab:main" col="F1"></lemma-chart><lemma-chart ref="gone" col="F1">', paper([block('t1')]), pictureOf);
+    expect(out.indexOf('class="block tbl"')).toBeLessThan(out.indexOf('class="block chart"'));
+    expect(out).toContain('<div class="block chart" data-ref="tab:main" data-col="F1"><div class="plot"');
+    expect(out).toContain('class="block missing" data-ref="gone"');
+    expect(refsIn('<lemma-chart ref="tab:a" col="x"><lemma-block ref="tab:b">')).toEqual(['tab:b', 'tab:a']);
+  });
+
+  it('ends its axis at 1, 2, 2.5 or 5 times a power of ten', () => {
+    expect(axisFor(42.2)).toEqual({ max: 50, step: 10 });
+    expect(axisFor(0.87)).toEqual({ max: 1, step: 0.2 });
+    expect(axisFor(9.7)).toEqual({ max: 10, step: 2 });
+    expect(axisFor(118)).toEqual({ max: 125, step: 25 });
   });
 });

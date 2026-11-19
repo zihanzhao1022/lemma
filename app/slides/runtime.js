@@ -8,9 +8,17 @@
                         for the part of the table in focus (cells, or a whole row); the rest goes grey, and one band
                         moves over what is in focus
   Between slides the old one goes out and the new one comes in (the View Transitions API; without it, a plain change).
+  A chart's bars grow when its slide comes in going forward; between a table and a chart of it on the next slide,
+  the numbers marked data-move travel from their cells into the chart (and back).
 
-  Messages: the page tells its parent {type:'ready'|'state'|'close'|'printed'} and listens for
-  {type:'goto', slide, step} and {type:'print'}.
+  A slide's <aside class="notes"> is not shown: its text goes to the parent with the state, for the speaker.
+  The overview (O, or a message) shows every slide at once; a click opens one (or, in the editor, picks it).
+  On load the page checks each slide's layout: what spills over the slide or its content area (overflow), and a
+  title or the foot running into the content (overlap).
+
+  Messages: the page tells its parent {type:'ready'|'close'|'printed'}, {type:'state', slide, step, slides, steps,
+  notes, overview}, {type:'problems', slides:[{slide, kinds}]}, {type:'pick', slide} and {type:'key', key} (P, for
+  the speaker's view), and listens for {type:'goto', slide, step}, {type:'overview', on} and {type:'print'}.
 */
 (() => {
   'use strict';
@@ -118,10 +126,45 @@
     band.classList.add('on');
   }
 
+  /* ---- a table and a chart of it on the slide next to it: the numbers they share travel between them ---- */
+
+  const speed = () => parseFloat(getComputedStyle(root).getPropertyValue('--speed')) || 1;
+
+  /**
+   * The pairs of numbers (one on each slide: a table's cell and a chart's value) that travel between two slides side
+   * by side, as [on the slide left, on the slide arrived at]. A pair shares one name, but never both at once: the
+   * browser refuses a change where two elements have the same name, even one on a hidden slide.
+   */
+  function movesBetween(from, to) {
+    const pairs = [];
+    [from, to].forEach((slide) => {
+      const other = slide === from ? to : from;
+      slide.querySelectorAll('.block.chart').forEach((chart) => {
+        const table = Array.from(other.querySelectorAll('.block.tbl')).find((block) => block.dataset.ref === chart.dataset.ref);
+        if (!table) return;
+        chart.querySelectorAll('.val[data-move]').forEach((value) => {
+          const cell = Array.from(table.querySelectorAll('td, th')).find((item) => item.dataset.row === value.dataset.row && item.dataset.col === value.dataset.col);
+          if (!cell) return;
+          const number = cell.querySelector('.n') || cell;
+          pairs.push(slide === from ? [value, number] : [number, value]);
+        });
+      });
+    });
+    return pairs.slice(0, 4);
+  }
+
+  const nameAll = (elements, named) =>
+    elements.forEach((element, index) => {
+      element.style.viewTransitionName = named ? `move-${index}` : '';
+    });
+
   /* ---- where the talk is ---- */
 
   let current = 0;
   let now = 0;
+  let overviewOn = false;
+  /** In the overview, the slide a click or Enter would open. */
+  let picked = 0;
   let want = { i: 0, s: 0 };
   let running = null;
 
@@ -133,8 +176,14 @@
     }
   };
 
+  const notesOf = (slide) =>
+    Array.from(slide.querySelectorAll('.notes'))
+      .map((element) => element.textContent.replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*/g, '\n\n').trim())
+      .filter(Boolean)
+      .join('\n\n');
+
   function report() {
-    post({ type: 'state', slide: current, step: now, slides: slides.length, steps: stepsOf(current) });
+    post({ type: 'state', slide: current, step: now, slides: slides.length, steps: stepsOf(current), notes: notesOf(slides[current]), overview: overviewOn });
     if (mode === 'export') {
       try {
         window.history.replaceState(null, '', `#${current + 1}${now ? `.${now}` : ''}`);
@@ -164,20 +213,37 @@
       return;
     }
     if (running) running.skipTransition();
+    const forward = i > current;
+    const motion = Boolean(document.startViewTransition) && !reduce.matches && mode !== 'print';
+    const charts = Array.from(slides[i].querySelectorAll('.block.chart'));
+    const pairs = motion && Math.abs(i - current) === 1 ? movesBetween(slides[current], slides[i]) : [];
+    // The numbers that travel are named on the slide left before the change, and on the slide arrived at in it.
+    nameAll(pairs.map((pair) => pair[0]), true);
     const swap = () => {
+      nameAll(pairs.map((pair) => pair[0]), false);
+      nameAll(pairs.map((pair) => pair[1]), true);
       slides[current].classList.remove('on');
       current = want.i;
       now = clamp(want.s, 0, stepsOf(current));
+      // Going forward the bars start at nothing; going back the chart is there as it was left.
+      charts.forEach((chart) => chart.setAttribute('data-grow', motion && forward && current === i ? '0' : '1'));
       slides[current].classList.add('on');
       render(current, now, true);
     };
-    if (!document.startViewTransition || reduce.matches || mode === 'print') {
+    const grow = () =>
+      requestAnimationFrame(() => {
+        if (current === i) charts.forEach((chart) => chart.setAttribute('data-grow', '1'));
+      });
+    if (!motion) {
       swap();
       return;
     }
     const transition = document.startViewTransition(swap);
     running = transition;
+    // The bars start while the slide is still arriving, not after it.
+    transition.ready.then(() => setTimeout(grow, 120 * speed()), grow);
     const done = () => {
+      pairs.forEach((pair) => nameAll(pair, false));
       if (running === transition) running = null;
     };
     transition.finished.then(done, done);
@@ -186,10 +252,114 @@
   const next = () => (want.s < stepsOf(want.i) ? go(want.i, want.s + 1) : want.i < slides.length - 1 && go(want.i + 1, 0));
   const prev = () => (want.s > 0 ? go(want.i, want.s - 1) : want.i > 0 && go(want.i - 1, stepsOf(want.i - 1)));
 
+  /* ---- every slide at once ---- */
+
+  function mark() {
+    slides.forEach((slide, index) => slide.classList.toggle('picked', overviewOn && index === picked));
+  }
+
+  function overview(on) {
+    if (mode === 'print' || on === overviewOn) return;
+    overviewOn = on;
+    picked = current;
+    body.classList.toggle('overview', on);
+    mark();
+    if (on) slides[picked].scrollIntoView({ block: 'nearest' });
+    else render(current, now, true);
+    report();
+  }
+
+  function open(index) {
+    if (mode === 'preview') {
+      post({ type: 'pick', slide: index });
+      return;
+    }
+    overview(false);
+    go(index, 0);
+  }
+
+  stage.addEventListener(
+    'click',
+    (event) => {
+      if (!overviewOn) return;
+      const tile = event.target.closest && event.target.closest('.slide');
+      event.stopImmediatePropagation();
+      if (tile) open(slides.indexOf(tile));
+    },
+    true,
+  );
+
+  /* ---- what does not fit ---- */
+
+  const SPILL = 'h1, h2, h3, p, li, dt, dd, table, img, svg, figure, .block, .caption, .lab, .val, .gainlab, .marker em';
+  const beyond = (inner, outer) => inner.right > outer.right + 1 || inner.bottom > outer.bottom + 1 || inner.left < outer.left - 1 || inner.top < outer.top - 1;
+  const meets = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+  const shown = (element) => !element.closest('.notes, .foot') && element.getClientRects().length > 0;
+
+  /** What is wrong with a slide's layout: 'overflow' (spills over the slide or its content area), 'overlap'. */
+  function problemsOf(slide) {
+    const kinds = new Set();
+    const box = slide.getBoundingClientRect();
+    slide.querySelectorAll(SPILL).forEach((element) => {
+      if (shown(element) && beyond(element.getBoundingClientRect(), box)) kinds.add('overflow');
+    });
+    const content = slide.querySelector(':scope > .content');
+    if (content) {
+      if (content.scrollHeight > content.clientHeight + 2) kinds.add('overflow');
+      const area = content.getBoundingClientRect();
+      content.querySelectorAll('table').forEach((table) => {
+        if (beyond(table.getBoundingClientRect(), area)) kinds.add('overflow');
+      });
+      const parts = Array.from(content.children).filter(shown).map((element) => element.getBoundingClientRect());
+      const title = slide.querySelector(':scope > .title');
+      const foot = slide.querySelector(':scope > .foot');
+      [title, foot].forEach((element) => {
+        if (element && element.getClientRects().length > 0 && parts.some((part) => meets(part, element.getBoundingClientRect()))) kinds.add('overlap');
+      });
+    }
+    return Array.from(kinds);
+  }
+
+  /** Checks every slide, each laid out as it shows (with all its steps), and tells the parent. */
+  function check() {
+    if (mode === 'print') return;
+    const found = [];
+    slides.forEach((slide, index) => {
+      const hidden = !slide.classList.contains('on') && !overviewOn;
+      if (hidden) {
+        slide.style.visibility = 'hidden';
+        slide.classList.add('on');
+      }
+      const kinds = problemsOf(slide);
+      if (hidden) {
+        slide.classList.remove('on');
+        slide.style.visibility = '';
+      }
+      // Marked in the editor's overview only: an audience never sees the marks.
+      if (kinds.length > 0 && mode === 'preview') slide.setAttribute('data-problem', kinds.join(' '));
+      else slide.removeAttribute('data-problem');
+      if (kinds.length > 0) found.push({ slide: index, kinds });
+    });
+    post({ type: 'problems', slides: found });
+  }
+
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const key = event.key;
-    if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(key)) next();
+    if (overviewOn) {
+      if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(key)) {
+        picked = clamp(picked + (key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1), 0, slides.length - 1);
+        mark();
+        slides[picked].scrollIntoView({ block: 'nearest' });
+      } else if (key === 'Enter' || key === ' ') open(picked);
+      else if (key === 'Escape' || key === 'o' || key === 'O') overview(false);
+      else return;
+      event.preventDefault();
+      return;
+    }
+    if ((key === 'o' || key === 'O') && mode !== 'preview') overview(true);
+    else if (key === 'p' || key === 'P') post({ type: 'key', key: 'p' });
+    else if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(key)) next();
     else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(key)) prev();
     else if (key === 'Home') go(0, 0);
     else if (key === 'End') go(slides.length - 1, 0);
@@ -202,12 +372,26 @@
   window.addEventListener('message', (event) => {
     if (event.source !== window.parent) return;
     const message = event.data || {};
-    if (message.type === 'goto') go(Number(message.slide) || 0, Number(message.step) || 0);
+    if (message.type === 'goto') {
+      if (overviewOn && mode === 'preview') {
+        picked = clamp(Number(message.slide) || 0, 0, slides.length - 1);
+        mark();
+        slides[picked].scrollIntoView({ block: 'nearest' });
+      }
+      go(Number(message.slide) || 0, Number(message.step) || 0);
+    } else if (message.type === 'overview') overview(Boolean(message.on));
     else if (message.type === 'print') window.print();
   });
   window.addEventListener('afterprint', () => post({ type: 'printed' }));
-  window.addEventListener('resize', () => render(current, now, true));
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => render(current, now, true));
+  window.addEventListener('resize', () => {
+    render(current, now, true);
+    check();
+  });
+  if (document.fonts && document.fonts.ready)
+    document.fonts.ready.then(() => {
+      render(current, now, true);
+      check();
+    });
 
   /* ---- start ---- */
 
@@ -227,4 +411,5 @@
   slides[current].classList.add('on');
   render(current, now, true);
   post({ type: 'ready' });
+  check();
 })();

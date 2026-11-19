@@ -3,7 +3,7 @@
  * exactly as OnizukaTex's own pages do (commitResults: the edit applied to the latest results.json, one commit).
  */
 import { LemmaRepo, reachableRepos, repoLabel, repoStatuses } from '../../app/github/repo';
-import { GitHubError, createGitHubApi } from '../../editor/github';
+import { GitHubError, TreeEntry, createGitHubApi } from '../../editor/github';
 import { RESULTS_PATH, commitResults, parsePapers, readTextFile } from '../../editor/results/backend';
 import { ResultsOp } from '../../editor/results/ops';
 import { ResultPaper } from '../../types';
@@ -11,15 +11,22 @@ import { ResultPaper } from '../../types';
 /** A problem to tell the person in words, rather than a failure of the server. */
 export class ToolError extends Error {}
 
+/** A text file a save writes along with the papers. */
+export interface TextWrite {
+  path: string;
+  content: string;
+}
+
 export interface Library {
   /** owner/name of the repository. */
   repo: string;
   papers(): Promise<ResultPaper[]>;
   /**
-   * Applies `op` to the latest papers and commits it with `deletes` (files no paper refers to any more); the
-   * papers after. `check` sees the latest papers first and throws to stop.
+   * Applies `op` to the latest papers and commits it with `writes` (text files to put in the same commit, such as
+   * an HTML deck) and `deletes` (files no paper refers to any more); the papers after. `check` sees the latest
+   * papers first and throws to stop.
    */
-  save(op: ResultsOp, message: string, deletes?: string[], check?: (latest: ResultPaper[]) => void): Promise<ResultPaper[]>;
+  save(op: ResultsOp, message: string, deletes?: string[], check?: (latest: ResultPaper[]) => void, writes?: TextWrite[]): Promise<ResultPaper[]>;
   /** A text file of the repository; null when there is none. */
   readText(path: string): Promise<string | null>;
 }
@@ -76,7 +83,8 @@ export async function openLibrary(token: string, login: string, wanted?: string,
   return {
     repo: repoLabel(repo),
     papers: async () => parsePapers(await readTextFile(api, RESULTS_PATH, await api.headSha())),
-    save: async (op, message, deletes = [], check) => (await commitResults(api, op, [], deletes, message, check)).papers,
+    save: async (op, message, deletes = [], check, writes = []) =>
+      (await commitResults(api, op, writes.map((write): TreeEntry => ({ path: write.path, mode: '100644', type: 'blob', content: write.content })), deletes, message, check)).papers,
     readText: async (path) => readTextFile(api, path, await api.headSha()),
   };
 }

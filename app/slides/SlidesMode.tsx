@@ -16,6 +16,7 @@ import { withLatestLogic } from '../logic/latest';
 import { HtmlDeck, StarterLabels, serializeDeck, starterHtmlDeck } from './htmlDeck';
 import { htmlPage, loadHtmlDeck } from './htmlPage';
 import { changedDeck, deckOf, savedDeck, unsavedText } from './latest';
+import { stamped } from './sources';
 import { hashText } from '../../editor/results/numbering';
 
 const SlidesEditor = lazy(() => import('./SlidesEditor'));
@@ -92,6 +93,19 @@ const SlidesMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible, ac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, html]);
 
+  // The paper's slides changed elsewhere (Claude Code, another tab) while nothing here waits to be saved: show
+  // them. A deck read again from the paper is the same as one saved from here, so only a real change counts.
+  const outside = paper.slides ?? null;
+  useEffect(() => {
+    if (unsaved.current || saving.current) return;
+    if (JSON.stringify(deckRef.current ?? null) === JSON.stringify(outside)) return;
+    deckRef.current = outside;
+    htmlRef.current = null;
+    setHtml(null);
+    setDeck(outside);
+    setStatus('saved');
+  }, [outside]);
+
   /** Saves what the deck is now; changes made while saving are saved after. */
   const flush = useCallback(async () => {
     if (saving.current) return saving.current;
@@ -103,7 +117,7 @@ const SlidesMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible, ac
       try {
         await onSave(
           { kind: 'patchPaper', id: paper.id, fields: { slides: shot } },
-          text === undefined ? [] : [{ path: slidesPath(paper.id), data: new TextEncoder().encode(text) }],
+          text === undefined ? [] : [{ path: slidesPath(paper.id), data: new TextEncoder().encode(text), version: shot?.kind === 'html' ? shot.html?.hash : undefined }],
           removing ? [slidesPath(paper.id)] : [],
           resultsCommitMessage('update slides of', paper.title),
           `content: update result "${paper.title}"`,
@@ -168,7 +182,9 @@ const SlidesMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible, ac
   };
 
   /** A change to an HTML deck: the deck in the paper keeps the hash of its text, and the text goes to its own file. */
-  const changeHtml = (next: HtmlDeck) => {
+  const changeHtml = (changed: HtmlDeck) => {
+    // A slide written anew records the blocks it is written from, as they are now (sources.ts).
+    const next = stamped(changed, htmlRef.current?.deck ?? null, paper);
     const text = serializeDeck(next);
     const marker: SlideDeck = { kind: 'html', slides: [], html: { hash: hashText(text) } };
     htmlRef.current = { deck: next, text };

@@ -12,6 +12,11 @@ export interface HtmlSlide {
   id: string;
   /** The slide's markup, a <section class="slide">…</section>. */
   html: string;
+  /**
+   * The blocks the slide was written from (those it puts on itself and those its data-from names), each with a hash
+   * of its LaTeX when the slide was last written (see sources.ts): a block changed since is one to check.
+   */
+  seen?: Record<string, string>;
 }
 
 export interface HtmlDeck {
@@ -41,7 +46,7 @@ export function slideTitle(html: string): string {
 
 /* ------------------------------------------------------------------ the file */
 
-const MARKER = /^[ \t]*<!--\s*slide:\s*([^\s>]+?)\s*-->[ \t]*$/gm;
+const MARKER = /^[ \t]*<!--\s*slide:\s*([^\s>]+?)(?:\s+from:\s*([^>]*?))?\s*-->[ \t]*$/gm;
 /** Blank lines at both ends gone, the indentation inside kept. */
 const trimBlock = (text: string): string => text.replace(/^\s*\n/, '').replace(/\s+$/, '');
 
@@ -72,11 +77,18 @@ export function parseDeck(text: string): HtmlDeck {
     marks.forEach((mark, index) => {
       const from = (mark.index ?? 0) + mark[0].length;
       const to = index + 1 < marks.length ? marks[index + 1].index ?? body.length : body.length;
-      slides.push({ id: unique(mark[1]), html: body.slice(from, to).trim() });
+      const seen = Object.fromEntries((mark[2] ?? '').split(/\s+/).flatMap((pair) => (/^[^@\s]+@[0-9a-f]+$/.test(pair) ? [pair.split('@') as [string, string]] : [])));
+      slides.push({ id: unique(mark[1]), html: body.slice(from, to).trim(), ...(Object.keys(seen).length > 0 ? { seen } : {}) });
     });
   }
   return { title, footer, brief, css, slides };
 }
+
+/** " from: blk-a@1a2b3c4d blk-b@…" on a slide's line: the blocks it was written from (HtmlSlide.seen). */
+const fromOf = (slide: HtmlSlide): string => {
+  const pairs = Object.entries(slide.seen ?? {}).map(([id, hash]) => `${id}@${hash}`);
+  return pairs.length > 0 ? ` from: ${pairs.join(' ')}` : '';
+};
 
 /** The file for a deck: parseDeck reads back what this writes. */
 export function serializeDeck(deck: HtmlDeck): string {
@@ -96,7 +108,7 @@ export function serializeDeck(deck: HtmlDeck): string {
     deck.brief.trim().replace(/-->/g, '--&gt;'),
     '-->',
     '',
-    ...deck.slides.map((slide) => `<!-- slide: ${slide.id} -->\n${slide.html.trim()}\n`),
+    ...deck.slides.map((slide) => `<!-- slide: ${slide.id}${fromOf(slide)} -->\n${slide.html.trim()}\n`),
     '</body>',
     '</html>',
     '',
@@ -139,7 +151,7 @@ export function movedSlide(deck: HtmlDeck, index: number, by: number): HtmlDeck 
 /** A copy of a slide right after it, under a new id. */
 export function duplicatedSlide(deck: HtmlDeck, index: number): HtmlDeck {
   const slide = deck.slides[index];
-  return slide ? withSlide(deck, { id: newSlideId(deck), html: slide.html }, index + 1) : deck;
+  return slide ? withSlide(deck, { ...slide, id: newSlideId(deck) }, index + 1) : deck;
 }
 
 export const withSlideHtml = (deck: HtmlDeck, index: number, html: string): HtmlDeck => replaced(deck, deck.slides.map((slide, at) => (at === index ? { ...slide, html } : slide)));

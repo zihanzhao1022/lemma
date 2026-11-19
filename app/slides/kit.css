@@ -5,6 +5,9 @@
   What moves, and how:
     changing slides   the old slide goes out and the new one comes in a moment later (0.32 s)
     a step            colour or opacity changes (0.4 s); the one thing that moves is the highlight band (0.6 s)
+    table -> chart    on the slide after (or before) a table, a chart of its column: the numbers that were compared
+                      travel from the table into the chart and the bars extend to meet them (0.65 s); the only move
+                      that travels or grows
   Everything else is still.
 */
 :root {
@@ -32,7 +35,9 @@
 html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; }
 body { display: grid; place-items: center; color: var(--ink); -webkit-font-smoothing: antialiased; font-family: var(--sans); }
 .stage { position: relative; width: min(100vw, 177.78vh); aspect-ratio: 16 / 9; background: #fff; container-type: size; overflow: hidden; }
-.slide { position: absolute; inset: 0; display: none; }
+/* each slide is its own container: cqw is a hundredth of the slide's width, also in the overview */
+.slide { position: absolute; inset: 0; display: none; container-type: size; }
+.slide .notes { display: none; }
 .slide.on { display: block; }
 
 /* ---- a page: title, content, caption, foot ---- */
@@ -102,6 +107,32 @@ svg { max-width: 100%; height: auto; }
   transition: transform var(--d-move) var(--ease), width var(--d-move) var(--ease), height var(--d-move) var(--ease), opacity var(--d-fade) var(--ease-io); }
 .block.tbl .band.on { opacity: 1; }
 
+/* ---- a chart of a table's column: the bars grow once when the slide comes in going forward (runtime.js sets
+   data-grow), the numbers come in with them except those that travelled there from the table ---- */
+.block.chart { flex: 0 0 auto; padding-top: 2.6cqw; }
+.block.chart .plot { position: relative; }
+.block.chart .grid { position: absolute; left: var(--lab); right: var(--tail, 6cqw); top: -.8cqw; bottom: -.8cqw; pointer-events: none; z-index: 0; }
+.block.chart .grid > i { position: absolute; top: 0; bottom: 0; left: calc(var(--x) / var(--max) * 100%); border-left: 1px solid var(--line); }
+.block.chart .grid > i::after { content: attr(data-t); position: absolute; top: 100%; left: 0; transform: translateX(-50%); padding-top: .6cqw; font-size: 1.3cqw; color: var(--faint); }
+.block.chart .marker { position: absolute; top: 0; bottom: 0; left: calc(var(--b) / var(--max) * 100%); border-left: 1.25px dashed var(--dim); }
+.block.chart .marker em { position: absolute; bottom: 100%; left: 0; transform: translateX(-50%); padding-bottom: .5cqw; font-style: normal; font-size: 1.4cqw; color: var(--mute); white-space: nowrap; }
+.block.chart .row { position: relative; z-index: 1; display: grid; grid-template-columns: var(--lab) 1fr var(--tail, 6cqw); align-items: center; height: 2.4cqw; margin-bottom: 1.7cqw; }
+.block.chart .lab { font: 1.9cqw var(--serif); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 1cqw; }
+.block.chart .row.ours .lab { font-weight: 600; }
+.block.chart .track { position: relative; height: 100%; }
+.block.chart .bar, .block.chart .gain { position: absolute; top: 0; height: 100%; }
+.block.chart .bar { left: 0; width: calc(var(--v) / var(--max) * 100%); background: #c9cdd3; transform-origin: left center;
+  transition: transform calc(.55s * var(--speed)) var(--ease) calc(.15s * var(--speed)), background-color var(--d-fade) var(--ease-io); }
+.block.chart .row.ours .bar { background: var(--accent); }
+.block.chart .track:has(.gain.shown) .bar { background: var(--accent-mid); }
+.block.chart .gain { left: calc(var(--b) / var(--max) * 100%); width: calc((var(--v) - var(--b)) / var(--max) * 100%); background: var(--accent); }
+.block.chart .val, .block.chart .gainlab { position: absolute; top: 50%; left: calc(var(--v) / var(--max) * 100%); transform: translateY(-50%); white-space: nowrap; font: 1.9cqw var(--serif); font-variant-numeric: tabular-nums; }
+.block.chart .val { padding-left: .9cqw; color: var(--mute); background: #fff; transition: opacity calc(.3s * var(--speed)) var(--ease-io) calc(.4s * var(--speed)); }
+.block.chart .row.ours .val { color: var(--ink); font-weight: 600; }
+.block.chart .gainlab { padding-left: 5.3cqw; color: var(--accent); font-weight: 600; }
+.block.chart[data-grow="0"] .bar { transform: scaleX(0); transition: none; }
+.block.chart[data-grow="0"] .val:not([data-move]) { opacity: 0; transition: none; }
+
 /* ---- steps: what appears when the talk gets to it ---- */
 [data-step] { opacity: 0; transition: opacity var(--d-fade) var(--ease-io); }
 [data-step].shown { opacity: 1; }
@@ -113,6 +144,25 @@ svg { max-width: 100%; height: auto; }
 ::view-transition-group(root) { animation-duration: calc(.32s * var(--speed)); }
 ::view-transition-old(root) { animation: vt-out calc(.14s * var(--speed)) var(--ease-io) both; mix-blend-mode: normal; }
 ::view-transition-new(root) { animation: vt-in calc(.2s * var(--speed)) var(--ease-io) calc(.12s * var(--speed)) both; mix-blend-mode: normal; }
+
+/* the numbers that travel between a table and a chart of it (runtime.js names them move-0 … move-3 for the change) */
+::view-transition-group(move-0), ::view-transition-group(move-1), ::view-transition-group(move-2), ::view-transition-group(move-3) {
+  animation-duration: calc(.65s * var(--speed)); animation-timing-function: var(--ease);
+}
+
+/* ---- every slide at once (O): every step shown, nothing in focus; a slide with a layout problem has a red mark ---- */
+body.overview { display: block; place-items: normal; overflow: auto; background: #ececef; }
+body.overview .stage { width: auto; aspect-ratio: auto; container-type: normal; overflow: visible; background: transparent;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 16px; padding: 16px; }
+body.overview .slide, body.overview .slide.on { display: block; position: relative; inset: auto; width: 100%; aspect-ratio: 16 / 9; background: #fff; cursor: pointer;
+  border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0, 0, 0, .08); }
+body.overview .slide.cover, body.overview .slide.divider { display: flex; }
+body.overview .slide * { pointer-events: none; }
+body.overview .slide.picked { box-shadow: 0 0 0 3px var(--accent); }
+body.overview .slide[data-problem]::after { content: ""; position: absolute; right: 2cqw; top: 2cqw; width: 3cqw; height: 3cqw; border-radius: 50%; background: #d93025; }
+body.overview [data-step] { opacity: 1; }
+body.overview .block.tbl .band { display: none; }
+body.overview .block.tbl table[data-f] th, body.overview .block.tbl table[data-f] td { color: var(--ink); }
 
 /* ---- on paper: one slide to a page, every step shown ---- */
 @page { size: 13.333in 7.5in; margin: 0; }

@@ -18,6 +18,11 @@ export interface FileWrite {
   /** Private path, e.g. "results/res-a/blk-b-1234abcd.pdf". */
   path: string;
   data: Uint8Array;
+  /**
+   * The version readFile is asked for this file with, for a file whose name stays when it changes (an HTML deck,
+   * by its hash): read with another version, it is read again.
+   */
+  version?: string;
 }
 
 export type ResultsLoad =
@@ -183,21 +188,29 @@ export async function commitResults(
  * (OnizukaTex, where every paper is private) nothing is ever published. `branch` is the private repository's.
  */
 export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi | null, cache?: FileCache, branch = EDITOR_CONFIG.branch): ResultsBackend {
-  const files = new Map<string, Promise<Uint8Array>>();
+  // The files read or written in this tab, with the version each was read or written as (see FileWrite).
+  const files = new Map<string, { bytes: Promise<Uint8Array>; version?: string }>();
+  const keep = (write: FileWrite) => {
+    files.set(write.path, { bytes: Promise.resolve(write.data), version: write.version });
+    cache?.remember(write.path, write.data, write.version);
+  };
 
   const readFile = (path: string, version?: string): Promise<Uint8Array> => {
-    let bytes = files.get(path);
-    if (!bytes) {
-      bytes = (async () => {
-        const kept = await cache?.read(path, version);
-        if (kept) return kept;
-        const data = await privateApi.readBytes(path, branch);
-        cache?.remember(path, data, version);
-        return data;
-      })();
-      files.set(path, bytes);
-      bytes.catch(() => files.delete(path));
-    }
+    const known = files.get(path);
+    // A file changed elsewhere since (by Claude Code, or in another tab) is asked for with its new version.
+    if (known && (version === undefined || known.version === undefined || known.version === version)) return known.bytes;
+    const bytes = (async () => {
+      const kept = await cache?.read(path, version);
+      if (kept) return kept;
+      const data = await privateApi.readBytes(path, branch);
+      cache?.remember(path, data, version);
+      return data;
+    })();
+    const entry = { bytes, version };
+    files.set(path, entry);
+    bytes.catch(() => {
+      if (files.get(path) === entry) files.delete(path);
+    });
     return bytes;
   };
 
@@ -268,10 +281,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
 
   return {
     remember(writes) {
-      for (const write of writes) {
-        files.set(write.path, Promise.resolve(write.data));
-        cache?.remember(write.path, write.data);
-      }
+      writes.forEach(keep);
     },
 
     async load() {
@@ -303,10 +313,7 @@ export function createResultsBackend(privateApi: GitHubApi, publicApi: GitHubApi
       );
       const { before, papers, changed, head } = await commitResults(privateApi, op, blobs, deletes, message, undefined, known);
       known = head;
-      writes.forEach((write) => {
-        files.set(write.path, Promise.resolve(write.data));
-        cache?.remember(write.path, write.data);
-      });
+      writes.forEach(keep);
       if (!publicApi || (!publicBehind && (!changed || (!hasPublished(before) && !hasPublished(papers))))) return { papers, publicCommit: null };
       // The site's history is public: name a paper only when it is (or just was) published.
       const touched = touchedPapers(op);

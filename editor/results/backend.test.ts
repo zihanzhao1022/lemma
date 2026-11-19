@@ -140,6 +140,20 @@ describe('saving an unpublished paper', () => {
     expect(privateRepo.readBytes).not.toHaveBeenCalledWith('results/p1/x.pdf', expect.anything());
   });
 
+  it('reads a file it wrote again when it is asked for another version of it: changed elsewhere since', async () => {
+    const privateRepo = fakeRepo({ [RESULTS_PATH]: '[]', 'results/p1/slides.html': 'changed by Claude Code' });
+    const backend = createResultsBackend(privateRepo, fakeRepo());
+    const data = new TextEncoder().encode('written here');
+    await backend.save({ kind: 'putPaper', paper: draft }, [{ path: 'results/p1/slides.html', data, version: 'h1' }], [], 'm', 'pm');
+    expect(await backend.readFile('results/p1/slides.html', 'h1')).toBe(data);
+    expect(privateRepo.readBytes).not.toHaveBeenCalledWith('results/p1/slides.html', expect.anything());
+    expect(new TextDecoder().decode(await backend.readFile('results/p1/slides.html', 'h2'))).toBe('changed by Claude Code');
+    const reads = () => privateRepo.readBytes.mock.calls.filter(([path]) => path === 'results/p1/slides.html').length;
+    expect(reads()).toBe(1);
+    await backend.readFile('results/p1/slides.html', 'h2');
+    expect(reads()).toBe(1);
+  });
+
   it('starts over when the private branch moved', async () => {
     const privateRepo = fakeRepo({ [RESULTS_PATH]: '[]' });
     privateRepo.updateBranch.mockRejectedValueOnce(new GitHubError('GitHub 返回 422', 422));

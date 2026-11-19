@@ -12,7 +12,7 @@ A platform for managing experiment results and writing the paper in one place, m
 - **我的研究空间**：论文列表上方的一张图，节点可以是论文、论文里的块（文字、图、表）和你的想法（问题、方向、笔记）。把论文从下面的列表拖进来，或者用「添加」找论文和块；全屏时左边是文件夹和论文，论文展开就是它的块，都能直接拖进图里。拖到一个节点上就挂到它下面，再连上关联线，梳理一个课题的思路。点块能看到它编译好的样子，双击论文或块就打开那篇论文（块会滚动到它的位置，链接是 `?block=`）。
 - **逻辑结构**：每篇论文里，把块挂成一棵树（实验挂在它检验的方法下面），演示和幻灯片按它走。
 - **幻灯片**：每篇论文一套，第一次选做法：
-  - HTML 幻灯片（推荐）：一套用 HTML 写的幻灯片，存在论文仓库里的 `results/<论文>/slides.html`（页与页之间是 `<!-- slide: id -->` 一行，历史记录按页读得懂；results.json 里只放它的哈希）。白底、衬线标题、表格按论文的排法（三线、粗体、下划线）。`<lemma-block ref="tab:main">` 把论文里的表格或图放到一页上；表格是真的 HTML 表格，加上 `focus="…"` 就能一步步聚焦到某一行、某一格（每步是一个 CSS 选择器，其余变灰，一块浅色高亮带移动）。换页是旧页淡出、新页淡入。页面在沙箱框架里运行，页面里写的脚本不会执行。导出单个 .html 文件（块和运行时都在里面）和 PDF（走浏览器的打印，每页一张幻灯片）；不导出 PowerPoint。起始稿按论文的逻辑结构生成：封面、每部分前的分隔页、每个图表一页。
+  - HTML 幻灯片（推荐）：一套用 HTML 写的幻灯片，存在论文仓库里的 `results/<论文>/slides.html`（页与页之间是 `<!-- slide: id -->` 一行，历史记录按页读得懂；results.json 里只放它的哈希）。白底、衬线标题、表格按论文的排法（三线、粗体、下划线）。`<lemma-block ref="tab:main">` 把论文里的表格或图放到一页上；表格是真的 HTML 表格，加上 `focus="…"` 就能一步步聚焦到某一行、某一格（每步是一个 CSS 选择器，其余变灰，一块浅色高亮带移动）。`<lemma-chart ref="tab:main" col="EM" base="Method E">` 把表格的一列画成柱状图（`base` 那一行画一条虚线，下一步显示高出多少）；图紧跟在这张表的后一页时，比较的两个数会从表格飞进图里，柱子随之长出来，这是整套幻灯片里唯一会移动的动作。换页是旧页淡出、新页淡入。页面在沙箱框架里运行，页面里写的脚本不会执行。导出单个 .html 文件（块和运行时都在里面）和 PDF（走浏览器的打印，每页一张幻灯片）；不导出 PowerPoint。起始稿按论文的逻辑结构生成：封面、每部分前的分隔页、每个图表一页。「说明和页脚」里写场合和要求（场合、时长、听众、重点、语言），「复制给 Claude Code 的指令」把让 Claude Code 按它写这套幻灯片的话复制下来；Claude Code 改过的幻灯片回到这一页就能看到。预览打开时会检查每一页的排版：内容超出页面或内容区、标题或页脚和内容重叠，有问题的页在列表里有红点。每页记下它依据的块（放在页上的块，和 `<section data-from="…">` 写明的块）当时的 LaTeX；块后来改了，列表里有黄点，页上提示核对，点「核对过了」消掉。「所有幻灯片」把整套排成缩略图（演示时按 O）。演示时按 P 是演讲者视图：当前页、下一下点击后的样子、这一页的备注（写在 `<aside class="notes">` 里，听众看不到）、计时，还能把幻灯片放到另一个窗口给听众（投影），跟着演讲者翻页。
   - 可视化幻灯片：用论文里编译好的图和表格先生成一套，再拖拽排版、加文字和演讲备注；论文里的块改了，幻灯片上的也跟着变。可以导出 PDF（块保持矢量）和 PowerPoint（文字可编辑，块是 300 dpi 图片）。
   - Beamer：用 LaTeX 写，`\lemmablock{tab:main}` 把论文里编译好的块放到一页上（按块的 `\label` 或块 id），右边实时编译。导出 PDF 就是编译结果，导出 PowerPoint 是每页一张图。
 - **协作和展示**：分享给合作者、页边批注、演示模式（一块一屏，或者放幻灯片）。
@@ -45,7 +45,7 @@ npm run preview # 预览构建结果
 | --- | --- |
 | `app/` | OnizukaTex 的界面：首页、论文列表（文件夹、标签）、论文页、分享、演示 |
 | `app/writing/` | 写作模式：整篇文档、位置标记、PDF 双击定位到代码；在 PDF 上直接改：`printed.ts`（一段 LaTeX 印出哪些字）、`pageRegions.ts`（源码一行在 PDF 的哪一段）、`pageAlign.ts` 和 `pageMap.ts`（逐字对应，点击与光标）、`pageEdits.ts`（打字、删除、移动光标）、`pageImages.ts`（图片位置和换图）；`preambleFormat.ts`（导言区在另一个引擎里预编译成格式，之后的编译只排正文） |
-| `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、HTML 幻灯片（`htmlDeck.ts` 文件格式和起始稿，`blockHtml.ts` 把论文的块放进页面，`kit.css` 和 `runtime.js` 是页面的样式和运行时，`deckDocument.ts` 拼成一页完整的 HTML 并加上内容安全策略，`HtmlFrame.tsx` 是沙箱框架，`HtmlEditor.tsx` 是编辑器）、演示、导出 PDF、PowerPoint 和 HTML |
+| `app/slides/` | 幻灯片：可视化编辑器、Beamer 编辑和编译、HTML 幻灯片（`htmlDeck.ts` 文件格式和起始稿，`blockHtml.ts` 把论文的块和表格画成的柱状图放进页面（`blockTags.ts` 只读标签，MCP 服务器也用），`kit.css` 和 `runtime.js` 是页面的样式和运行时，`deckDocument.ts` 拼成一页完整的 HTML 并加上内容安全策略，`HtmlFrame.tsx` 是沙箱框架，`HtmlEditor.tsx` 是编辑器）、演示、导出 PDF、PowerPoint 和 HTML |
 | `app/logic/` | 论文的逻辑结构；`ForceGraph.tsx` 是它和研究空间共用的力导向图 |
 | `app/space/` | 我的研究空间：论文和想法组成的图 |
 | `app/example/` | 内置的虚构示例论文（预先编译好的 PDF） |
@@ -77,12 +77,12 @@ claude mcp add --transport http --scope user lemma https://onizukatex.pages.dev/
 
 然后在 Claude Code 里输入 `/mcp`，选 lemma → Authenticate：浏览器会打开 OnizukaTex 的确认页，允许之后用 GitHub 登录，就连上了。之后可以直接说「列出我的 OnizukaTex 论文」「把实验 3.2 挂到方法 2.1 下面」「改一下引言的第二段」。
 
-- 能做的事：列出论文，看一篇论文的块、逻辑结构、关联线和附件，读块的 LaTeX 和文本附件（比如 `references.bib`）；改、加、删块，改导言区，把块挂到逻辑结构里或拿出来，连或删关联线。分享和公开不在其中。
+- 能做的事：列出论文，看一篇论文的块、逻辑结构、关联线和附件，读块的 LaTeX 和文本附件（比如 `references.bib`）；改、加、删块，改导言区，把块挂到逻辑结构里或拿出来，连或删关联线；写 HTML 幻灯片（`slides_guide` 是写法和动效的用量规则，`get_slides` 看整套并检查缺块、步骤过多、脚本，`create_slides` 起稿，`update_slide`、`add_slide`、`move_slide`、`delete_slide` 逐页改，`update_deck` 改标题、页脚、说明和样式）。分享和公开不在其中。
 - 每次修改都马上作为一次提交存进你的论文仓库，提交说明末尾带「(Claude Code)」。
 - Claude Code 那边不编译 LaTeX：在 OnizukaTex 里打开这篇论文时，改过的块会在后台自动编译；切回 OnizukaTex 的标签页时会重新读取论文。
 - 授权只会交给本机（localhost）上的 Claude Code。要撤销，在 GitHub 的 Settings → Applications → Authorized GitHub Apps 里撤销 OnizukaTex。
 
-实现在 `server/mcp/`：`oauth.ts` 让网站当 OAuth 授权服务器（用 GitHub 登录，发给客户端的是封好的令牌，`seal.ts`，服务器不存任何东西），`protocol.ts` 是 MCP 接口，`tools.ts` 是各个工具，`library.ts` 用和网页相同的方式读写论文仓库。GitHub App 只允许回到网站首页，所以 GitHub 的回答先到首页，再由 `functions/index.ts` 转给 MCP 的登录流程。
+实现在 `server/mcp/`：`oauth.ts` 让网站当 OAuth 授权服务器（用 GitHub 登录，发给客户端的是封好的令牌，`seal.ts`，服务器不存任何东西），`protocol.ts` 是 MCP 接口，`tools.ts` 是各个工具（幻灯片的在 `slides.ts`），`library.ts` 用和网页相同的方式读写论文仓库。GitHub App 只允许回到网站首页，所以 GitHub 的回答先到首页，再由 `functions/index.ts` 转给 MCP 的登录流程。
 
 ## 账号和数据
 

@@ -7,47 +7,21 @@
 import { Relation, cleanRelations, related, startOf, withRelation, withoutRelation } from '../../app/logic/graph';
 import { LabelWords, nodeLabels } from '../../app/logic/labels';
 import { Logic, LogicTree, TOP, branchEnd, cleanLogic, logicTree, placedIn, subtreeOf, withPlacement, withoutBlock } from '../../app/logic/tree';
-import { ResultsOp, resultsCommitMessage } from '../../editor/results/ops';
+import { ResultsOp } from '../../editor/results/ops';
 import { DEFAULT_PREAMBLE } from '../../editor/tex/document';
 import { applyRules } from '../../editor/results/table/rules';
 import { ResultBlock, ResultBlockKind, ResultPaper } from '../../types';
-import { Library, ToolError } from './library';
+import { ToolError } from './library';
+import { MAX_TEXT, PAPER, Schema, Tool, given, message, object, optional, paperIn } from './shared';
+import { SLIDE_TOOLS } from './slides';
 
-interface Schema {
-  type: string | string[];
-  description?: string;
-  properties?: Record<string, Schema>;
-  required?: string[];
-  items?: Schema;
-  enum?: string[];
-  additionalProperties?: boolean;
-}
-
-export interface Tool {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: Schema;
-  annotations: { readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint: boolean };
-  run: (args: Record<string, unknown>, library: Library) => Promise<string>;
-}
+export type { Tool } from './shared';
 
 const WORDS: LabelWords = { figure: (n) => (n ? `Figure ${n}` : 'Figure'), table: (n) => (n ? `Table ${n}` : 'Table'), abstract: 'Abstract', empty: '(empty)' };
 const KINDS: ResultBlockKind[] = ['text', 'figure', 'table'];
-/** Longest text a tool gives back in one go. */
-const MAX_TEXT = 200_000;
 
-const REPO: Schema = { type: 'string', description: 'owner/name of the OnizukaTex repository; needed only when the person has several.' };
-const PAPER: Schema = { type: 'string', description: 'The paper: its ID, slug or title, as list_papers shows them.' };
 const BLOCK: Schema = { type: 'string', description: 'A block ID, as get_paper lists them (blk-…).' };
 
-const object = (properties: Record<string, Schema>, required: string[]): Schema => ({ type: 'object', properties: { ...properties, repo: REPO }, required, additionalProperties: false });
-
-const given = (value: unknown, what: string): string => {
-  if (typeof value !== 'string' || !value.trim()) throw new ToolError(`Give ${what}.`);
-  return value.trim();
-};
-const optional = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
 /** LaTeX as given, which must not be empty. */
 const latexOf = (value: unknown, what: string): string => {
   if (typeof value !== 'string' || !value.trim()) throw new ToolError(`Give ${what}.`);
@@ -57,22 +31,7 @@ const latexOf = (value: unknown, what: string): string => {
 /** A new block's ID, like the pages make (blk- and lowercase letters and digits), with a little chance in it. */
 const newBlockId = (): string => `blk-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-const message = (action: string, paper: ResultPaper): string => `${resultsCommitMessage(action, paper.title)} (Claude Code)`;
 const batch = (ops: ResultsOp[]): ResultsOp => (ops.length === 1 ? ops[0] : { kind: 'batch', ops });
-
-function paperOf(papers: ResultPaper[], ref: unknown): ResultPaper {
-  const wanted = given(ref, 'the paper (its ID, slug or title)');
-  const lower = wanted.toLowerCase();
-  const found =
-    papers.find((paper) => paper.id === wanted) ??
-    papers.find((paper) => paper.slug === wanted) ??
-    papers.find((paper) => paper.title.trim().toLowerCase() === lower);
-  if (found) return found;
-  const near = papers.filter((paper) => paper.title.toLowerCase().includes(lower));
-  if (near.length === 1) return near[0];
-  const list = papers.map((paper) => `${paper.id} "${paper.title}"`).join('; ');
-  throw new ToolError(`No paper "${wanted}"${near.length > 1 ? ' (several titles contain it)' : ''}. The papers: ${list || 'none'}.`);
-}
 
 function blockOf(paper: ResultPaper, ref: unknown): ResultBlock {
   const id = given(ref, 'a block ID (get_paper lists them)');
@@ -88,10 +47,6 @@ const stillThere = (paperId: string, blockIds: string[]) => (latest: ResultPaper
   const gone = blockIds.filter((id) => !paper.blocks.some((block) => block.id === id));
   if (gone.length > 0) throw new ToolError(`${gone.join(', ')} was deleted meanwhile; look at the paper again (get_paper).`);
 };
-
-async function paperIn(library: Library, args: Record<string, unknown>): Promise<ResultPaper> {
-  return paperOf(await library.papers(), args.paper);
-}
 
 const namesOf = (paper: ResultPaper): ((id: string) => string) => {
   const labels = nodeLabels(paper, WORDS);
@@ -436,4 +391,5 @@ export const TOOLS: Tool[] = [
       return `Unlinked.\n${logicAfter(saved, paper.id)}`;
     },
   },
+  ...SLIDE_TOOLS,
 ];
