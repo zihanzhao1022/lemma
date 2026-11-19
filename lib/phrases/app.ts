@@ -337,6 +337,7 @@ export const { t, useT, table } = phrases({
   'Beamer 幻灯片': { ja: 'Beamer スライド', en: 'Beamer slides' },
   没有保存: { ja: '保存されていません', en: 'Not saved' },
   '导出 PDF': { ja: 'PDF に書き出す', en: 'Export PDF' },
+  '下载右边这份 PDF': { ja: '右の PDF をダウンロード', en: 'Download the PDF on the right' },
   '导出 PowerPoint': { ja: 'PowerPoint に書き出す', en: 'Export PowerPoint' },
   // HTML slides
   'HTML 幻灯片': { ja: 'HTML スライド', en: 'HTML slides' },

@@ -23,6 +23,7 @@ import LoginPrompt from './LoginPrompt';
 import Outline from './Outline';
 import { OutlineItem, itemAt, outlineItems } from './outlineItems';
 import { goToHeading } from './pdfDestinations';
+import { PdfButton } from './PdfButton';
 import { ResultsUnavailable } from './ResultsList';
 import './resultPage.css';
 import { Reader, avatarUrl, usePresence } from '../presence';
@@ -526,6 +527,7 @@ const ResultPage: React.FC<ResultPageProps> = ({ backTo = '/results', backLabel,
                 className="mt-3 ml-2"
               />
             )}
+            <PdfButton paper={paper} editing={editing} className={editing ? 'mt-3 ml-2' : 'mt-3'} />
           </div>
           <ResultsUnavailable />
           {!inApp && <Notices paper={paper} access={access} editing={editing} />}

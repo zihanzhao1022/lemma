@@ -157,6 +157,10 @@ export const { t, useT, table } = phrases({
   '复制 LaTeX': { ja: 'LaTeX をコピー', en: 'Copy LaTeX' },
   '复制 LaTeX 代码（开头注明需要的宏包）': { ja: 'LaTeX コードをコピー（必要なパッケージを冒頭に記載）', en: 'Copy the LaTeX code (with the packages it needs listed at the top)' },
   '导出全文 LaTeX': { ja: '全文の LaTeX を書き出す', en: 'Export full LaTeX' },
+  '导出 PDF': { ja: 'PDF に書き出す', en: 'Export PDF' },
+  '下载整篇论文排版后的 PDF，不含隐藏的块': { ja: '論文全体を組版した PDF をダウンロードします（非公開のブロックは含みません）', en: 'Download the whole paper as typeset PDF, without hidden blocks' },
+  '整篇 PDF 还没按最新的内容排好，稍后再试': { ja: '論文全体の PDF はまだ最新の内容で組版されていません。少し待ってからもう一度お試しください', en: 'The paper’s PDF is not typeset from the latest text yet; try again shortly' },
+  下载失败: { ja: 'ダウンロードできませんでした', en: 'Download failed' },
   '按顺序复制所有块（包括隐藏的），开头注明需要的宏包，不含 References': {
     ja: 'すべてのブロック（非公開のものも含む）を順にコピーします。必要なパッケージを冒頭に記載し、References は含みません',
     en: 'Copy every block (hidden ones too) in order, with the packages they need listed at the top, without References',

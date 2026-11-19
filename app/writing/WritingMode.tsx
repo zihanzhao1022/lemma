@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronRight, Crosshair, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Crosshair, Download, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
 import { describeSaveError } from '../../editor/backend';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
@@ -12,6 +12,7 @@ import { ResultsOp, applyResultsOp, resultsCommitMessage } from '../../editor/re
 import { getTexEngine, type TexFormat } from '../../editor/tex/engine';
 import { parseAuxCitations, parseAuxLabels, parseErrors } from '../../editor/tex/log';
 import { useMessage } from '../../lib/i18n';
+import { downloadFile, fileName } from '../../lib/download';
 import { useT } from '../../lib/phrases/app';
 import { ResultPaper } from '../../types';
 import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, joinMain, locate, markableInputs, parseMarks, placeOf, splitMain, withMarks } from './document';
@@ -952,6 +953,16 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
           </span>
           <span className="ml-auto hidden truncate text-xs text-gray-400 xl:inline">{t('单击 PDF 里的文字直接修改，双击跳到它的代码')}</span>
           <span className="ml-auto flex shrink-0 items-center xl:ml-2">
+            <button
+              type="button"
+              onClick={() => compiled?.pdf && downloadFile(compiled.pdf, fileName(paper.title, 'pdf'), 'application/pdf')}
+              disabled={!compiled?.pdf}
+              className={`${bar} mr-1`}
+              title={t('下载右边这份 PDF')}
+            >
+              <Download size={14} />
+              <span className="hidden xl:inline">{t('导出 PDF')}</span>
+            </button>
             <button type="button" onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} aria-label={t('缩小')} title={t('缩小')} className={bar}>
               <Minus size={14} />
             </button>

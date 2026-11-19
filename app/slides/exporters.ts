@@ -5,6 +5,7 @@
  */
 import { openPdf } from '../../components/results/pdfjs';
 import type { ReadFile } from '../../editor/results/actions';
+import { downloadFile, fileName as baseName } from '../../lib/download';
 import { ResultPaper, SlideDeck, SlideText } from '../../types';
 import { SLIDE_HEIGHT, SLIDE_WIDTH, fit } from './deck';
 import { BODY_FONT, TITLE_FONT, blockBytes, drawPdf, textLines } from './SlideView';
@@ -15,18 +16,8 @@ const INCHES = 13.333 / SLIDE_WIDTH;
 /** Pictures of blocks in a .pptx, in dots per inch. */
 const DPI = 300;
 
-const fileName = (title: string, extension: string): string => `${title.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'slides'}.${extension}`;
-
-function download(data: Uint8Array, name: string, type: string): void {
-  const url = URL.createObjectURL(new Blob([data.slice()], { type }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = name;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
+const fileName = (title: string, extension: string) => baseName(title, extension, 'slides');
+const download = downloadFile;
 
 /** An HTML deck's page as the file to take away: one page, its blocks and its runtime inside it. */
 export function exportHtml(page: string, title: string): void {
