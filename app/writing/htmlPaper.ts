@@ -177,8 +177,11 @@ const letter = (n: number) => String.fromCharCode(64 + n);
 
 const NUMERIC_IN_ORDER = /unsrt|ieee|acm|splncs|vancouver|nature|science/i;
 
-/** Numbers for a paper's elements in order (each block's, with the labels set in its text), and its citations. */
-export function numberPaper(blocks: { elements: Element[]; labels: LooseLabel[] }[], style: PaperStyle, bib: BibRecord[], bibliographyStyle = 'plain', theoremCounters: Record<string, string> = {}): Numbering {
+/**
+ * Numbers for a paper's elements in order (each block's, with the labels set in its text), and its citations. A
+ * block's `base` is added to its offsets when they count from the block's own start.
+ */
+export function numberPaper(blocks: { elements: Element[]; labels: LooseLabel[]; base?: number }[], style: PaperStyle, bib: BibRecord[], bibliographyStyle = 'plain', theoremCounters: Record<string, string> = {}): Numbering {
   const numbers = new Map<Element, string>();
   const labels: Record<string, string> = {};
   const placed: { at: number; number: string }[] = [];
@@ -188,6 +191,7 @@ export function numberPaper(blocks: { elements: Element[]; labels: LooseLabel[] 
   let equations = 0;
   let appendix = false;
   const theorems: Record<string, number> = {};
+  let base = 0;
   const cited: string[] = [];
   const cite = (keys: string[]) => keys.forEach((key) => !cited.includes(key) && cited.push(key));
 
@@ -219,7 +223,7 @@ export function numberPaper(blocks: { elements: Element[]; labels: LooseLabel[] 
         for (let level = element.level + 1; level < counters.length; level += 1) counters[level] = 0;
         const number = sectionNumber(element.level);
         numbers.set(element, number);
-        placed.push({ at: element.from, number });
+        placed.push({ at: base + element.from, number });
         return;
       }
       case 'paragraph':
@@ -271,8 +275,9 @@ export function numberPaper(blocks: { elements: Element[]; labels: LooseLabel[] 
 
   const loose: LooseLabel[] = [];
   for (const block of blocks) {
+    base = block.base ?? 0;
     block.elements.forEach(visit);
-    loose.push(...block.labels);
+    loose.push(...block.labels.map((label) => (base ? { ...label, at: base + label.at } : label)));
   }
   // A label in running text names the last numbered heading before it.
   placed.sort((a, b) => a.at - b.at);

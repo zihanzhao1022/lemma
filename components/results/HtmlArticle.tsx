@@ -5,7 +5,7 @@ import { GripVertical, MessageSquare } from 'lucide-react';
 import { ArticleBlock, bodyBlocks } from '../../app/writing/articleBlocks';
 import { bodyOf } from '../../app/writing/document';
 import { Numbering, PaperStyle, citationText, numberPaper, paperStyle, parseBibRecords } from '../../app/writing/htmlPaper';
-import { Context, Element, Graphic, Inline, Look, LooseLabel, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from '../../app/writing/latexHtml';
+import { Context, Definitions, Element, Graphic, Inline, Look, LooseLabel, TextRun, hasUnsupported, parseBlocks, parseInline, plainText, readDefinitions } from '../../app/writing/latexHtml';
 import { escapeTyped } from '../../app/writing/pageEdits';
 import { replaceGraphic } from '../../app/writing/pageImages';
 import { lineStarts } from '../../app/writing/pageMap';
@@ -35,30 +35,127 @@ interface Props {
   comments?: (blockId: string) => ArticleComments | undefined;
 }
 
-/** A block of the article read as a web page: its elements, or none when its own PDF must show instead. */
-interface PageBlock extends ArticleBlock {
+/** A block's code read as a web page: its elements, or none when its own PDF must show instead. */
+interface ParsedCode {
+  /** Their offsets count from the start of the block's code. */
   elements: Element[];
   labels: LooseLabel[];
   supported: boolean;
 }
 
+/** A block of the article read as a web page; its code is [base, end) of main.tex. */
+interface PageBlock extends ArticleBlock, ParsedCode {
+  base: number;
+  end: number;
+}
+
+/**
+ * The blocks read before, by their code (the n-th block with a code takes the n-th reading of it): typing in one
+ * block reads that block again, and the others keep their elements, the very same objects.
+ */
+interface ReadCache {
+  definitions: Definitions | null;
+  byCode: Map<string, ParsedCode[]>;
+}
+
 /** What a theorem-like environment is called and which counter it uses. */
 const THEOREMS = ['theorem', 'lemma', 'proposition', 'corollary', 'definition', 'remark', 'example', 'claim', 'conjecture', 'assumption', 'observation', 'hypothesis', 'fact', 'note', 'problem'];
 
-/** Reads every block of main.tex as a web page. */
-function readArticle(text: string, preamble: string): { blocks: PageBlock[]; context: Context } {
-  const context: Context = { definitions: readDefinitions(preamble), labels: [] };
+/** Reads every block of main.tex as a web page, each on its own, with the preamble's definitions. */
+function readArticle(text: string, definitions: Definitions, cache: ReadCache): { blocks: PageBlock[]; context: Context } {
+  const context: Context = { definitions, labels: [] };
+  if (cache.definitions !== definitions) {
+    cache.definitions = definitions;
+    cache.byCode = new Map();
+  }
+  const read = new Map<string, ParsedCode[]>();
   const starts = lineStarts(text);
   const blocks = bodyBlocks(text).map((block): PageBlock => {
     // The block's code: after its marker line, up to the end of its last line.
     const from = starts[block.from] ?? text.length;
     const to = block.to < starts.length ? starts[block.to] - 1 : text.length;
-    const own: Context = { definitions: context.definitions, labels: [] };
-    const elements = from < to ? parseBlocks(text, from, to, own) : [];
-    return { ...block, elements, labels: own.labels, supported: !hasUnsupported(elements) };
+    const code = from < to ? text.slice(from, to) : '';
+    const done = read.get(code) ?? [];
+    let parsed = cache.byCode.get(code)?.[done.length];
+    if (!parsed) {
+      const own: Context = { definitions, labels: [] };
+      const elements = code ? parseBlocks(code, 0, code.length, own) : [];
+      parsed = { elements, labels: own.labels, supported: !hasUnsupported(elements) };
+    }
+    done.push(parsed);
+    read.set(code, done);
+    return { ...block, ...parsed, base: from, end: Math.max(from, to) };
   });
+  cache.byCode = read;
   return { blocks, context };
 }
+
+/** What a block's elements show from the rest of the paper: numbers, \ref targets, citations, and its footnotes. */
+interface BlockUses {
+  elements: Element[];
+  refs: string[];
+  cites: string[];
+  footnotes: number;
+}
+
+const USES = new WeakMap<Element[], BlockUses>();
+
+function usesOf(elements: Element[]): BlockUses {
+  const known = USES.get(elements);
+  if (known) return known;
+  const uses: BlockUses = { elements: [], refs: [], cites: [], footnotes: 0 };
+  // Footnotes are numbered as the page draws them: those in running text, not those inside a macro's text.
+  const inline = (items: Inline[], drawn = true) => {
+    for (const item of items) {
+      if (item.kind === 'ref') uses.refs.push(...item.labels);
+      else if (item.kind === 'cite') uses.cites.push(...item.keys);
+      else if (item.kind === 'footnote') {
+        if (drawn) uses.footnotes += 1;
+        inline(item.content, false);
+      } else if (item.kind === 'raw' && item.content) inline(item.content, false);
+    }
+  };
+  const visit = (element: Element) => {
+    uses.elements.push(element);
+    switch (element.kind) {
+      case 'heading':
+        inline(element.title);
+        return;
+      case 'paragraph':
+        inline(element.content);
+        return;
+      case 'figure':
+        if (element.caption) inline(element.caption.content);
+        return;
+      case 'table':
+        if (element.caption) inline(element.caption.content);
+        for (const row of element.rows) for (const cell of row.cells) inline(cell.content);
+        return;
+      case 'list':
+        for (const item of element.items) item.children.forEach(visit);
+        return;
+      case 'environment':
+        if (element.title) inline(element.title);
+        element.children.forEach(visit);
+        return;
+      default:
+    }
+  };
+  elements.forEach(visit);
+  USES.set(elements, uses);
+  return uses;
+}
+
+/**
+ * A block's elements on the page, drawn again only when they, what they show from the rest of the paper (`version`),
+ * or what every block shares (`shared`) changed: typing in one block draws that block alone.
+ */
+const BlockElements = React.memo(
+  function BlockElements({ draw }: { elements: Element[]; version: string; shared: object; draw: () => React.ReactNode }) {
+    return <>{draw()}</>;
+  },
+  (before, after) => before.elements === after.elements && before.version === after.version && before.shared === after.shared,
+);
 
 /** KaTeX's HTML for each formula drawn lately (by macros, style and code): typing elsewhere draws none of them again. */
 const MATH_HTML = new Map<string, string>();
@@ -249,14 +346,21 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   const style = useMemo<PaperStyle>(() => paperStyle(preamble, bibStyle), [preamble, bibStyle]);
   const bibText = attachments?.[REFERENCES_FILE] ? new TextDecoder().decode(attachments[REFERENCES_FILE]) : '';
   const bib = useMemo(() => parseBibRecords(bibText), [bibText]);
+  const definitions = useMemo(() => readDefinitions(preamble), [preamble]);
+  const readCache = useRef<ReadCache>({ definitions: null, byCode: new Map() });
   // `tick` follows the typing.
-  const read = useMemo(() => readArticle(source, preamble), [source, preamble, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const read = useMemo(() => readArticle(source, definitions, readCache.current), [source, definitions, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Where each block's code starts in the text as it is now; the page's offsets count from there (readArticle).
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const blockBase = useRef(new Map<string, number>());
+  blockBase.current = new Map(read.blocks.map((block) => [block.id, block.base]));
   const theoremCounters = useMemo(() => {
     const counters: Record<string, string> = {};
     for (const name of THEOREMS) counters[name] = name;
-    for (const [name, theorem] of Object.entries(read.context.definitions.theorems)) if (theorem.numbered) counters[name] = theorem.counter;
+    for (const [name, theorem] of Object.entries(definitions.theorems)) if (theorem.numbered) counters[name] = theorem.counter;
     return counters;
-  }, [read]);
+  }, [definitions]);
   const numbering = useMemo<Numbering>(() => numberPaper(read.blocks, style, bib, bibStyle, theoremCounters), [read, style, bib, bibStyle, theoremCounters]);
   // The title and the authors the preamble sets, as \maketitle prints them; their offsets are the preamble's, past PRE.
   const titlePage = useMemo(() => readTitle(preamble, read.context), [preamble, read]);
@@ -282,31 +386,46 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
 
   /* ------------------------------------------------------------------ from the page to the source and back */
 
-  const runs = useRef(new Map<number, { element: HTMLElement; run: TextRun }>());
-  const registerRun = (run: TextRun) => (element: HTMLElement | null) => {
-    if (element) runs.current.set(run.starts[0], { element, run });
-    else runs.current.delete(run.starts[0]);
+  // The page's text runs by their block and their first offset in it; the title's are the block ''.
+  const runs = useRef(new Map<string, { element: HTMLElement; run: TextRun; block: string }>());
+  const runKey = (block: string, start: number) => `${block}\u0000${start}`;
+  // The block being drawn: the runs drawn register under it, and its offsets count from its code's start.
+  const drawing = useRef({ id: '', base: 0 });
+  const registerRun = (run: TextRun) => {
+    const block = drawing.current.id;
+    const key = runKey(block, run.starts[0]);
+    return (element: HTMLElement | null) => {
+      if (element) runs.current.set(key, { element, run, block });
+      else if (runs.current.get(key)?.run === run) runs.current.delete(key);
+    };
   };
+  /** The block an element of the page is in ('' outside the blocks), and where that block's code starts. */
+  const blockIdOf = (element: HTMLElement | null | undefined): string => element?.closest<HTMLElement>('section[data-result-block-id]')?.dataset.resultBlockId ?? '';
+  const baseOf = (block: string): number => blockBase.current.get(block) ?? 0;
+  const runAt = (holder: HTMLElement) => runs.current.get(runKey(blockIdOf(holder), Number(holder.dataset.run)));
 
   /** The source offset of a point in the page's text. */
   const toSource = useCallback((node: Node, offset: number): number | null => {
     const holder = (node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement))?.closest<HTMLElement>('[data-run], [data-s]');
     if (node.nodeType === Node.TEXT_NODE && holder?.dataset.run !== undefined) {
-      const found = runs.current.get(Number(holder.dataset.run));
+      const found = runAt(holder);
       if (!found) return null;
       const { run } = found;
-      return offset < run.text.length ? run.starts[offset] : run.ends[run.text.length - 1];
+      return baseOf(found.block) + (offset < run.text.length ? run.starts[offset] : run.ends[run.text.length - 1]);
     }
     if (node.nodeType === Node.TEXT_NODE) {
       // Inside an atom: before or after it.
-      return holder?.dataset.s ? Number(offset === 0 ? holder.dataset.s : holder.dataset.e) : null;
+      return holder?.dataset.s ? baseOf(blockIdOf(holder)) + Number(offset === 0 ? holder.dataset.s : holder.dataset.e) : null;
     }
     const element = node as HTMLElement;
     const startOf = (child: Node | null | undefined): number | null => {
       for (let current = child; current; current = current.nextSibling) {
         if (current instanceof HTMLElement) {
-          if (current.dataset.run !== undefined) return runs.current.get(Number(current.dataset.run))?.run.starts[0] ?? null;
-          if (current.dataset.s !== undefined) return Number(current.dataset.s);
+          if (current.dataset.run !== undefined) {
+            const found = runAt(current);
+            return found ? baseOf(found.block) + found.run.starts[0] : null;
+          }
+          if (current.dataset.s !== undefined) return baseOf(blockIdOf(current)) + Number(current.dataset.s);
           const inner = startOf(current.firstChild);
           if (inner !== null) return inner;
         }
@@ -317,10 +436,10 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       for (let current = child; current; current = current.previousSibling) {
         if (current instanceof HTMLElement) {
           if (current.dataset.run !== undefined) {
-            const run = runs.current.get(Number(current.dataset.run))?.run;
-            return run ? run.ends[run.text.length - 1] : null;
+            const found = runAt(current);
+            return found ? baseOf(found.block) + found.run.ends[found.run.text.length - 1] : null;
           }
-          if (current.dataset.e !== undefined) return Number(current.dataset.e);
+          if (current.dataset.e !== undefined) return baseOf(blockIdOf(current)) + Number(current.dataset.e);
           const inner = endOf(current.lastChild);
           if (inner !== null) return inner;
         }
@@ -328,25 +447,30 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       return null;
     };
     if (offset < element.childNodes.length) return startOf(element.childNodes[offset]) ?? endOf(element.childNodes[offset - 1]);
-    return endOf(element.lastChild) ?? (element.dataset.e ? Number(element.dataset.e) : null);
-  }, []);
+    return endOf(element.lastChild) ?? (element.dataset.e ? baseOf(blockIdOf(element)) + Number(element.dataset.e) : null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A place in the page's text for a source offset: in the run that holds it, else the nearest. */
   const fromSource = useCallback((offset: number, near?: HTMLElement | null): { node: Node; offset: number } | null => {
     let best: { node: Node; offset: number; distance: number } | null = null;
-    for (const { element, run } of runs.current.values()) {
+    for (const { element, run, block } of runs.current.values()) {
       const node = element.firstChild;
       if (!node || !element.isConnected) continue;
       const bias = near && !near.contains(element) ? 0.5 : 0;
+      const local = offset - baseOf(block);
+      // A run wholly on one side of the offset: only its nearer end can be the nearest.
+      const first = run.starts[0];
+      const last = run.ends[run.text.length - 1];
+      if (best && Math.min(Math.abs(first - local), Math.abs(last - local)) + bias > best.distance && (local < first || local > last)) continue;
       for (let index = 0; index < run.text.length; index += 1) {
-        const distance = Math.abs(run.starts[index] - offset) + bias;
+        const distance = Math.abs(run.starts[index] - local) + bias;
         if (!best || distance < best.distance) best = { node, offset: index, distance };
       }
-      const end = Math.abs(run.ends[run.text.length - 1] - offset) + bias;
+      const end = Math.abs(last - local) + bias;
       if (!best || end < best.distance) best = { node, offset: run.text.length, distance: end };
     }
     return best;
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ------------------------------------------------------------------ typing */
 
@@ -388,10 +512,11 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /** The character or atom just before (-1) or after (1) a point of the text, as a source range. */
   const besideCaret = (node: Node, offset: number, direction: -1 | 1): { from: number; to: number } | null => {
     const holder = node.nodeType === Node.TEXT_NODE ? node.parentElement?.closest<HTMLElement>('[data-run]') : null;
-    const found = holder ? runs.current.get(Number(holder.dataset.run)) : undefined;
+    const found = holder ? runAt(holder) : undefined;
     if (found) {
       const index = direction < 0 ? offset - 1 : offset;
-      if (index >= 0 && index < found.run.text.length) return { from: found.run.starts[index], to: found.run.ends[index] };
+      const base = baseOf(found.block);
+      if (index >= 0 && index < found.run.text.length) return { from: base + found.run.starts[index], to: base + found.run.ends[index] };
     }
     // At the edge of a run: the atom or run next to it.
     const sibling: Node | null | undefined = holder
@@ -403,12 +528,14 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         : node.childNodes[offset];
     if (!(sibling instanceof HTMLElement)) return null;
     if (sibling.dataset.run !== undefined) {
-      const run = runs.current.get(Number(sibling.dataset.run))?.run;
-      if (!run) return null;
-      const index = direction < 0 ? run.text.length - 1 : 0;
-      return { from: run.starts[index], to: run.ends[index] };
+      const near = runAt(sibling);
+      if (!near) return null;
+      const index = direction < 0 ? near.run.text.length - 1 : 0;
+      const base = baseOf(near.block);
+      return { from: base + near.run.starts[index], to: base + near.run.ends[index] };
     }
-    return sibling.dataset.s !== undefined ? { from: Number(sibling.dataset.s), to: Number(sibling.dataset.e) } : null;
+    const base = baseOf(blockIdOf(sibling));
+    return sibling.dataset.s !== undefined ? { from: base + Number(sibling.dataset.s), to: base + Number(sibling.dataset.e) } : null;
   };
 
   /** The block whose code holds an offset of the text. */
@@ -496,7 +623,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
         // An empty paragraph is no paragraph to LaTeX: a second Enter there adds nothing.
         if (inOpened) return;
         if (where === 'paragraph') {
-          const paragraphEnd = Number(holder?.closest<HTMLElement>('[data-kind="paragraph"]')?.dataset.e);
+          const paragraphEnd = baseOf(blockIdOf(holder)) + Number(holder?.closest<HTMLElement>('[data-kind="paragraph"]')?.dataset.e);
           replace(start, end, '\n\n', 'type');
           // At the paragraph's end: the new paragraph has no text yet, so it is shown empty for the caret.
           if (start === end && Number.isFinite(paragraphEnd) && start >= paragraphEnd) setOpened({ after: paragraphEnd, from: start, at: start + 2 });
@@ -582,11 +709,13 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   /* ------------------------------------------------------------------ pictures */
 
   const [picker, setPicker] = useState<{ path: string; from: number; to: number; left: number; top: number } | null>(null);
-  const pickPicture = (graphic: Graphic, event: React.MouseEvent) => {
+  /** A click on a picture of block `block`, which may have moved in the text since it was drawn. */
+  const pickPicture = (block: string, graphic: Graphic, event: React.MouseEvent) => {
     if (!live) return;
-    const open = source.lastIndexOf('{', graphic.to);
-    if (open < graphic.from) return;
-    setPicker({ path: graphic.path, from: open + 1, to: graphic.to - 1, left: Math.max(8, Math.min(event.clientX, window.innerWidth - 280)), top: Math.max(8, Math.min(event.clientY + 12, window.innerHeight - 360)) });
+    const base = baseOf(block);
+    const open = sourceRef.current.lastIndexOf('{', base + graphic.to);
+    if (open < base + graphic.from) return;
+    setPicker({ path: graphic.path, from: open + 1, to: base + graphic.to - 1, left: Math.max(8, Math.min(event.clientX, window.innerWidth - 280)), top: Math.max(8, Math.min(event.clientY + 12, window.innerHeight - 360)) });
   };
 
   /* ------------------------------------------------------------------ drawing the text */
@@ -758,22 +887,23 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
             {inline(next.content)}
           </p>,
         );
-        if (opened && next.to === opened.after) nodes.push(openedParagraph(opened.at));
+        if (opened && drawing.current.base + next.to === opened.after) nodes.push(openedParagraph(opened.at));
         index += 1;
         continue;
       }
       nodes.push(draw(element, index));
-      if (opened && element.kind === 'paragraph' && element.to === opened.after) nodes.push(openedParagraph(opened.at));
+      if (opened && element.kind === 'paragraph' && drawing.current.base + element.to === opened.after) nodes.push(openedParagraph(opened.at));
     }
     return nodes;
   };
 
   /** The paragraph just begun (`opened`), empty: a zero-width character holds the caret at the source offset `at`. */
   const openedParagraph = (at: number): React.ReactNode => {
-    const run: TextRun = { kind: 'text', text: '\u200b', starts: [at], ends: [at], styles: [] };
+    const local = at - drawing.current.base;
+    const run: TextRun = { kind: 'text', text: '\u200b', starts: [local], ends: [local], styles: [] };
     return (
-      <p key="opened" data-kind="paragraph" data-opened="" data-s={at} data-e={at}>
-        <span data-run={at} ref={registerRun(run)}>
+      <p key="opened" data-kind="paragraph" data-opened="" data-s={local} data-e={local}>
+        <span data-run={local} ref={registerRun(run)}>
           {run.text}
         </span>
       </p>
@@ -812,14 +942,15 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
           </div>
         );
       }
-      case 'figure':
+      case 'figure': {
+        const block = drawing.current.id;
         return (
           <figure key={key} className={element.wide ? 'wide' : undefined}>
             {element.captionFirst && caption(element, true)}
             {element.graphics.map((graphic, graphicIndex) => {
               const name = attachmentNamesOf(attachments).find((item) => samePicture(item, graphic.path));
               return name && attachments?.[name] ? (
-                <Picture key={`${graphicIndex}:${name}`} name={name} data={attachments[name]} graphic={graphic} onClick={(event) => pickPicture(graphic, event)} />
+                <Picture key={`${graphicIndex}:${name}`} name={name} data={attachments[name]} graphic={graphic} onClick={(event) => pickPicture(block, graphic, event)} />
               ) : (
                 <span key={`${graphicIndex}:${graphic.path}`} className="html-atom inline-block border border-dashed border-gray-300 px-3 py-6 text-xs text-gray-400" contentEditable={false} data-s={graphic.from} data-e={graphic.to}>
                   {graphic.path}
@@ -829,6 +960,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
             {!element.captionFirst && caption(element, false)}
           </figure>
         );
+      }
       case 'table':
         return (
           <div key={key} className={`html-table${element.wide ? ' wide' : ''}`}>
@@ -988,7 +1120,8 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
       range.setEnd(last.node, last.offset + 1);
       next.push({ id: mark.id, block: mark.block, boxes: Array.from(range.getClientRects()).map((rect) => new DOMRect(rect.left - origin.left, rect.top - origin.top, rect.width, rect.height)) });
     }
-    setHighlights(next);
+    // Nothing marked before or after: no new state, and no drawing again.
+    setHighlights((current) => (current.length === 0 && next.length === 0 ? current : next));
   }, [wantedKey, read, frame, zoom]);
 
   const onClickCapture = (event: React.MouseEvent) => {
@@ -1121,6 +1254,34 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
   };
   void frame;
 
+  // What every block's drawing shares: when one of these changes, every block is drawn again.
+  const shared = useMemo(() => ({}), [style, attachments, macrosKey, definitions, theoremCounters, live, t]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Where each block's footnotes start counting, and what each block shows from the rest of the paper.
+  const footnoteStart = new Map<string, number>();
+  let footnoteCount = 0;
+  for (const block of shownBlocks) {
+    footnoteStart.set(block.id, footnoteCount);
+    if (block.supported) footnoteCount += usesOf(block.elements).footnotes;
+  }
+  const versionOf = (block: PageBlock): string => {
+    const uses = usesOf(block.elements);
+    const own = opened && opened.after >= block.base && opened.after <= block.end ? opened.at - block.base : null;
+    return JSON.stringify([
+      uses.elements.map((element) => numbering.numbers.get(element) ?? ''),
+      uses.refs.map((label) => numbering.labels[label] ?? ''),
+      uses.cites.map((key) => numbering.citations[key] ?? null),
+      footnoteStart.get(block.id),
+      own,
+    ]);
+  };
+  const drawBlock = (block: PageBlock): React.ReactNode => {
+    drawing.current = { id: block.id, base: block.base };
+    footnotes.current = footnoteStart.get(block.id) ?? 0;
+    const nodes = drawAll(block.elements);
+    drawing.current = { id: '', base: 0 };
+    return nodes;
+  };
+  drawing.current = { id: '', base: 0 };
   footnotes.current = 0;
   const editable = live;
 
@@ -1173,7 +1334,7 @@ const HtmlArticle = forwardRef<ArticleViewHandle, Props>(function HtmlArticle({ 
               return (
                 <section key={block.id} data-result-block-id={block.id} data-quote-layer className={`html-block scroll-mt-24${hidden.has(block.id) ? ' html-hidden' : ''}`}>
                   {block.supported || !stored ? (
-                    drawAll(block.elements)
+                    <BlockElements elements={block.elements} version={versionOf(block)} shared={shared} draw={() => drawBlock(block)} />
                   ) : (
                     <div className="html-fallback" contentEditable={false}>
                       <BlockView paperId={paper.id} block={stored} />

@@ -56,6 +56,20 @@ describe('numberPaper', () => {
     expect(citationText('cite', ['lee2019', 'smith2020'], numbering, style)).toBe('[2, 1]');
   });
 
+  it('gives a label in running text the heading before it, across blocks read each from its own start', () => {
+    // Each block read alone (offsets from 0), placed in the paper at `base`.
+    const blocks = [
+      { ...parse('\\section{One}\nText.'), base: 0 },
+      { ...parse('Lead text here.\n\\section{Two}\nMore.'), base: 100 },
+      { ...parse('Words \\label{sec:loose} here.'), base: 200 },
+    ];
+    const numbering = numberPaper(blocks, paperStyle('\\documentclass{article}'), []);
+    expect(numbering.labels['sec:loose']).toBe('2');
+    // Without the bases the label (at 6) would come before the second heading (at 16) and take the first's number.
+    const unplaced = numberPaper(blocks.map(({ base, ...block }) => block), paperStyle('\\documentclass{article}'), []);
+    expect(unplaced.labels['sec:loose']).toBe('1');
+  });
+
   it('numbers IEEE sections with Roman numerals and tables too', () => {
     const blocks = [parse('\\section{A}\n\\subsection{B}\n\\begin{table}\\caption{T}\\begin{tabular}{l}x\\end{tabular}\\end{table}')];
     const numbering = numberPaper(blocks, paperStyle('\\documentclass{IEEEtran}'), []);
