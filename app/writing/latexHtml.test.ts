@@ -17,6 +17,15 @@ describe('parseInline', () => {
     expect(src.slice(run.starts[9], run.ends[9])).toBe('---');
   });
 
+  it('prints nothing for TeX parameters set in the text, whatever their value', () => {
+    expect(text(inline('still refuses.\\looseness=-1'))).toBe('still refuses.');
+    expect(text(inline('a \\tolerance 9999 b'))).toBe('a b');
+    expect(text(inline('a \\parskip=0pt plus 1pt b'))).toBe('a b');
+    expect(text(inline('a \\emergencystretch=3em\\relax b'))).toBe('a b');
+    expect(text(inline('a \\parskip=\\z@ b'))).toBe('a b');
+    expect(text(inline('a \\looseness b'))).toBe('a b');
+  });
+
   it('collapses spaces and line ends into one space, and drops comments', () => {
     expect(text(inline('one   two\nthree % a comment\n   four'))).toBe('one two three four');
   });

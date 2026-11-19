@@ -200,6 +200,30 @@ const SILENT = new Set([
   'ignorespaces', 'leavevmode', 'sloppy', 'fussy', 'strut', 'nobreak', 'frenchspacing', 'selectfont', 'normalfont',
   'upshape', 'mdseries', 'rmfamily', 'tableofcontents', 'FloatBarrier',
 ]);
+// TeX's own parameters (and LaTeX's lengths), set with an assignment such as \looseness=-1: nothing to print.
+const PARAMETERS = new Set([
+  'looseness', 'tolerance', 'pretolerance', 'emergencystretch', 'hyphenpenalty', 'exhyphenpenalty', 'linepenalty', 'adjdemerits',
+  'doublehyphendemerits', 'finalhyphendemerits', 'clubpenalty', 'widowpenalty', 'displaywidowpenalty', 'brokenpenalty',
+  'interlinepenalty', 'predisplaypenalty', 'postdisplaypenalty', 'binoppenalty', 'relpenalty', 'hbadness', 'vbadness', 'hfuzz',
+  'vfuzz', 'parskip', 'parindent', 'baselineskip', 'lineskip', 'lineskiplimit', 'leftskip', 'rightskip', 'parfillskip',
+  'spaceskip', 'xspaceskip', 'uchyph', 'lefthyphenmin', 'righthyphenmin', 'tabcolsep', 'arrayrulewidth', 'doublerulesep',
+  'columnsep', 'columnseprule', 'textfloatsep', 'floatsep', 'intextsep', 'dbltextfloatsep', 'dblfloatsep', 'abovecaptionskip',
+  'belowcaptionskip', 'abovedisplayskip', 'belowdisplayskip', 'abovedisplayshortskip', 'belowdisplayshortskip', 'topsep',
+  'partopsep', 'itemsep', 'parsep', 'labelsep', 'labelwidth', 'leftmargin', 'rightmargin', 'itemindent', 'listparindent',
+  'fboxsep', 'fboxrule', 'jot', 'mathsurround', 'footnotesep', 'skip', 'count', 'dimen',
+]);
+/** A number, a length or a glue as TeX reads one after a parameter (the `=` is optional), from the start of `text`. */
+const ASSIGNED_VALUE = /^\s*=?\s*(?:[-+]\s*)*(?:\d+(?:[.,]\d*)?|[.,]\d+)\s*(?:true\s*)?(?:pt|pc|in|bp|cm|mm|dd|cc|nd|nc|sp|ex|em|mu|fil{1,3}|\\[A-Za-z@]+)?(?:\s*plus\s*[-+]?\s*(?:\d+(?:[.,]\d*)?|[.,]\d+)?\s*(?:pt|pc|in|bp|cm|mm|dd|cc|sp|ex|em|mu|fil{1,3})?)?(?:\s*minus\s*[-+]?\s*(?:\d+(?:[.,]\d*)?|[.,]\d+)?\s*(?:pt|pc|in|bp|cm|mm|dd|cc|sp|ex|em|mu|fil{1,3})?)?/;
+/** A parameter set to a register or a constant: \parskip=\z@, \tolerance\@M. */
+const ASSIGNED_REGISTER = /^\s*=?\s*(?:[-+]\s*)*\\[A-Za-z@]+/;
+
+/** Where the assignment after a TeX parameter's name ends (`at` is just after the name), or null when none follows. */
+export function assignmentEnd(src: string, at: number, to: number): number | null {
+  const text = src.slice(at, to);
+  const match = ASSIGNED_VALUE.exec(text) ?? ASSIGNED_REGISTER.exec(text);
+  return match ? at + match[0].length : null;
+}
+
 // Commands whose arguments print nothing.
 const SILENT_ARGS: Record<string, number> = { vspace: 1, hspace: 1, definecolor: 3, colorlet: 2, label: 1, setlength: 2, addtolength: 2, addvspace: 1, phantom: 1, hphantom: 1, vphantom: 1, index: 1, bibliographystyle: 1, nocite: 1, thispagestyle: 1, pagestyle: 1, enlargethispage: 1, linespread: 1, newcounter: 1, setcounter: 2, addtocounter: 2, stepcounter: 1 };
 const STYLE_OF: Record<string, Style | null> = {
@@ -525,6 +549,11 @@ function parseRun(src: string, from: number, to: number, context: Context, inher
     }
     if (SILENT.has(name)) {
       at = after(end);
+      continue;
+    }
+    if (PARAMETERS.has(name)) {
+      const stop = assignmentEnd(src, end, to);
+      at = stop === null ? after(end) : after(stop);
       continue;
     }
     if (SILENT_ARGS[name] !== undefined) {
