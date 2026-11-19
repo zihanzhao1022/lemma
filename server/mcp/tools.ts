@@ -9,6 +9,7 @@ import { LabelWords, nodeLabels } from '../../app/logic/labels';
 import { Logic, LogicTree, TOP, branchEnd, cleanLogic, logicTree, placedIn, subtreeOf, withPlacement, withoutBlock } from '../../app/logic/tree';
 import { ResultsOp, resultsCommitMessage } from '../../editor/results/ops';
 import { DEFAULT_PREAMBLE } from '../../editor/tex/document';
+import { applyRules } from '../../editor/results/table/rules';
 import { ResultBlock, ResultBlockKind, ResultPaper } from '../../types';
 import { Library, ToolError } from './library';
 
@@ -234,13 +235,15 @@ export const TOOLS: Tool[] = [
     name: 'update_block',
     title: 'Change a block',
     description:
-      "Replace the LaTeX of one block. Keep its kind: a text block holds text with its headings (\\section…), a figure block one figure environment, a table block one table environment. OnizukaTex compiles it the next time the paper is open there, so compile errors do not show here: keep the LaTeX valid and in the paper's own style.",
+      "Replace the LaTeX of one block. Keep its kind: a text block holds text with its headings (\\section…), a figure block one figure environment, a table block one table environment. OnizukaTex compiles it the next time the paper is open there, so compile errors do not show here: keep the LaTeX valid and in the paper's own style. A table block may start with a '% onizukatex-table-rules {…}' line: keep it, and change only the numbers; the table's cell colours, bold and underlined best numbers and decimals follow from those rules when it is saved.",
     inputSchema: object({ paper: PAPER, block: BLOCK, source: { type: 'string', description: "The block's new LaTeX, in full." } }, ['paper', 'block', 'source']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     run: async (args, library) => {
       const paper = await paperIn(library, args);
       const block = blockOf(paper, args.block);
-      const source = latexOf(args.source, "the block's LaTeX");
+      // A table keeps the rules on its first line: they recolour it and mark its best numbers again.
+      const given = latexOf(args.source, "the block's LaTeX");
+      const source = block.kind === 'table' ? applyRules(given) : given;
       if (source === (block.source ?? '')) return `${block.id} already has this LaTeX; nothing changed.`;
       await library.save({ kind: 'putBlock', paperId: paper.id, block: { id: block.id, kind: block.kind, source } }, message('update block in', paper), [], stillThere(paper.id, [block.id]));
       return `Saved the new LaTeX of ${block.id} in "${paper.title}". ${compiledLater}`;
@@ -282,7 +285,7 @@ export const TOOLS: Tool[] = [
           : parent
             ? indexOf(branchEnd(paper, tree, parent)) + 1
             : paper.blocks.length;
-      const block: ResultBlock = { id: newBlockId(), kind: kind as ResultBlockKind, source };
+      const block: ResultBlock = { id: newBlockId(), kind: kind as ResultBlockKind, source: kind === 'table' ? applyRules(source) : source };
       const blocks = [...paper.blocks.slice(0, at), block, ...paper.blocks.slice(at)];
       const ops: ResultsOp[] = [{ kind: 'putBlock', paperId: paper.id, block, at }];
       if (parent) ops.push(logicPatch(paper, blocks, withPlacement(blocks, logic, block.id, parent), paper.relations ?? []));

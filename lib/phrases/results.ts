@@ -183,6 +183,7 @@ export const { t, useT, table } = phrases({
   // The table's two modes: "Visual" and "LaTeX mode", as the table editor's messages call them (lib/phrases/table.ts).
   表格编辑方式: { ja: '表の編集モード', en: 'Table editing mode' },
   可视化: { ja: 'ビジュアル', en: 'Visual' },
+  规则: { ja: 'ルール', en: 'Rules' },
   撤销表格修改: { ja: '表の変更を元に戻す', en: 'Undo table change' },
   撤销: { ja: '元に戻す', en: 'Undo' },
   重做表格修改: { ja: '表の変更をやり直す', en: 'Redo table change' },

@@ -8,6 +8,7 @@ import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
 import { ArticleCarry, LiveArticle, compileLive } from '../../editor/results/article';
 import { describeFailure } from '../../editor/results/numbering';
+import { applyRules } from '../../editor/results/table/rules';
 import { ResultsOp, applyResultsOp, resultsCommitMessage } from '../../editor/results/ops';
 import { getTexEngine } from '../../editor/tex/engine';
 import { blockChanges, blocksOf } from '../../app/writing/document';
@@ -53,7 +54,10 @@ export async function saveArticleText(
 ): Promise<Message | null> {
   const inBody = paper.blocks.filter((block) => block.source?.trim());
   const changes = blockChanges(inBody, blocksOf(body), newBlockId);
-  const ops: ResultsOp[] = changes.put.filter((change) => change.at === undefined).map((change) => ({ kind: 'putBlock', paperId: paper.id, block: change.block }));
+  // A table is saved as its rules write it (editor/results/table/rules.ts).
+  const ops: ResultsOp[] = changes.put
+    .filter((change) => change.at === undefined)
+    .map((change) => ({ kind: 'putBlock', paperId: paper.id, block: change.block.kind === 'table' && change.block.source ? { ...change.block, source: applyRules(change.block.source) } : change.block }));
   if (preamble !== undefined && preamble !== (paper.preamble ?? '')) {
     ops.unshift({ kind: 'patchPaper', id: paper.id, fields: { preamble } });
     // The paper's title follows the one its preamble sets.

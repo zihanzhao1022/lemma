@@ -211,13 +211,19 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, Props>(function CodeEditor
     view.current?.dispatch({ effects: hint.current.reconfigure(placeholder ? emptyHint(placeholder) : []) });
   }, [placeholder]);
 
-  // Text set from outside (not typed here) replaces the document.
+  // Text set from outside (not typed here) replaces the part of the document that differs, so a cursor elsewhere
+  // (e.g. while a table's rules recolour its cells) stays where it was.
   useEffect(() => {
     const editor = view.current;
-    if (!editor || editor.state.doc.toString() === value) return;
+    const current = editor?.state.doc.toString();
+    if (!editor || current === undefined || current === value) return;
     // A visual/table undo replaces the whole source; its old positions cannot be followed incrementally.
     snapshots.current.clear();
-    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
+    let head = 0;
+    while (head < current.length && head < value.length && current[head] === value[head]) head += 1;
+    let tail = 0;
+    while (tail < current.length - head && tail < value.length - head && current[current.length - 1 - tail] === value[value.length - 1 - tail]) tail += 1;
+    editor.dispatch({ changes: { from: head, to: current.length - tail, insert: value.slice(head, value.length - tail) } });
   }, [value]);
 
   useEffect(() => {

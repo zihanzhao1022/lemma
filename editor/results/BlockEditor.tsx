@@ -33,6 +33,8 @@ import { ResultsOp, applyResultsOp, resultsCommitMessage } from './ops';
 import { createBlockPreview } from './preview';
 import { exportTex, preambleNames } from './texNames';
 import TableVisualEditor from './table/TableVisualEditor';
+import TableRulesPanel from './table/TableRulesPanel';
+import { applyRules, readRules } from './table/rules';
 import { convertedBlock, filesKeptVersionsUse } from './convert';
 import FileTree from './FileTree';
 import { insertionFor } from './attachmentTree';
@@ -50,6 +52,8 @@ const KIND: Record<ResultBlockKind, { label: string; add: string; edit: string }
   table: { label: N_('表格'), add: N_('添加表格'), edit: N_('编辑表格') },
 };
 const COMPILE_DELAY_MS = 1000;
+/** How long typing pauses before a table's rules recolour it. */
+const TABLE_RULES_DELAY_MS = 400;
 
 interface Compiled {
   result: BlockCompileResult;
@@ -114,7 +118,7 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
   /** A drag with files is over the editor. */
   const [dropping, setDropping] = useState(false);
   const [tab, setTab] = useState<'code' | 'preview'>('code');
-  const [tableMode, setTableMode] = useState<'visual' | 'latex'>(() =>
+  const [tableMode, setTableMode] = useState<'visual' | 'latex' | 'rules'>(() =>
     !sourceLocation && block.kind === 'table' && parseTable(original, preambleOf(paper)).ok ? 'visual' : 'latex',
   );
   const [sourceTarget, setSourceTarget] = useState<SourcePosition | null>(sourceLocation ?? null);
@@ -261,6 +265,16 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
     [preview],
   );
 
+  // A table that keeps rules is recoloured (and its best numbers marked again) a moment after its numbers change.
+  useEffect(() => {
+    if (block.kind !== 'table' || !readRules(source)) return undefined;
+    const timer = setTimeout(() => {
+      const applied = applyRules(sourceRef.current);
+      if (applied !== sourceRef.current) setSource(applied);
+    }, TABLE_RULES_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [block.kind, source]);
+
   // Compile a moment after typing stops, and as soon as the attachments are in.
   useEffect(() => {
     if (!files) return undefined;
@@ -310,6 +324,9 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
   const save = () =>
     run(async () => {
       if (!files) return;
+      // A table's rules are applied before it is saved, even when typing stopped only now.
+      const source = block.kind === 'table' ? applyRules(sourceRef.current) : sourceRef.current;
+      if (source !== sourceRef.current) setSource(source);
       if (!source.trim()) {
         setProblem(() => t('请先输入内容'));
         return;
@@ -494,7 +511,7 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
     if (code) editor.current?.insert(code);
   };
   // The visual table editor has no cursor to insert at.
-  const canInsert = !(block.kind === 'table' && tableMode === 'visual');
+  const canInsert = !(block.kind === 'table' && tableMode !== 'latex');
 
   // Files and folders dropped anywhere on the editor go to the file tree; the page behind must not get them.
   const dragHandlers = {
@@ -669,15 +686,15 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
           className="absolute inset-y-0 left-0 z-20 shadow-xl lg:static lg:z-auto lg:shadow-none"
         />
       )}
-      <div className={`flex-1 min-w-0 min-h-0 grid ${block.kind === 'table' && tableMode === 'visual' ? 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-2'}`}>
+      <div className={`flex-1 min-w-0 min-h-0 grid ${block.kind === 'table' && tableMode !== 'latex' ? 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : 'lg:grid-cols-2'}`}>
         <section className={`min-h-0 min-w-0 flex-col border-r border-gray-200 ${tab === 'code' ? 'flex' : 'hidden lg:flex'}`}>
           {block.kind === 'table' && (
             <div className="flex items-center gap-3 px-3 py-2 border-b border-gray-200 bg-white">
               <div className="inline-flex rounded-lg bg-purple-50 p-1 gap-1" role="group" aria-label={t('表格编辑方式')}>
-                {(['visual', 'latex'] as const).map((mode) => (
+                {(['visual', 'latex', 'rules'] as const).map((mode) => (
                   <button key={mode} type="button" aria-pressed={tableMode === mode} onClick={() => setTableMode(mode)}
                     className={`rounded-md px-3 py-1.5 text-sm ${tableMode === mode ? 'bg-white text-purple-700 shadow-sm font-medium' : 'text-gray-500 hover:text-purple-700'}`}>
-                    {mode === 'visual' ? t('可视化') : 'LaTeX'}
+                    {mode === 'visual' ? t('可视化') : mode === 'rules' ? t('规则') : 'LaTeX'}
                   </button>
                 ))}
               </div>
@@ -690,7 +707,9 @@ const BlockEditor: React.FC<Props> = ({ paper, blockId, blockKind = 'text', afte
               <span className="text-xs text-gray-400 ml-auto hidden sm:inline">{t('自动更新预览')}</span>
             </div>
           )}
-          {block.kind === 'table' && tableMode === 'visual' ? (
+          {block.kind === 'table' && tableMode === 'rules' ? (
+            <TableRulesPanel source={source} preamble={preamble} onChange={changeSource} disabled={saving} />
+          ) : block.kind === 'table' && tableMode === 'visual' ? (
             table?.ok ? <TableVisualEditor value={table.table} onChange={(next) => changeSource(serializeTable(next))} disabled={saving} /> : (
               <div className="m-5 rounded-xl border border-purple-100 bg-purple-50/50 p-5 text-sm text-gray-600 space-y-3">
                 <p className="font-medium text-gray-900">{t('这张表格需要使用 LaTeX 编辑')}</p>

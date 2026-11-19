@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronRight, Crosshair, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Crosshair, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
 import { describeSaveError } from '../../editor/backend';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
@@ -17,6 +17,9 @@ import { ResultPaper } from '../../types';
 import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, locate, markableInputs, parseMarks, placeOf, withMarks } from './document';
 import { fillFloatCache, withCachedFloats } from './floatCache';
 import { preambleFormat, rejectFormat, splitForFormat } from './preambleFormat';
+import { bodyRuleEdits, tableBlockAt, tableBlocks } from './tableRules';
+import TableRulesPanel from '../../editor/results/table/TableRulesPanel';
+import { applyRules } from '../../editor/results/table/rules';
 import { SHADOWED, attachedKey, attachedName, editableText, isLatex } from './files';
 import type { Spot } from './pageAlign';
 import { deleteAfter, deleteBefore, escapeTyped, moveCaret, typedSinceText } from './pageEdits';
@@ -32,6 +35,8 @@ import { inverseSearch } from './sourceSearch';
 
 const MAIN = 'main.tex';
 const PREAMBLE = 'preamble.tex';
+/** How long typing pauses before the tables' rules recolour them (editor/results/table/rules.ts). */
+const TABLE_RULES_PAUSE_MS = 400;
 /** How long typing in the code pauses before a compile: a compile takes a fraction of a second, and typing during one asks for the next. */
 const CODE_PAUSE_MS = 300;
 
@@ -383,7 +388,11 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       const changes = blockChanges(paper.blocks, blocksOf(current[MAIN] ?? ''), newBlockId);
       const ops: ResultsOp[] = [];
       if (current[PREAMBLE] !== saved.current[PREAMBLE]) ops.push({ kind: 'patchPaper', id: paper.id, fields: { preamble: current[PREAMBLE] } });
-      for (const change of changes.put) ops.push({ kind: 'putBlock', paperId: paper.id, block: change.block, ...(change.at === undefined ? {} : { at: change.at }) });
+      for (const change of changes.put) {
+        // A table is saved as its rules write it, even when typing stopped only now.
+        const block = change.block.kind === 'table' && change.block.source ? { ...change.block, source: applyRules(change.block.source) } : change.block;
+        ops.push({ kind: 'putBlock', paperId: paper.id, block, ...(change.at === undefined ? {} : { at: change.at }) });
+      }
       for (const block of changes.deleted) ops.push({ kind: 'deleteBlock', paperId: paper.id, blockId: block.id });
       if (changes.order) ops.push({ kind: 'reorderBlocks', paperId: paper.id, ids: changes.order });
       const writes: FileWrite[] = [];
@@ -413,6 +422,42 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       setSaving(false);
     }
   }, [paper, onSave, saving, setProblem]);
+
+  /* ------------------------------------------------------------------ table rules */
+
+  /** Replaces [from, to) of main.tex with `insert` in the editor, changing only what differs (the cursor stays put). */
+  const replaceInMain = useCallback((from: number, to: number, insert: string) => {
+    const body = textsRef.current?.[MAIN] ?? '';
+    const old = body.slice(from, to);
+    if (old === insert) return;
+    let head = 0;
+    while (head < old.length && head < insert.length && old[head] === insert[head]) head += 1;
+    let tail = 0;
+    while (tail < old.length - head && tail < insert.length - head && old[old.length - 1 - tail] === insert[insert.length - 1 - tail]) tail += 1;
+    const changed = editor.current?.change(MAIN, from + head, to - tail, insert.slice(head, insert.length - tail), 'input.type');
+    if (!changed) setTexts((current) => (current ? { ...current, [MAIN]: body.slice(0, from) + insert + body.slice(to) } : current));
+  }, []);
+  // The table whose rules are being set, by its block id.
+  const [rulesFor, setRulesFor] = useState<string | null>(null);
+  const openTableRules = () => {
+    const body = textsRef.current?.[MAIN] ?? '';
+    const line = (editor.current?.cursorLine() ?? 1) - 1;
+    const block = tableBlockAt(body, line);
+    if (block) setRulesFor(block.id);
+    else setProblem(() => t('把光标放在一个表格块里，再设置它的规则'));
+  };
+  // Tables that keep rules are recoloured a moment after their numbers change.
+  useEffect(() => {
+    const body = texts?.[MAIN];
+    if (!body || !body.includes('onizukatex-table-rules')) return undefined;
+    const timer = window.setTimeout(() => {
+      for (const edit of [...bodyRuleEdits(textsRef.current?.[MAIN] ?? '')].reverse()) {
+        if (!editor.current?.change(MAIN, edit.from, edit.to, edit.insert, 'input.type')) break;
+      }
+    }, TABLE_RULES_PAUSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [texts]);
+  const rulesBlock = rulesFor && texts ? tableBlocks(texts[MAIN] ?? '').find((block) => block.id === rulesFor) : undefined;
 
   const files = useMemo<SourceFile[]>(
     () =>
@@ -814,6 +859,10 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
                 <Crosshair size={14} />
                 <span className="hidden xl:inline">{t('定位到 PDF')}</span>
               </button>
+              <button type="button" onClick={openTableRules} className={bar} title={t('为光标所在的表格设置颜色、最优标记和数字格式')}>
+                <Table2 size={14} />
+                <span className="hidden xl:inline">{t('表格规则')}</span>
+              </button>
             </>
           )}
           <span className="ml-auto hidden whitespace-nowrap text-xs text-gray-400 lg:inline">{saving ? t('保存中…') : dirty ? t('有未保存的修改') : t('已保存')}</span>
@@ -951,6 +1000,23 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
           onUpload={(chosen) => void uploadPicture(picker, chosen)}
           onClose={() => setPicker(null)}
         />
+      )}
+      {rulesBlock && texts && (
+        // Beside the PDF, which follows each change as the code does.
+        <div role="dialog" aria-label={t('表格规则')} className="absolute bottom-3 left-3 top-14 z-30 flex w-[min(560px,48%)] flex-col overflow-hidden rounded-xl border border-black/[0.08] bg-gray-50 shadow-2xl">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white px-3">
+            <Table2 size={15} className="text-purple-700" />
+            <strong className="text-sm text-gray-900">{t('表格规则')}</strong>
+            <button type="button" onClick={() => setRulesFor(null)} aria-label={t('关闭')} className="ml-auto rounded p-1 text-gray-500 hover:bg-black/[0.05] hover:text-gray-900">
+              <X size={15} />
+            </button>
+          </div>
+          <TableRulesPanel
+            source={(texts[MAIN] ?? '').slice(rulesBlock.from, rulesBlock.to)}
+            preamble={texts[PREAMBLE] ?? ''}
+            onChange={(next) => replaceInMain(rulesBlock.from, rulesBlock.to, next)}
+          />
+        </div>
       )}
     </div>
   );
