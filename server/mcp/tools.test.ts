@@ -66,6 +66,7 @@ function fakeLibrary(papers: ResultPaper[] = [paper()], files: Record<string, st
       return state.papers;
     },
     readText: async (path) => files[path] ?? null,
+    readBytes: async (path) => new TextEncoder().encode(files[path] ?? ''),
   };
   return { library, state };
 }
@@ -125,6 +126,9 @@ describe('the MCP endpoint', () => {
       'add_slide',
       'move_slide',
       'delete_slide',
+      'list_results',
+      'insert_result',
+      'sync_result',
     ]);
     for (const item of listed.result.tools) {
       expect(item).toMatchObject({ inputSchema: { type: 'object' } });

@@ -13,6 +13,7 @@ import { applyRules } from '../../editor/results/table/rules';
 import { ResultBlock, ResultBlockKind, ResultPaper } from '../../types';
 import { ToolError } from './library';
 import { MAX_TEXT, PAPER, Schema, Tool, given, message, object, optional, paperIn } from './shared';
+import { RESULT_TOOLS } from './results';
 import { SLIDE_TOOLS } from './slides';
 
 export type { Tool } from './shared';
@@ -101,7 +102,7 @@ function describePaper(paper: ResultPaper): string {
   lines.push('', `Blocks, in the paper's order (${paper.blocks.length}):`);
   paper.blocks.forEach((block, index) => {
     const label = labels[block.id];
-    const notes = [block.hidden ? 'hidden from readers' : '', block.output ? '' : 'no PDF yet'].filter(Boolean);
+    const notes = [block.hidden ? 'hidden from readers' : '', block.output ? '' : 'no PDF yet', block.origin ? `copy of ${block.origin.block} in paper ${block.origin.paper} (sync_result)` : ''].filter(Boolean);
     const caption = block.kind !== 'text' && label?.detail ? ` — ${label.detail}` : '';
     lines.push(`${index + 1}. ${block.id} [${block.kind}] ${label?.title ?? ''}${caption}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`);
   });
@@ -392,4 +393,5 @@ export const TOOLS: Tool[] = [
     },
   },
   ...SLIDE_TOOLS,
+  ...RESULT_TOOLS,
 ];

@@ -2,10 +2,10 @@
  * Moving a figure or table between papers, as results operations: inserting a copy (from the library), taking its
  * home's changes (pull), giving it this copy's (push). What else the source needs comes along (carry.ts).
  */
-import { ReadFile, attachmentPath, newBlockId, preambleOf, putFiles } from '../../editor/results/actions';
-import { FileWrite } from '../../editor/results/backend';
-import { REFERENCES_FILE } from '../../editor/results/compile';
-import { ResultsOp } from '../../editor/results/ops';
+// Light modules only: the MCP server uses this too, where the TeX engine and PDF.js do not load.
+import { REFERENCES_FILE, ReadFile, attachmentPath, newBlockId, preambleOf, putFiles } from '../../editor/results/attachments';
+import type { FileWrite } from '../../editor/results/backend';
+import type { ResultsOp } from '../../editor/results/ops';
 import { BlockOrigin, ResultBlock, ResultPaper } from '../../types';
 import {
   Definition,

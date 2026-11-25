@@ -18,6 +18,7 @@ const INSTRUCTIONS = [
   "Every change is saved at once as a commit to the person's repository.",
   "LaTeX does not run here: OnizukaTex compiles changed blocks the next time the paper is open there, so keep the LaTeX valid and in the paper's own style, and tell the person to open the paper in OnizukaTex to see the result.",
   "A paper's logic is a tree of its blocks starting at the introduction (each experiment under the method it tests, for example), plus links drawn between related blocks; OnizukaTex presents the paper and builds its slides along it.",
+  "The figures and tables of all the person's papers form a results library (list_results): to use one in another paper, insert_result makes a linked copy rather than add_block with pasted LaTeX, and sync_result pulls or pushes changes between a copy and the block it came from.",
 ].join(' ');
 
 type Id = string | number | null;

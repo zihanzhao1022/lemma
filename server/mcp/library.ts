@@ -4,7 +4,7 @@
  */
 import { LemmaRepo, reachableRepos, repoLabel, repoStatuses } from '../../app/github/repo';
 import { GitHubError, TreeEntry, createGitHubApi } from '../../editor/github';
-import { RESULTS_PATH, commitResults, parsePapers, readTextFile } from '../../editor/results/backend';
+import { RESULTS_PATH, commitResults, parsePapers, readTextFile, toBase64 } from '../../editor/results/backend';
 import { ResultsOp } from '../../editor/results/ops';
 import { ResultPaper } from '../../types';
 
@@ -17,6 +17,12 @@ export interface TextWrite {
   content: string;
 }
 
+/** Any other file a save writes along with the papers (an attachment copied from another paper). */
+export interface BytesWrite {
+  path: string;
+  data: Uint8Array;
+}
+
 export interface Library {
   /** owner/name of the repository. */
   repo: string;
@@ -26,9 +32,11 @@ export interface Library {
    * an HTML deck) and `deletes` (files no paper refers to any more); the papers after. `check` sees the latest
    * papers first and throws to stop.
    */
-  save(op: ResultsOp, message: string, deletes?: string[], check?: (latest: ResultPaper[]) => void, writes?: TextWrite[]): Promise<ResultPaper[]>;
+  save(op: ResultsOp, message: string, deletes?: string[], check?: (latest: ResultPaper[]) => void, writes?: (TextWrite | BytesWrite)[]): Promise<ResultPaper[]>;
   /** A text file of the repository; null when there is none. */
   readText(path: string): Promise<string | null>;
+  /** A file's bytes. */
+  readBytes(path: string): Promise<Uint8Array>;
 }
 
 /**
@@ -83,8 +91,18 @@ export async function openLibrary(token: string, login: string, wanted?: string,
   return {
     repo: repoLabel(repo),
     papers: async () => parsePapers(await readTextFile(api, RESULTS_PATH, await api.headSha())),
-    save: async (op, message, deletes = [], check, writes = []) =>
-      (await commitResults(api, op, writes.map((write): TreeEntry => ({ path: write.path, mode: '100644', type: 'blob', content: write.content })), deletes, message, check)).papers,
+    save: async (op, message, deletes = [], check, writes = []) => {
+      const entries = Promise.all(
+        writes.map(
+          async (write): Promise<TreeEntry> =>
+            'content' in write
+              ? { path: write.path, mode: '100644', type: 'blob', content: write.content }
+              : { path: write.path, mode: '100644', type: 'blob', sha: await api.createBlob(toBase64(write.data)) },
+        ),
+      );
+      return (await commitResults(api, op, entries, deletes, message, check)).papers;
+    },
     readText: async (path) => readTextFile(api, path, await api.headSha()),
+    readBytes: async (path) => api.readBytes(path, await api.headSha()),
   };
 }

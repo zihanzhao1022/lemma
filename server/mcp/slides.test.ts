@@ -37,11 +37,13 @@ function fakeLibrary(papers: ResultPaper[] = [paper()]) {
     save: async (op, message, _deletes = [], check, writes = []) => {
       check?.(state.papers);
       state.papers = applyResultsOp(state.papers, op);
-      for (const write of writes) state.files[write.path] = write.content;
-      state.commits.push({ op, message, writes });
+      const texts = writes.filter((write): write is TextWrite => 'content' in write);
+      for (const write of texts) state.files[write.path] = write.content;
+      state.commits.push({ op, message, writes: texts });
       return state.papers;
     },
     readText: async (path) => state.files[path] ?? null,
+    readBytes: async (path) => new TextEncoder().encode(state.files[path] ?? ''),
   };
   return { library, state };
 }

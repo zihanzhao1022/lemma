@@ -1,3 +1,4 @@
+import { REFERENCES_FILE } from './attachments';
 import { t } from '../../lib/phrases/results';
 import { BlockKind, buildBlockDocument } from '../tex/document';
 import { TexEngine } from '../tex/engine';
@@ -139,8 +140,7 @@ export function describeIssue(issue: BlockIssue): string {
   return t('{where}第 {line} 行：{message}', { where, line: issue.line, message: issue.message });
 }
 
-/** The bibliography file a paper's blocks cite from, an attachment like the others. */
-export const REFERENCES_FILE = 'references.bib';
+export { REFERENCES_FILE };
 
 export interface ReferencesCompileResult {
   ok: boolean;
