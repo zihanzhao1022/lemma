@@ -9,6 +9,7 @@ import { slidesPath } from '../../editor/results/slidesFile';
 import { useT } from '../../lib/phrases/app';
 import { FloatKind, ResultPaper } from '../../types';
 import { LabelWords, nodeLabels } from '../logic/labels';
+import { blockNumber } from '../../lib/headings';
 import { LibraryItem, filterItems, libraryItems } from './results';
 import Thumb from './Thumb';
 import { useSyncWords } from './SyncDialog';
@@ -27,6 +28,11 @@ interface Props {
   save: ResultsSave;
   /** Compiles a paper's changed blocks. */
   compile: (paperId: string) => void;
+  /**
+   * One paper's view (its Results tab): its own figures and tables, then the copies it took from other papers.
+   * Opening a block goes through `onOpen`; `onImport` offers to insert one from the library.
+   */
+  scope?: { paper: ResultPaper; onOpen: (paper: ResultPaper, blockId: string) => void; onImport?: () => void };
 }
 
 /** Where an item is used, in a line: cited in the text, on slides. */
@@ -62,7 +68,7 @@ const Uses: React.FC<{ item: LibraryItem }> = ({ item }) => {
  * The Management page: every figure and table of the account's own papers, grouped by the paper each belongs to,
  * with where each is used.
  */
-const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, compile }) => {
+const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, compile, scope }) => {
   const t = useT();
   const navigate = useNavigate();
   const [kind, setKind] = useState<FloatKind | undefined>(undefined);
@@ -98,7 +104,17 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
   // Inserting the item shown into another paper; comparing one of its copies with it.
   const [inserting, setInserting] = useState(false);
   const [syncing, setSyncing] = useState<{ paperId: string; blockId: string } | null>(null);
-  const shown = useMemo(() => filterItems(items, { kind, paper: paperId || undefined, search }), [items, kind, paperId, search]);
+  const scoped = scope?.paper;
+  const shown = useMemo(() => filterItems(items, { kind, paper: (scoped?.id ?? paperId) || undefined, search }), [items, kind, paperId, search, scoped]);
+  // In one paper's view: the copies it took from other papers, each with the item it came from and its number here.
+  const taken = useMemo(() => {
+    if (!scoped) return [];
+    return filterItems(items, { kind, search }).flatMap((item) =>
+      item.copies
+        .filter((copy) => copy.paper.id === scoped.id)
+        .map((copy) => ({ item, copy, number: blockNumber(scoped.blocks, scoped.blocks.findIndex((block) => block.id === copy.block.id)) })),
+    );
+  }, [items, kind, search, scoped]);
   const groups = useMemo(() => {
     const byPaper = new Map<string, { paper: ResultPaper; items: LibraryItem[] }>();
     for (const item of shown) {
@@ -111,12 +127,17 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
     }
     return [...byPaper.values()];
   }, [shown]);
+  // What the chips count: everything, or in one paper's view its own items and the copies it took.
+  const counted = useMemo(
+    () => (scoped ? [...items.filter((item) => item.paper.id === scoped.id), ...items.flatMap((item) => item.copies.filter((copy) => copy.paper.id === scoped.id).map(() => item))] : items),
+    [items, scoped],
+  );
   const counts = useMemo(
     () => ({
-      figure: items.filter((item) => item.kind === 'figure').length,
-      table: items.filter((item) => item.kind === 'table').length,
+      figure: counted.filter((item) => item.kind === 'figure').length,
+      table: counted.filter((item) => item.kind === 'table').length,
     }),
-    [items],
+    [counted],
   );
 
   const words = useMemo<LabelWords>(
@@ -129,7 +150,9 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
     [t],
   );
   const name = (item: LibraryItem) => (item.kind === 'figure' ? words.figure(item.number) : words.table(item.number));
-  const open = (item: LibraryItem) => navigate(`/p/${login}/${item.paper.slug}?block=${encodeURIComponent(item.block.id)}`);
+  const openBlock = (paper: ResultPaper, blockId: string) =>
+    scope ? scope.onOpen(paper, blockId) : navigate(`/p/${login}/${paper.slug}?block=${encodeURIComponent(blockId)}`);
+  const open = (item: LibraryItem) => openBlock(item.paper, item.block.id);
   const detail = chosen ? items.find((item) => item.key === chosen) : undefined;
   const detailLabels = useMemo(() => (detail ? nodeLabels(detail.paper, words) : {}), [detail, words]);
 
@@ -146,7 +169,19 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <h1 className="galley-display text-[2rem] text-gray-900">{t('成果管理')}</h1>
+        {scoped ? (
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="galley-display text-[1.6rem] text-gray-900">{t('本文的成果')}</h1>
+            {scope?.onImport && (
+              <button type="button" onClick={scope.onImport} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-sm text-gray-700 hover:bg-gray-50">
+                <Plus size={14} />
+                {t('从成果库插入')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <h1 className="galley-display text-[2rem] text-gray-900">{t('成果管理')}</h1>
+        )}
         <label className="relative block w-full sm:w-72">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
@@ -162,7 +197,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
 
       <div className="mt-5 flex flex-wrap items-center gap-2 rounded-xl bg-[#f5f5f7] p-1.5">
         <button type="button" className={chip(kind === undefined)} onClick={() => setKind(undefined)}>
-          {t('全部成果')} <span className="text-gray-400">{items.length}</span>
+          {t('全部成果')} <span className="text-gray-400">{counted.length}</span>
         </button>
         <button type="button" className={chip(kind === 'figure')} onClick={() => setKind('figure')}>
           <ImageIcon size={14} />
@@ -172,6 +207,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
           <Table2 size={14} />
           {t('表格')} <span className="text-gray-400">{counts.table}</span>
         </button>
+        {!scoped && (
         <select
           value={paperId}
           onChange={(event) => setPaperId(event.target.value)}
@@ -185,16 +221,19 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
             </option>
           ))}
         </select>
+        )}
       </div>
 
-      {groups.length === 0 ? (
-        <p className="px-3 py-14 text-gray-800">{items.length === 0 ? t('你的论文里还没有图和表格。') : t('没有找到这样的图或表格')}</p>
+      {groups.length === 0 && taken.length === 0 ? (
+        <p className="px-3 py-14 text-gray-800">
+          {counted.length > 0 ? t('没有找到这样的图或表格') : scoped ? t('这篇论文还没有图和表格。') : t('你的论文里还没有图和表格。')}
+        </p>
       ) : (
         groups.map((group) => (
           <section key={group.paper.id} className="mt-8">
             <h2 className="flex items-baseline gap-2 border-b border-black/[0.06] pb-2">
-              <span className="truncate text-base font-medium text-gray-900">{group.paper.title}</span>
-              {group.paper.venue && <span className="truncate text-sm text-gray-400">{group.paper.venue}</span>}
+              <span className="truncate text-base font-medium text-gray-900">{scoped ? t('本文的图和表格') : group.paper.title}</span>
+              {!scoped && group.paper.venue && <span className="truncate text-sm text-gray-400">{group.paper.venue}</span>}
               <span className="ml-auto shrink-0 text-xs text-gray-400">{group.items.length}</span>
             </h2>
             <ul className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -224,6 +263,41 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
             </ul>
           </section>
         ))
+      )}
+
+      {taken.length > 0 && (
+        <section className="mt-8">
+          <h2 className="flex items-baseline gap-2 border-b border-black/[0.06] pb-2">
+            <span className="text-base font-medium text-gray-900">{t('从其他论文引用的')}</span>
+            <span className="ml-auto shrink-0 text-xs text-gray-400">{taken.length}</span>
+          </h2>
+          <ul className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {taken.map(({ item, copy, number }) => (
+              <li key={copy.block.id}>
+                <button
+                  type="button"
+                  onClick={() => setChosen(item.key)}
+                  className="galley-press block w-full rounded-xl bg-[#f5f5f7] p-2 text-left transition-shadow duration-150 hover:shadow-[0_0_0_2px_rgba(167,139,250,0.55)]"
+                >
+                  <Thumb block={copy.block} alt={item.caption} readFile={access.readFile} />
+                  <div className="px-1.5 pb-1 pt-2.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-medium text-gray-900">{copy.block.kind === 'figure' ? words.figure(number) : words.table(number)}</span>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${copy.state === 'synced' ? 'bg-gray-200 text-gray-600' : 'bg-violet-100 text-violet-800'}`}
+                      >
+                        <GitCompareArrows size={11} />
+                        {syncWords[copy.state]}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-gray-500">{t('来自《{title}》', { title: item.paper.title })}</p>
+                    <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-gray-600">{item.caption || <span className="text-gray-400">{t('没有图注')}</span>}</p>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {detail && (
@@ -295,7 +369,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
                         </button>
                         <button
                           type="button"
-                          onClick={() => navigate(`/p/${login}/${copy.paper.slug}?block=${encodeURIComponent(copy.block.id)}`)}
+                          onClick={() => openBlock(copy.paper, copy.block.id)}
                           className="shrink-0 rounded-md px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
                         >
                           {t('打开')}

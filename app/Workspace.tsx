@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Eye, FileCode2, LayoutList, MonitorPlay, Network, Pencil, Presentation as PresentIcon, Share2 } from 'lucide-react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Eye, FileCode2, LayoutGrid, LayoutList, MonitorPlay, Network, Pencil, Presentation as PresentIcon, Share2 } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ContentContext } from '../components/ContentContext';
 import { EditModeContext, EditModeValue } from '../components/EditMode';
 import { PickedFile } from '../components/results/droppedFiles';
@@ -40,6 +40,7 @@ const LogicMode = lazy(() => import('./logic/LogicMode'));
 const Present = lazy(() => import('./slides/Present'));
 const ResultPicker = lazy(() => import('./management/CarryDialogs').then((module) => ({ default: module.ResultPicker })));
 const SyncDialog = lazy(() => import('./management/SyncDialog'));
+const ResultsLibrary = lazy(() => import('./management/ResultsLibrary'));
 
 const noop = () => {};
 
@@ -79,7 +80,9 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   // tree. Its owner starts writing; whoever it is shared with reads the web page (the other views are the owner's),
   // and so does a link to one of its blocks (?block=…, from the research space or the Management page).
   const [search] = useSearchParams();
-  const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic'>(owner && !search.get('block') ? 'write' : 'blocks');
+  // The owner's Results tab lists this paper's figures and tables, and the copies it took from other papers.
+  const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic' | 'results'>(owner && !search.get('block') ? 'write' : 'blocks');
+  const navigate = useNavigate();
   // The writing, slide and logic views stay mounted once opened, so switching back and forth keeps their state.
   const [opened, setOpened] = useState<{ write?: boolean; slides?: boolean; logic?: boolean }>({});
   const bar = useRef<HTMLDivElement>(null);
@@ -263,7 +266,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     };
   }, [mode, barShown]);
   useEffect(() => {
-    if (mode !== 'blocks') setOpened((current) => (current[mode] ? current : { ...current, [mode]: true }));
+    if (mode !== 'blocks' && mode !== 'results') setOpened((current) => (current[mode] ? current : { ...current, [mode]: true }));
   }, [mode]);
 
   const present = () => {
@@ -336,6 +339,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                       ['blocks', <LayoutList key="icon" size={14} />, t('网页')],
                       ['slides', <MonitorPlay key="icon" size={14} />, t('幻灯片')],
                       ['logic', <Network key="icon" size={14} />, t('逻辑')],
+                      ['results', <LayoutGrid key="icon" size={14} />, t('成果')],
                     ] as const
                   ).map(([value, icon, label]) => (
                     <button
@@ -402,6 +406,31 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
               <Suspense fallback={null}>
                 <LogicMode key={paper.id} paper={paper} onSave={counted} top={top} visible={mode === 'logic'} onPresent={presentFrom} />
               </Suspense>
+            )}
+            {owner && mode === 'results' && (
+              <div className="fixed inset-x-0 bottom-0 z-20 overflow-y-auto bg-white" style={{ top }}>
+                <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 md:px-12">
+                  <Suspense fallback={null}>
+                    <ResultsLibrary
+                      login={account.account.login}
+                      papers={content.results}
+                      all={content.results}
+                      access={access}
+                      save={counted}
+                      compile={compileStale}
+                      scope={{
+                        paper,
+                        // A block opens on its paper's web page, this one's or another's.
+                        onOpen: (target, blockId) => {
+                          setMode('blocks');
+                          navigate(`/p/${account.account.login}/${target.slug}?block=${encodeURIComponent(blockId)}`);
+                        },
+                        onImport: () => importResult(paper.id),
+                      }}
+                    />
+                  </Suspense>
+                </div>
+              </div>
             )}
             {request?.kind === 'block' && target && (
               <Suspense fallback={null}>

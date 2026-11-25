@@ -718,4 +718,9 @@ export const { t, useT, table } = phrases({
   插入到另一篇论文: { ja: 'ほかの論文に挿入', en: 'Insert into another paper' },
   有副本和库里的版本不一致: { ja: 'ライブラリの版と異なるコピーがあります', en: 'A copy differs from the library’s version' },
   还没有放进别的论文: { ja: 'まだほかの論文に入っていません', en: 'Not in any other paper yet' },
+  成果: { ja: '成果', en: 'Results' },
+  本文的成果: { ja: 'この論文の成果', en: 'This paper’s results' },
+  本文的图和表格: { ja: 'この論文の図と表', en: 'Its own figures and tables' },
+  从其他论文引用的: { ja: 'ほかの論文から入れたもの', en: 'Copied from other papers' },
+  '这篇论文还没有图和表格。': { ja: 'この論文にはまだ図も表もありません。', en: 'This paper has no figures or tables yet.' },
 });
