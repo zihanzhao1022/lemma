@@ -127,16 +127,19 @@ describe('copies in the library', () => {
 });
 
 describe('tags', () => {
-  it('filters by a tag and lists the tags with their colours', async () => {
+  it('keeps several tags, reads the old single one, filters by all asked for', async () => {
     const { applyResultsOp } = await import('../../editor/results/ops');
-    let papers = [paper('a', [fig, tab])];
-    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 't1', mark: { color: '#ef4444', tag: ' main ' } });
-    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 'f1', mark: { tag: 'main' } });
+    let papers = [paper('a', [fig, { ...tab, mark: { color: '#ef4444', tag: 'old' } }])];
+    expect(tagsOf(libraryItems(papers))).toEqual([{ tag: 'old', count: 1 }]);
+    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 't1', mark: { color: '#ef4444', tags: [' main ', 'ablation', 'main', ''] } });
+    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 'f1', mark: { tags: ['main'] } });
     const items = libraryItems(papers);
-    expect(items[1].block.mark).toEqual({ color: '#ef4444', tag: 'main' });
-    expect(tagsOf(items)).toEqual([{ tag: 'main', color: '#ef4444', count: 2 }]);
-    expect(filterItems(items, { tag: 'main', kind: 'table' }).map((item) => item.key)).toEqual(['a/t1']);
-    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 't1', mark: { tag: '  ' } });
+    expect(items[1].block.mark).toEqual({ color: '#ef4444', tags: ['main', 'ablation'] });
+    expect(tagsOf(items)).toEqual([{ tag: 'main', count: 2 }, { tag: 'ablation', count: 1 }]);
+    expect(filterItems(items, { tags: ['main'] }).map((item) => item.key)).toEqual(['a/f1', 'a/t1']);
+    expect(filterItems(items, { tags: ['main', 'ablation'] }).map((item) => item.key)).toEqual(['a/t1']);
+    expect(filterItems(items, { search: 'ablation' }).map((item) => item.key)).toEqual(['a/t1']);
+    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 't1', mark: { tags: ['  '] } });
     expect(papers[0].blocks[1].mark).toBeUndefined();
   });
 });

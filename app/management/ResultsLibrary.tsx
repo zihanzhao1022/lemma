@@ -8,11 +8,12 @@ import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { resultsCommitMessage } from '../../editor/results/ops';
 import { slidesPath } from '../../editor/results/slidesFile';
 import { useT } from '../../lib/phrases/app';
-import { FloatKind, ResultBlock, ResultPaper, SpaceMark } from '../../types';
+import { tagsOfMark } from '../../editor/results/ops';
+import { FloatKind, ResultBlock, ResultMark, ResultPaper } from '../../types';
 import { LabelWords, nodeLabels } from '../logic/labels';
 import { blockNumber } from '../../lib/headings';
-import MarkEditor from '../space/MarkEditor';
 import { LibraryItem, filterItems, libraryItems, tagsOf } from './results';
+import TagsField, { MarkChips } from './TagsField';
 import Thumb from './Thumb';
 import { useSyncWords } from './SyncDialog';
 import { insertCopy } from './transfer';
@@ -21,20 +22,10 @@ const InsertIntoDialog = lazy(() => import('./CarryDialogs').then((module) => ({
 const SyncDialog = lazy(() => import('./SyncDialog'));
 const BlockEditor = lazy(() => import('../../editor/results/BlockEditor'));
 
-/** A figure or table's colour and tag, shown on its card. */
-const MarkChip: React.FC<{ mark?: SpaceMark }> = ({ mark }) =>
-  mark?.tag || mark?.color ? (
-    <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-white px-1.5 text-xs text-gray-700 ring-1 ring-black/[0.06]">
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: mark.color ?? '#d1d5db' }} />
-      {mark.tag && <span className="truncate">{mark.tag}</span>}
-    </span>
-  ) : null;
-
-/** The colour and tag of the item shown, saved a moment after each change (and when the panel closes). */
-const MarkField: React.FC<{ block: ResultBlock; onSave: (mark: SpaceMark) => void }> = ({ block, onSave }) => {
-  const t = useT();
-  const [draft, setDraft] = useState<SpaceMark | undefined>(block.mark);
-  const waiting = useRef<{ timer: number; mark: SpaceMark } | null>(null);
+/** The colour and tags of the item shown, saved a moment after each change (and when the panel closes). */
+const MarkField: React.FC<{ block: ResultBlock; known: string[]; onSave: (mark: ResultMark) => void }> = ({ block, known, onSave }) => {
+  const [draft, setDraft] = useState<ResultMark | undefined>(block.mark);
+  const waiting = useRef<{ timer: number; mark: ResultMark } | null>(null);
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
   const flush = () => {
@@ -45,12 +36,12 @@ const MarkField: React.FC<{ block: ResultBlock; onSave: (mark: SpaceMark) => voi
     saveRef.current(pending.mark);
   };
   useEffect(() => flush, []);
-  const change = (mark: SpaceMark) => {
+  const change = (mark: ResultMark) => {
     setDraft(mark);
     if (waiting.current) window.clearTimeout(waiting.current.timer);
     waiting.current = { mark, timer: window.setTimeout(flush, 700) };
   };
-  return <MarkEditor mark={draft} onChange={change} placeholder={t('标签，如：主实验、消融、附录')} />;
+  return <TagsField mark={draft} onChange={change} known={known} />;
 };
 
 interface Props {
@@ -141,18 +132,19 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
   const [syncing, setSyncing] = useState<{ paperId: string; blockId: string } | null>(null);
   // A block open in the LaTeX editor, from the panel: the item's own or one of its copies.
   const [editingBlock, setEditingBlock] = useState<{ paperId: string; blockId: string } | null>(null);
-  const [tag, setTag] = useState<string | undefined>(undefined);
+  // Tags chosen in the filter: items with all of them show.
+  const [chosenTags, setChosenTags] = useState<string[]>([]);
   const scoped = scope?.paper;
-  const shown = useMemo(() => filterItems(items, { kind, tag, paper: (scoped?.id ?? paperId) || undefined, search }), [items, kind, tag, paperId, search, scoped]);
+  const shown = useMemo(() => filterItems(items, { kind, tags: chosenTags, paper: (scoped?.id ?? paperId) || undefined, search }), [items, kind, chosenTags, paperId, search, scoped]);
   // In one paper's view: the copies it took from other papers, each with the item it came from and its number here.
   const taken = useMemo(() => {
     if (!scoped) return [];
-    return filterItems(items, { kind, tag, search }).flatMap((item) =>
+    return filterItems(items, { kind, tags: chosenTags, search }).flatMap((item) =>
       item.copies
         .filter((copy) => copy.paper.id === scoped.id)
         .map((copy) => ({ item, copy, number: blockNumber(scoped.blocks, scoped.blocks.findIndex((block) => block.id === copy.block.id)) })),
     );
-  }, [items, kind, tag, search, scoped]);
+  }, [items, kind, chosenTags, search, scoped]);
   const groups = useMemo(() => {
     const byPaper = new Map<string, { paper: ResultPaper; items: LibraryItem[] }>();
     for (const item of shown) {
@@ -171,8 +163,12 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
     [items, scoped],
   );
   const tags = useMemo(() => tagsOf([...new Map(counted.map((item) => [item.key, item])).values()]), [counted]);
-  const saveMark = (item: LibraryItem, mark: SpaceMark) => {
-    const same = (mark.color ?? '') === (item.block.mark?.color ?? '') && (mark.tag?.trim() ?? '') === (item.block.mark?.tag ?? '');
+  // Every tag in the library, for adding one used elsewhere with a click.
+  const allTags = useMemo(() => tagsOf(items).map((entry) => entry.tag), [items]);
+  const saveMark = (item: LibraryItem, mark: ResultMark) => {
+    const before = tagsOfMark(item.block.mark);
+    const after = tagsOfMark(mark);
+    const same = (mark.color ?? '') === (item.block.mark?.color ?? '') && before.join('\n') === after.join('\n');
     if (same) return;
     void save(
       { kind: 'setBlockMark', paperId: item.paper.id, blockId: item.block.id, mark },
@@ -259,8 +255,14 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
         </button>
         {tags.length > 0 && <span className="mx-1 h-4 w-px bg-black/10" />}
         {tags.map((entry) => (
-          <button key={entry.tag} type="button" className={chip(tag === entry.tag)} onClick={() => setTag(tag === entry.tag ? undefined : entry.tag)}>
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color ?? '#d1d5db' }} />
+          <button
+            key={entry.tag}
+            type="button"
+            aria-pressed={chosenTags.includes(entry.tag)}
+            className={chip(chosenTags.includes(entry.tag))}
+            onClick={() => setChosenTags((current) => (current.includes(entry.tag) ? current.filter((tag) => tag !== entry.tag) : [...current, entry.tag]))}
+          >
+            <Tag size={12} className="text-gray-400" />
             {entry.tag} <span className="text-gray-400">{entry.count}</span>
           </button>
         ))}
@@ -305,7 +307,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
                     <div className="px-1.5 pb-1 pt-2.5">
                       <div className="flex items-center gap-2 text-sm">
                         <span className="shrink-0 font-medium text-gray-900">{name(item)}</span>
-                        <MarkChip mark={item.block.mark} />
+                        <MarkChips mark={item.block.mark} />
                         {item.block.hidden && <span className="rounded bg-gray-200 px-1.5 text-xs text-gray-600">{t('已隐藏')}</span>}
                       </div>
                       <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-gray-600">
@@ -341,7 +343,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
                   <div className="px-1.5 pb-1 pt-2.5">
                     <div className="flex items-center gap-2 text-sm">
                       <span className="shrink-0 font-medium text-gray-900">{copy.block.kind === 'figure' ? words.figure(number) : words.table(number)}</span>
-                      <MarkChip mark={item.block.mark} />
+                      <MarkChips mark={item.block.mark} />
                       <span
                         className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${copy.state === 'synced' ? 'bg-gray-200 text-gray-600' : 'bg-violet-100 text-violet-800'}`}
                       >
@@ -392,7 +394,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
                     <Tag size={12} />
                     {t('颜色和自定义标签')}
                   </h3>
-                  <MarkField key={detail.key} block={detail.block} onSave={(mark) => saveMark(detail, mark)} />
+                  <MarkField key={detail.key} block={detail.block} known={allTags} onSave={(mark) => saveMark(detail, mark)} />
                 </section>
 
                 <dl className="mt-5 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">

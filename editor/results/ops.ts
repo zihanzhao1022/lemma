@@ -1,4 +1,4 @@
-import { BlockOrigin, ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck, SpaceMark } from '../../types';
+import { BlockOrigin, ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultMark, ResultReferences, SlideDeck } from '../../types';
 import { ContentOp, applyListOp } from '../ops';
 import { slidesPath } from './slidesFile';
 
@@ -36,8 +36,8 @@ export type ResultsOp =
   | { kind: 'setBlockHidden'; paperId: string; blockId: string; hidden: boolean }
   /** Where a block copied from another paper came from, and the source the two last agreed on; null: no longer linked. */
   | { kind: 'setOrigin'; paperId: string; blockId: string; origin: BlockOrigin | null }
-  /** A figure or table's colour and tag in the results library; null (or an empty one) takes them away. */
-  | { kind: 'setBlockMark'; paperId: string; blockId: string; mark: SpaceMark | null }
+  /** A figure or table's colour and tags in the results library; null (or an empty one) takes them away. */
+  | { kind: 'setBlockMark'; paperId: string; blockId: string; mark: ResultMark | null }
   /** Compiled outputs, each kept only if the block's source is still the one it was compiled from. */
   | { kind: 'setOutputs'; paperId: string; outputs: Record<string, ResultBlockOutput>; sources: Record<string, string> }
   /** The paper's typeset bibliography, or null to drop it (no references.bib, or nothing cited). */
@@ -45,6 +45,12 @@ export type ResultsOp =
   /** The paper typeset as one document, or null to drop it (no block shows). */
   | { kind: 'setArticle'; paperId: string; article: ResultArticle | null }
   | { kind: 'batch'; ops: ResultsOp[] };
+
+/** A mark's tags: trimmed, each once, in order; the single `tag` of the first version among them. */
+export function tagsOfMark(mark: ResultMark | undefined): string[] {
+  const all = [...(mark?.tags ?? []), ...(mark?.tag ? [mark.tag] : [])].map((tag) => tag.trim()).filter(Boolean);
+  return [...new Set(all)];
+}
 
 function updatePaper(papers: ResultPaper[], id: string, change: (paper: ResultPaper) => ResultPaper): ResultPaper[] {
   return papers.map((paper) => (paper.id === id ? change(paper) : paper));
@@ -166,8 +172,8 @@ export function applyResultsOp(papers: ResultPaper[], op: ResultsOp): ResultPape
         blocks: paper.blocks.map((block) => {
           if (block.id !== op.blockId) return block;
           const { mark: _mark, ...rest } = block;
-          const tag = op.mark?.tag?.trim();
-          const mark = { ...(op.mark?.color ? { color: op.mark.color } : {}), ...(tag ? { tag } : {}) };
+          const tags = tagsOfMark(op.mark ?? undefined);
+          const mark: ResultMark = { ...(op.mark?.color ? { color: op.mark.color } : {}), ...(tags.length > 0 ? { tags } : {}) };
           return Object.keys(mark).length > 0 ? { ...rest, mark } : rest;
         }),
       }));
