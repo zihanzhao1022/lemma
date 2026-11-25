@@ -217,6 +217,8 @@ export interface ResultBlock extends Hideable {
    * and the source the two last agreed on, to tell whose side changed since. Private only.
    */
   origin?: BlockOrigin;
+  /** A colour and a tag the owner gave this figure or table in the results library (like the research space's). Private only. */
+  mark?: SpaceMark;
 }
 
 /** Where a copied block came from (app/management/carry.ts). */

@@ -121,19 +121,36 @@ export function libraryItems(papers: ResultPaper[], htmlDecks: Record<string, st
 
 export interface LibraryFilter {
   kind?: FloatKind;
+  /** Only items with this tag (ResultBlock.mark). */
+  tag?: string;
   /** A paper's ID. */
   paper?: string;
   search?: string;
 }
 
-/** The items a filter keeps: of that kind, from that paper, and with every word of the search in the caption, a label or the paper's title. */
+/** The items a filter keeps: of that kind, from that paper, with that tag, and with every word of the search in the caption, a label, the tag or the paper's title. */
 export function filterItems(items: LibraryItem[], filter: LibraryFilter): LibraryItem[] {
   const words = (filter.search ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   return items.filter((item) => {
     if (filter.kind && item.kind !== filter.kind) return false;
     if (filter.paper && item.paper.id !== filter.paper) return false;
+    if (filter.tag !== undefined && item.block.mark?.tag !== filter.tag) return false;
     if (words.length === 0) return true;
-    const text = [item.caption, ...item.labels, item.paper.title, item.paper.venue ?? ''].join(' ').toLowerCase();
+    const text = [item.caption, ...item.labels, item.paper.title, item.paper.venue ?? '', item.block.mark?.tag ?? ''].join(' ').toLowerCase();
     return words.every((word) => text.includes(word));
   });
+}
+
+/** The tags given to the items, each with the colour of its first item that has one, in the items' order. */
+export function tagsOf(items: LibraryItem[]): { tag: string; color?: string; count: number }[] {
+  const found = new Map<string, { tag: string; color?: string; count: number }>();
+  for (const item of items) {
+    const tag = item.block.mark?.tag;
+    if (!tag) continue;
+    const entry = found.get(tag) ?? { tag, count: 0 };
+    entry.count += 1;
+    entry.color ??= item.block.mark?.color;
+    found.set(tag, entry);
+  }
+  return [...found.values()];
 }

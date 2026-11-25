@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ResultBlock, ResultPaper } from '../../types';
 import { serializeDeck } from '../slides/htmlDeck';
-import { filterItems, labelsOf, libraryItems, refsOf, slidesOfBlocks } from './results';
+import { filterItems, labelsOf, libraryItems, refsOf, slidesOfBlocks, tagsOf } from './results';
 
 const block = (id: string, kind: ResultBlock['kind'], source: string, labels?: string[]): ResultBlock => ({
   id,
@@ -123,5 +123,20 @@ describe('copies in the library', () => {
     expect(items.map((item) => item.key)).toEqual(['a/f1']);
     expect(items[0].copies.map((copy) => [copy.paper.id, copy.block.id, copy.state])).toEqual([['b', 'c1', 'synced']]);
     expect(libraryItems([other]).map((item) => item.key)).toEqual(['b/c1']);
+  });
+});
+
+describe('tags', () => {
+  it('filters by a tag and lists the tags with their colours', async () => {
+    const { applyResultsOp } = await import('../../editor/results/ops');
+    let papers = [paper('a', [fig, tab])];
+    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 't1', mark: { color: '#ef4444', tag: ' main ' } });
+    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 'f1', mark: { tag: 'main' } });
+    const items = libraryItems(papers);
+    expect(items[1].block.mark).toEqual({ color: '#ef4444', tag: 'main' });
+    expect(tagsOf(items)).toEqual([{ tag: 'main', color: '#ef4444', count: 2 }]);
+    expect(filterItems(items, { tag: 'main', kind: 'table' }).map((item) => item.key)).toEqual(['a/t1']);
+    papers = applyResultsOp(papers, { kind: 'setBlockMark', paperId: 'a', blockId: 't1', mark: { tag: '  ' } });
+    expect(papers[0].blocks[1].mark).toBeUndefined();
   });
 });

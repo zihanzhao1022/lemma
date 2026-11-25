@@ -1,22 +1,57 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Copy as CopyIcon, FileText, GitCompareArrows, Image as ImageIcon, MonitorPlay, Plus, Quote, Search, Table2, X } from 'lucide-react';
+import { Copy as CopyIcon, FileText, GitCompareArrows, Image as ImageIcon, MonitorPlay, Pencil, Plus, Quote, Search, Table2, Tag, X } from 'lucide-react';
 import BlockView from '../../components/results/BlockView';
 import { ResultsAccess, ResultsAccessContext } from '../../components/results/access';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { resultsCommitMessage } from '../../editor/results/ops';
 import { slidesPath } from '../../editor/results/slidesFile';
 import { useT } from '../../lib/phrases/app';
-import { FloatKind, ResultPaper } from '../../types';
+import { FloatKind, ResultBlock, ResultPaper, SpaceMark } from '../../types';
 import { LabelWords, nodeLabels } from '../logic/labels';
 import { blockNumber } from '../../lib/headings';
-import { LibraryItem, filterItems, libraryItems } from './results';
+import MarkEditor from '../space/MarkEditor';
+import { LibraryItem, filterItems, libraryItems, tagsOf } from './results';
 import Thumb from './Thumb';
 import { useSyncWords } from './SyncDialog';
 import { insertCopy } from './transfer';
 
 const InsertIntoDialog = lazy(() => import('./CarryDialogs').then((module) => ({ default: module.InsertIntoDialog })));
 const SyncDialog = lazy(() => import('./SyncDialog'));
+const BlockEditor = lazy(() => import('../../editor/results/BlockEditor'));
+
+/** A figure or table's colour and tag, shown on its card. */
+const MarkChip: React.FC<{ mark?: SpaceMark }> = ({ mark }) =>
+  mark?.tag || mark?.color ? (
+    <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-white px-1.5 text-xs text-gray-700 ring-1 ring-black/[0.06]">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: mark.color ?? '#d1d5db' }} />
+      {mark.tag && <span className="truncate">{mark.tag}</span>}
+    </span>
+  ) : null;
+
+/** The colour and tag of the item shown, saved a moment after each change (and when the panel closes). */
+const MarkField: React.FC<{ block: ResultBlock; onSave: (mark: SpaceMark) => void }> = ({ block, onSave }) => {
+  const t = useT();
+  const [draft, setDraft] = useState<SpaceMark | undefined>(block.mark);
+  const waiting = useRef<{ timer: number; mark: SpaceMark } | null>(null);
+  const saveRef = useRef(onSave);
+  saveRef.current = onSave;
+  const flush = () => {
+    const pending = waiting.current;
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    waiting.current = null;
+    saveRef.current(pending.mark);
+  };
+  useEffect(() => flush, []);
+  const change = (mark: SpaceMark) => {
+    setDraft(mark);
+    if (waiting.current) window.clearTimeout(waiting.current.timer);
+    waiting.current = { mark, timer: window.setTimeout(flush, 700) };
+  };
+  return <MarkEditor mark={draft} onChange={change} placeholder={t('标签，如：主实验、消融、附录')} />;
+};
 
 interface Props {
   login: string;
@@ -104,17 +139,20 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
   // Inserting the item shown into another paper; comparing one of its copies with it.
   const [inserting, setInserting] = useState(false);
   const [syncing, setSyncing] = useState<{ paperId: string; blockId: string } | null>(null);
+  // A block open in the LaTeX editor, from the panel: the item's own or one of its copies.
+  const [editingBlock, setEditingBlock] = useState<{ paperId: string; blockId: string } | null>(null);
+  const [tag, setTag] = useState<string | undefined>(undefined);
   const scoped = scope?.paper;
-  const shown = useMemo(() => filterItems(items, { kind, paper: (scoped?.id ?? paperId) || undefined, search }), [items, kind, paperId, search, scoped]);
+  const shown = useMemo(() => filterItems(items, { kind, tag, paper: (scoped?.id ?? paperId) || undefined, search }), [items, kind, tag, paperId, search, scoped]);
   // In one paper's view: the copies it took from other papers, each with the item it came from and its number here.
   const taken = useMemo(() => {
     if (!scoped) return [];
-    return filterItems(items, { kind, search }).flatMap((item) =>
+    return filterItems(items, { kind, tag, search }).flatMap((item) =>
       item.copies
         .filter((copy) => copy.paper.id === scoped.id)
         .map((copy) => ({ item, copy, number: blockNumber(scoped.blocks, scoped.blocks.findIndex((block) => block.id === copy.block.id)) })),
     );
-  }, [items, kind, search, scoped]);
+  }, [items, kind, tag, search, scoped]);
   const groups = useMemo(() => {
     const byPaper = new Map<string, { paper: ResultPaper; items: LibraryItem[] }>();
     for (const item of shown) {
@@ -132,6 +170,18 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
     () => (scoped ? [...items.filter((item) => item.paper.id === scoped.id), ...items.flatMap((item) => item.copies.filter((copy) => copy.paper.id === scoped.id).map(() => item))] : items),
     [items, scoped],
   );
+  const tags = useMemo(() => tagsOf([...new Map(counted.map((item) => [item.key, item])).values()]), [counted]);
+  const saveMark = (item: LibraryItem, mark: SpaceMark) => {
+    const same = (mark.color ?? '') === (item.block.mark?.color ?? '') && (mark.tag?.trim() ?? '') === (item.block.mark?.tag ?? '');
+    if (same) return;
+    void save(
+      { kind: 'setBlockMark', paperId: item.paper.id, blockId: item.block.id, mark },
+      [],
+      [],
+      resultsCommitMessage('tag a result in', item.paper.title),
+      `content: update result "${item.paper.title}"`,
+    ).catch(() => undefined);
+  };
   const counts = useMemo(
     () => ({
       figure: counted.filter((item) => item.kind === 'figure').length,
@@ -158,10 +208,10 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
 
   useEffect(() => {
     if (!detail) return undefined;
-    const close = (event: KeyboardEvent) => event.key === 'Escape' && !inserting && !syncing && setChosen(null);
+    const close = (event: KeyboardEvent) => event.key === 'Escape' && !inserting && !syncing && !editingBlock && setChosen(null);
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [detail, inserting, syncing]);
+  }, [detail, inserting, syncing, editingBlock]);
 
   const chip = (active: boolean) =>
     `inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm transition-colors duration-150 ${active ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/[0.06]' : 'text-gray-600 hover:bg-black/[0.04]'}`;
@@ -207,6 +257,13 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
           <Table2 size={14} />
           {t('表格')} <span className="text-gray-400">{counts.table}</span>
         </button>
+        {tags.length > 0 && <span className="mx-1 h-4 w-px bg-black/10" />}
+        {tags.map((entry) => (
+          <button key={entry.tag} type="button" className={chip(tag === entry.tag)} onClick={() => setTag(tag === entry.tag ? undefined : entry.tag)}>
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color ?? '#d1d5db' }} />
+            {entry.tag} <span className="text-gray-400">{entry.count}</span>
+          </button>
+        ))}
         {!scoped && (
         <select
           value={paperId}
@@ -247,7 +304,8 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
                     <Thumb block={item.block} alt={item.caption} readFile={access.readFile} />
                     <div className="px-1.5 pb-1 pt-2.5">
                       <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium text-gray-900">{name(item)}</span>
+                        <span className="shrink-0 font-medium text-gray-900">{name(item)}</span>
+                        <MarkChip mark={item.block.mark} />
                         {item.block.hidden && <span className="rounded bg-gray-200 px-1.5 text-xs text-gray-600">{t('已隐藏')}</span>}
                       </div>
                       <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-gray-600">
@@ -282,7 +340,8 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
                   <Thumb block={copy.block} alt={item.caption} readFile={access.readFile} />
                   <div className="px-1.5 pb-1 pt-2.5">
                     <div className="flex items-center gap-2 text-sm">
-                      <span className="font-medium text-gray-900">{copy.block.kind === 'figure' ? words.figure(number) : words.table(number)}</span>
+                      <span className="shrink-0 font-medium text-gray-900">{copy.block.kind === 'figure' ? words.figure(number) : words.table(number)}</span>
+                      <MarkChip mark={item.block.mark} />
                       <span
                         className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${copy.state === 'synced' ? 'bg-gray-200 text-gray-600' : 'bg-violet-100 text-violet-800'}`}
                       >
@@ -300,143 +359,182 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, com
         </section>
       )}
 
-      {detail && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={name(detail)}
-          className="fixed inset-0 z-[100] flex justify-end bg-black/30"
-          onMouseDown={() => setChosen(null)}
-        >
-          <div className="flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-white p-6 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-start gap-3">
-              <div className="min-w-0">
-                <h2 className="text-lg font-semibold text-gray-900">{name(detail)}</h2>
-                <p className="truncate text-sm text-gray-500">{t('来自《{title}》', { title: detail.paper.title })}</p>
+      {/* Over the whole window: the Results tab sits in a layer of its own under the paper's bar. */}
+      {createPortal(
+        <>
+          {detail && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={name(detail)}
+              className="fixed inset-0 z-[100] flex justify-end bg-black/30"
+              onMouseDown={() => setChosen(null)}
+            >
+              <div className="flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-white p-6 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-semibold text-gray-900">{name(detail)}</h2>
+                    <p className="truncate text-sm text-gray-500">{t('来自《{title}》', { title: detail.paper.title })}</p>
+                  </div>
+                  <button type="button" onClick={() => setChosen(null)} aria-label={t('关闭')} className="ml-auto p-1 text-gray-400 hover:text-gray-700">
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-lg p-2 ring-1 ring-black/[0.06]">
+                  <ResultsAccessContext.Provider value={access}>
+                    <BlockView paperId={detail.paper.id} block={detail.block} />
+                  </ResultsAccessContext.Provider>
+                </div>
+
+                <section className="mt-5">
+                  <h3 className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                    <Tag size={12} />
+                    {t('颜色和自定义标签')}
+                  </h3>
+                  <MarkField key={detail.key} block={detail.block} onSave={(mark) => saveMark(detail, mark)} />
+                </section>
+
+                <dl className="mt-5 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+                  <dt className="text-gray-500">{t('图注')}</dt>
+                  <dd className="text-gray-800">{detail.caption || <span className="text-gray-400">{t('没有图注')}</span>}</dd>
+                  <dt className="text-gray-500">label</dt>
+                  <dd className="font-mono text-[13px] text-gray-800">
+                    {detail.labels.length > 0 ? detail.labels.join(', ') : <span className="font-sans text-gray-400">{t('没有 label')}</span>}
+                  </dd>
+                  <dt className="text-gray-500">{t('正文引用')}</dt>
+                  <dd className="text-gray-800">
+                    {detail.citedBy.length === 0 ? (
+                      <span className="text-gray-400">{t('没有')}</span>
+                    ) : (
+                      <ul className="space-y-1">
+                        {detail.citedBy.map((id) => (
+                          <li key={id} className="truncate">
+                            {detailLabels[id]?.title ?? id}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </dd>
+                  <dt className="text-gray-500">{t('幻灯片')}</dt>
+                  <dd className="text-gray-800">
+                    {detail.slides.length > 0 ? t('第 {pages} 页', { pages: detail.slides.join(', ') }) : <span className="text-gray-400">{t('没有')}</span>}
+                  </dd>
+                  <dt className="text-gray-500">{t('副本')}</dt>
+                  <dd className="text-gray-800">
+                    {detail.copies.length === 0 ? (
+                      <span className="text-gray-400">{t('还没有放进别的论文')}</span>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {detail.copies.map((copy) => (
+                          <li key={`${copy.paper.id}/${copy.block.id}`} className="flex items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate">{copy.paper.title}</span>
+                            <button
+                              type="button"
+                              onClick={() => setSyncing({ paperId: copy.paper.id, blockId: copy.block.id })}
+                              className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-xs ${copy.state === 'synced' ? 'text-gray-500 hover:bg-gray-100' : 'bg-violet-50 text-violet-800 hover:bg-violet-100'}`}
+                            >
+                              <GitCompareArrows size={12} />
+                              {syncWords[copy.state]}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingBlock({ paperId: copy.paper.id, blockId: copy.block.id })}
+                              className="shrink-0 rounded-md px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
+                            >
+                              {t('编辑')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openBlock(copy.paper, copy.block.id)}
+                              className="shrink-0 rounded-md px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
+                            >
+                              {t('打开')}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </dd>
+                </dl>
+
+                <div className="mt-6 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingBlock({ paperId: detail.paper.id, blockId: detail.block.id })}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
+                  >
+                    <Pencil size={14} />
+                    {detail.kind === 'figure' ? t('编辑图') : t('编辑表格')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => open(detail)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <FileText size={14} />
+                    {t('在论文里打开')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInserting(true)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Plus size={14} />
+                    {t('插入到另一篇论文')}
+                  </button>
+                </div>
               </div>
-              <button type="button" onClick={() => setChosen(null)} aria-label={t('关闭')} className="ml-auto p-1 text-gray-400 hover:text-gray-700">
-                <X size={18} />
-              </button>
             </div>
-
-            <div className="mt-5 rounded-lg p-2 ring-1 ring-black/[0.06]">
-              <ResultsAccessContext.Provider value={access}>
-                <BlockView paperId={detail.paper.id} block={detail.block} />
-              </ResultsAccessContext.Provider>
-            </div>
-
-            <dl className="mt-5 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
-              <dt className="text-gray-500">{t('图注')}</dt>
-              <dd className="text-gray-800">{detail.caption || <span className="text-gray-400">{t('没有图注')}</span>}</dd>
-              <dt className="text-gray-500">label</dt>
-              <dd className="font-mono text-[13px] text-gray-800">
-                {detail.labels.length > 0 ? detail.labels.join(', ') : <span className="font-sans text-gray-400">{t('没有 label')}</span>}
-              </dd>
-              <dt className="text-gray-500">{t('正文引用')}</dt>
-              <dd className="text-gray-800">
-                {detail.citedBy.length === 0 ? (
-                  <span className="text-gray-400">{t('没有')}</span>
-                ) : (
-                  <ul className="space-y-1">
-                    {detail.citedBy.map((id) => (
-                      <li key={id} className="truncate">
-                        {detailLabels[id]?.title ?? id}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </dd>
-              <dt className="text-gray-500">{t('幻灯片')}</dt>
-              <dd className="text-gray-800">
-                {detail.slides.length > 0 ? t('第 {pages} 页', { pages: detail.slides.join(', ') }) : <span className="text-gray-400">{t('没有')}</span>}
-              </dd>
-              <dt className="text-gray-500">{t('副本')}</dt>
-              <dd className="text-gray-800">
-                {detail.copies.length === 0 ? (
-                  <span className="text-gray-400">{t('还没有放进别的论文')}</span>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {detail.copies.map((copy) => (
-                      <li key={`${copy.paper.id}/${copy.block.id}`} className="flex items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate">{copy.paper.title}</span>
-                        <button
-                          type="button"
-                          onClick={() => setSyncing({ paperId: copy.paper.id, blockId: copy.block.id })}
-                          className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-xs ${copy.state === 'synced' ? 'text-gray-500 hover:bg-gray-100' : 'bg-violet-50 text-violet-800 hover:bg-violet-100'}`}
-                        >
-                          <GitCompareArrows size={12} />
-                          {syncWords[copy.state]}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openBlock(copy.paper, copy.block.id)}
-                          className="shrink-0 rounded-md px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
-                        >
-                          {t('打开')}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </dd>
-            </dl>
-
-            <div className="mt-6 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => open(detail)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-700"
-              >
-                <FileText size={14} />
-                {t('在论文里打开')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setInserting(true)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                <Plus size={14} />
-                {t('插入到另一篇论文')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {detail && inserting && (
-        <Suspense fallback={null}>
-          <InsertIntoDialog
-            home={{ paper: detail.paper, block: detail.block }}
-            name={name(detail)}
-            papers={papers}
-            readFile={access.readFile}
-            onInsert={(target) => async (plan, home, choices) => {
-              const made = await insertCopy(plan, home, choices, access.readFile, t('从《{title}》带来的定义', { title: plan.from.title }));
-              await save(made.op, made.writes, [], resultsCommitMessage('insert a result from the library into', target.title), `content: update result "${target.title}"`);
-              compile(target.id);
-            }}
-            onClose={() => setInserting(false)}
-          />
-        </Suspense>
-      )}
-      {syncing &&
-        (() => {
-          const copyPaper = all.find((paper) => paper.id === syncing.paperId);
-          const copyBlock = copyPaper?.blocks.find((block) => block.id === syncing.blockId);
-          if (!copyPaper || !copyBlock?.origin) return null;
-          return (
+          )}
+          {detail && inserting && (
             <Suspense fallback={null}>
-              <SyncDialog
-                copy={{ paper: copyPaper, block: copyBlock }}
-                name={t('《{title}》里的副本', { title: copyPaper.title })}
-                papers={all}
+              <InsertIntoDialog
+                home={{ paper: detail.paper, block: detail.block }}
+                name={name(detail)}
+                papers={papers}
                 readFile={access.readFile}
-                save={save}
-                compile={compile}
-                onClose={() => setSyncing(null)}
+                onInsert={(target) => async (plan, home, choices) => {
+                  const made = await insertCopy(plan, home, choices, access.readFile, t('从《{title}》带来的定义', { title: plan.from.title }));
+                  await save(made.op, made.writes, [], resultsCommitMessage('insert a result from the library into', target.title), `content: update result "${target.title}"`);
+                  compile(target.id);
+                }}
+                onClose={() => setInserting(false)}
               />
             </Suspense>
-          );
-        })()}
+          )}
+          {editingBlock &&
+            (() => {
+              const paper = all.find((item) => item.id === editingBlock.paperId);
+              if (!paper?.blocks.some((block) => block.id === editingBlock.blockId)) return null;
+              return (
+                <Suspense fallback={null}>
+                  <BlockEditor paper={paper} blockId={editingBlock.blockId} readFile={access.readFile} onSave={save} onClose={() => setEditingBlock(null)} />
+                </Suspense>
+              );
+            })()}
+          {syncing &&
+            (() => {
+              const copyPaper = all.find((paper) => paper.id === syncing.paperId);
+              const copyBlock = copyPaper?.blocks.find((block) => block.id === syncing.blockId);
+              if (!copyPaper || !copyBlock?.origin) return null;
+              return (
+                <Suspense fallback={null}>
+                  <SyncDialog
+                    copy={{ paper: copyPaper, block: copyBlock }}
+                    name={t('《{title}》里的副本', { title: copyPaper.title })}
+                    papers={all}
+                    readFile={access.readFile}
+                    save={save}
+                    compile={compile}
+                    onClose={() => setSyncing(null)}
+                  />
+                </Suspense>
+              );
+            })()}
+        </>,
+        document.body,
+      )}
     </div>
   );
 };

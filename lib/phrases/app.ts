@@ -723,4 +723,8 @@ export const { t, useT, table } = phrases({
   本文的图和表格: { ja: 'この論文の図と表', en: 'Its own figures and tables' },
   从其他论文引用的: { ja: 'ほかの論文から入れたもの', en: 'Copied from other papers' },
   '这篇论文还没有图和表格。': { ja: 'この論文にはまだ図も表もありません。', en: 'This paper has no figures or tables yet.' },
+  '标签，如：主实验、消融、附录': { ja: 'タグ（例：主実験、アブレーション、付録）', en: 'A tag, e.g. main results, ablation, appendix' },
+  颜色和自定义标签: { ja: '色とタグ', en: 'Color and tag' },
+  编辑图: { ja: '図を編集', en: 'Edit figure' },
+  编辑表格: { ja: '表を編集', en: 'Edit table' },
 });

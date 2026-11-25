@@ -93,6 +93,7 @@ export const RESULT_TOOLS: Tool[] = [
       if (items.length === 0) return 'No figures or tables match.';
       const lines = items.map((item) => {
         const parts = [`- ${item.paper.id} ${item.block.id}: ${nameOf(item)} of "${item.paper.title}"${item.caption ? ` — ${item.caption}` : ''}`];
+        if (item.block.mark?.tag) parts.push(`  tag (the person's own): ${item.block.mark.tag}`);
         if (item.labels.length > 0) parts.push(`  labels: ${item.labels.join(', ')}`);
         if (item.citedBy.length > 0) parts.push(`  cited in its paper by ${item.citedBy.join(', ')}`);
         if (item.slides.length > 0) parts.push(`  on slides ${item.slides.join(', ')}`);
