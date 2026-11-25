@@ -7,7 +7,7 @@ import { loginConfigured } from '../editor/config';
 import { clearFileCaches } from '../lib/fileCache';
 import { t, useT } from '../lib/phrases/site';
 import { LoginCallback, MOCK_MODE, Session, loadSession } from '../lib/session';
-import { EditRequest, ListCollection } from '../types';
+import { EditRequest, ListCollection, ResultBlock, SyncState } from '../types';
 import type { AccessDenied } from '../editor/auth';
 
 export interface EditModeValue {
@@ -30,6 +30,12 @@ export interface EditModeValue {
   hideBlock?: (paperId: string, blockId: string, hidden: boolean) => void;
   /** Deletes a block of a results paper without the editor; the blocks after it are numbered again. */
   deleteBlock?: (paperId: string, blockId: string) => void;
+  /** Opens the owner's results library to insert a figure or table of another paper, after a block or at the end. */
+  importResult?: (paperId: string, afterBlockId?: string) => void;
+  /** How a block copied from another paper compares with the block it came from; null for a block that is no copy. */
+  syncStateOf?: (block: ResultBlock) => SyncState | null;
+  /** Opens the comparison of a copied block with the block it came from, to pull, push or merge. */
+  syncBlock?: (paperId: string, blockId: string) => void;
   /** Uploads files dropped on a paper's page to its attachments, after showing what they will do. */
   uploadFiles?: (paperId: string, files: PickedFile[]) => void;
   /**

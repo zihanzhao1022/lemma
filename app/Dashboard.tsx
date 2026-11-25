@@ -57,6 +57,7 @@ import {
   withoutPapers,
 } from './organizer';
 import Sidebar, { NameInput } from './Sidebar';
+import { libraryItems } from './management/results';
 import ResultsLibrary from './management/ResultsLibrary';
 import ResearchSpaceView from './space/ResearchSpaceView';
 
@@ -383,7 +384,8 @@ const Dashboard: React.FC = () => {
   const counts = useMemo(() => {
     const live = rows.filter((row) => !organizer.papers[row.key]?.archived);
     return {
-      results: libraryPapers.reduce((sum, paper) => sum + paper.blocks.filter((block) => block.kind === 'figure' || block.kind === 'table').length, 0),
+      // Copies show under the block they came from, not on their own.
+      results: libraryItems(libraryPapers, {}, mine.content.results).length,
       all: live.length,
       mine: live.filter((row) => row.mine).length,
       shared: live.filter((row) => !row.mine).length,
@@ -391,7 +393,7 @@ const Dashboard: React.FC = () => {
       folder: (id: string) => inView(organizer, rows, { kind: 'folder', id }).length,
       tag: (id: string) => inView(organizer, rows, { kind: 'tag', id }).length,
     };
-  }, [rows, organizer, libraryPapers]);
+  }, [rows, organizer, libraryPapers, mine.content.results]);
 
   // Searches, tags and the archive cut across folders, so they list papers flat, each with the folder it is in.
   const flat = search.trim() !== '' || view.kind === 'tag' || view.kind === 'archived';
@@ -732,7 +734,7 @@ const Dashboard: React.FC = () => {
         {/* How the papers and ideas hang together, over all of them. */}
         {view.kind === 'all' && <ResearchSpaceView login={account.login} papers={mine.content.results} access={mine.access} organizer={organizer} space={mine.space} onSave={mine.saveSpace} />}
         {view.kind === 'results' &&
-          (loading ? <p className="px-3 py-10 text-sm text-gray-400">{t('正在读取你的仓库…')}</p> : <ResultsLibrary login={account.login} papers={libraryPapers} access={mine.access} />)}
+          (loading ? <p className="px-3 py-10 text-sm text-gray-400">{t('正在读取你的仓库…')}</p> : <ResultsLibrary login={account.login} papers={libraryPapers} all={mine.content.results} access={mine.access} save={mine.saveResults} compile={mine.compileStale} />)}
         {view.kind !== 'results' && (
           <>
             <div className="flex flex-wrap items-end justify-between gap-4">

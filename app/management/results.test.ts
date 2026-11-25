@@ -114,3 +114,14 @@ describe('filterItems', () => {
     expect(filterItems(items, { search: 'nothing' })).toEqual([]);
   });
 });
+
+describe('copies in the library', () => {
+  it('shows a copy under the block it came from, and on its own once that is gone', () => {
+    const home = paper('a', [fig]);
+    const other = paper('b', [{ id: 'c1', kind: 'figure', source: fig.source, origin: { paper: 'a', block: 'f1', base: fig.source! } }]);
+    const items = libraryItems([home, other]);
+    expect(items.map((item) => item.key)).toEqual(['a/f1']);
+    expect(items[0].copies.map((copy) => [copy.paper.id, copy.block.id, copy.state])).toEqual([['b', 'c1', 'synced']]);
+    expect(libraryItems([other]).map((item) => item.key)).toEqual(['b/c1']);
+  });
+});

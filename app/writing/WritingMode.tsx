@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronRight, Crosshair, Download, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, Loader2, Minus, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ChevronRight, Crosshair, Download, FileCode2, FileText, Folder, FolderOpen, Image as ImageIcon, LayoutGrid, Loader2, Minus, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Scissors, Table2, X } from 'lucide-react';
 import { describeSaveError } from '../../editor/backend';
 import type { ResultsSave } from '../../editor/results/BlockEditor';
 import { FileWrite } from '../../editor/results/backend';
@@ -14,8 +14,10 @@ import { parseAuxCitations, parseAuxLabels, parseErrors } from '../../editor/tex
 import { useMessage } from '../../lib/i18n';
 import { downloadFile, fileName } from '../../lib/download';
 import { useT } from '../../lib/phrases/app';
-import { ResultPaper } from '../../types';
-import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, joinMain, locate, markableInputs, parseMarks, placeOf, splitMain, withMarks } from './document';
+import { BlockOrigin, ResultBlock, ResultPaper } from '../../types';
+import { withPreambleLines } from '../management/carry';
+import { CarryChoices, CarryPlan, preambleLines } from '../management/transfer';
+import { Mark, blockChanges, blocksOf, bodyOf, fullDocument, headingsOf, joinMain, locate, markableInputs, markerLine, parseMarks, placeOf, splitMain, withMarks } from './document';
 import { fillFloatCache, withCachedFloats } from './floatCache';
 import { preambleFormat, rejectFormat, splitForFormat } from './preambleFormat';
 import { bodyRuleEdits, tableBlockAt, tableBlocks } from './tableRules';
@@ -138,6 +140,8 @@ const foldersOf = (path: string): string[] => path.split('/').slice(0, -1).map((
 
 const noop = () => undefined;
 
+const ResultPicker = lazy(() => import('../management/CarryDialogs').then((module) => ({ default: module.ResultPicker })));
+
 interface Props {
   paper: ResultPaper;
   readFile: ReadFile;
@@ -145,6 +149,8 @@ interface Props {
   /** Where the view starts, under the paper's bar, in pixels from the top of the window. */
   top: number;
   visible: boolean;
+  /** The owner's papers, for inserting a figure or table of another one (the results library). */
+  library?: ResultPaper[];
 }
 
 /**
@@ -152,7 +158,7 @@ interface Props {
  * middle, the whole paper's PDF on the right. A double click in the PDF goes to the code it came from; saving
  * puts each block's code back and rebuilds the blocks the page shows.
  */
-const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible }) => {
+const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible, library }) => {
   const t = useT();
   const editor = useRef<SourceEditorHandle>(null);
   const pdf = useRef<PdfPagesHandle>(null);
@@ -211,6 +217,9 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
   const [picker, setPicker] = useState<{ file: string; path: string; from: number; to: number; left: number; top: number } | null>(null);
   // Pictures added from the computer, stored with the next save.
   const added = useRef<Record<string, Uint8Array>>({});
+  // Blocks inserted from the results library and not saved yet: where each came from, stored with it.
+  const origins = useRef<Record<string, BlockOrigin>>({});
+  const [picking, setPicking] = useState(false);
 
   // The paper's files, again whenever the paper changes; the texts follow unless the owner has unsaved work.
   useEffect(() => {
@@ -414,7 +423,10 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       if (parts.preamble !== splitMain(saved.current[MAIN] ?? '')?.preamble) ops.push({ kind: 'patchPaper', id: paper.id, fields: { preamble: parts.preamble } });
       for (const change of changes.put) {
         // A table is saved as its rules write it, even when typing stopped only now.
-        const block = change.block.kind === 'table' && change.block.source ? { ...change.block, source: applyRules(change.block.source) } : change.block;
+        const ruled: ResultBlock = change.block.kind === 'table' && change.block.source ? { ...change.block, source: applyRules(change.block.source) } : change.block;
+        // A copy from the library keeps where it came from.
+        const origin = change.at !== undefined ? origins.current[ruled.id] : undefined;
+        const block = origin ? { ...ruled, origin } : ruled;
         ops.push({ kind: 'putBlock', paperId: paper.id, block, ...(change.at === undefined ? {} : { at: change.at }) });
       }
       for (const block of changes.deleted) ops.push({ kind: 'deleteBlock', paperId: paper.id, blockId: block.id });
@@ -439,6 +451,7 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
       await onSave(withOutputs(paper.id, ops, rebuilt), [...writes, ...rebuilt.writes], deletes, resultsCommitMessage('write', paper.title), `content: update result "${paper.title}"`);
       saved.current = current;
       added.current = {};
+      origins.current = {};
       setTexts({ ...current });
     } catch (error) {
       setProblem(() => describeSaveError(error));
@@ -592,6 +605,48 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
     added.current = { ...added.current, [name]: data };
     setAttachments((files) => ({ ...(files ?? {}), [name]: data }));
     choosePicture(choice, name);
+  };
+
+  /**
+   * A figure or table from the results library, put after the block the cursor is in, with what it needs: its
+   * attachments, preamble lines and bibliography entries join the unsaved changes, saved with the next save.
+   */
+  const insertResult = async (plan: CarryPlan, home: ResultBlock, choices: CarryChoices) => {
+    const current = textsRef.current;
+    if (!current) return;
+    const id = newBlockId();
+    setActive(MAIN);
+    setPreview(null);
+    // The editor shows main.tex before it takes the block.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (!editor.current?.insertBlock(`${markerLine(id, home.kind)}\n${plan.source}`)) throw new Error(t('打开 main.tex 后再插入'));
+    origins.current[id] = { paper: plan.from.id, block: home.id, base: plan.source, ...(Object.keys(plan.mapping).length > 0 ? { files: plan.mapping } : {}) };
+    const lines = preambleLines(plan, choices);
+    if (lines.length > 0) {
+      const main = editor.current.text(MAIN) ?? '';
+      const parts = splitMain(main);
+      const at = parts ? main.indexOf(parts.preamble) + parts.preamble.length : -1;
+      if (parts && at >= 0) {
+        const next = withPreambleLines(parts.preamble, lines, t('从《{title}》带来的定义', { title: plan.from.title }));
+        editor.current.change(MAIN, main.indexOf(parts.preamble), at, next, 'input.type');
+      }
+    }
+    const files: Record<string, Uint8Array> = {};
+    for (const copy of plan.copies) files[copy.to] = await readFile(attachmentPath(plan.from.id, copy.from), plan.from.fileHashes?.[copy.from]);
+    if (Object.keys(files).length > 0) {
+      added.current = { ...added.current, ...files };
+      setAttachments((existing) => ({ ...(existing ?? {}), ...files }));
+    }
+    if (plan.bib.keys.length > 0) {
+      setTexts((texts) => {
+        if (!texts) return texts;
+        const base = (texts[REFERENCES_FILE] ?? '').replace(/\s+$/, '');
+        return { ...texts, [REFERENCES_FILE]: `${base}${base ? '\n\n' : ''}${plan.bib.text}\n` };
+      });
+      // The editor reads the texts again, references.bib with its new entries.
+      setVersion((value) => value + 1);
+    }
+    urgent.current = true;
   };
 
   const onPageClick = async (click: PageClick) => {
@@ -911,6 +966,12 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
                 <Table2 size={14} />
                 <span className={codeWidth >= 640 ? '' : 'hidden'}>{t('表格规则')}</span>
               </button>
+              {library && (
+                <button type="button" onClick={() => setPicking(true)} className={bar} title={t('在光标所在的块后面插入你其他论文里的图或表格')}>
+                  <LayoutGrid size={14} />
+                  <span className={codeWidth >= 640 ? '' : 'hidden'}>{t('从成果库')}</span>
+                </button>
+              )}
             </>
           )}
           <span className={`ml-auto whitespace-nowrap text-xs text-gray-400 ${codeWidth >= 480 ? '' : 'hidden'}`}>{saving ? t('保存中…') : dirty ? t('有未保存的修改') : t('已保存')}</span>
@@ -1085,6 +1146,11 @@ const WritingMode: React.FC<Props> = ({ paper, readFile, onSave, top, visible })
             onChange={(next) => replaceInMain(rulesBlock.from, rulesBlock.to, next)}
           />
         </div>
+      )}
+      {picking && library && (
+        <Suspense fallback={null}>
+          <ResultPicker papers={library} target={paper} readFile={readFile} onInsert={insertResult} onClose={() => setPicking(false)} />
+        </Suspense>
       )}
     </div>
   );

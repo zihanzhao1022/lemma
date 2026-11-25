@@ -9,6 +9,7 @@ import { captionOf, plain, usedRefs } from '../slides/deck';
 import { findBlock } from '../slides/blockTags';
 import { parseDeck } from '../slides/htmlDeck';
 import { sourceIds } from '../slides/sources';
+import { SyncState, copiesOf, homeOf, syncState } from './carry';
 
 export interface LibraryItem {
   /** "<paper id>/<block id>". */
@@ -26,6 +27,8 @@ export interface LibraryItem {
   citedBy: string[];
   /** The slides of its paper's deck that show it, counted from 1. */
   slides: number[];
+  /** Its copies in the owner's other papers, each with how it compares with this block. */
+  copies: { paper: ResultPaper; block: ResultBlock; state: SyncState }[];
 }
 
 const LABEL = /\\label\s*\{([^}]*)\}/g;
@@ -85,14 +88,17 @@ export function slidesOfBlocks(paper: ResultPaper, html?: string): Record<string
 
 /**
  * The figures and tables of the given papers, paper by paper in the order given and in each paper's order.
- * `htmlDecks` holds the text of the HTML decks read so far, by paper ID.
+ * `htmlDecks` holds the text of the HTML decks read so far, by paper ID. Copies and the blocks they came from are
+ * looked for in `all` (archived papers too), not only in the papers listed.
  */
-export function libraryItems(papers: ResultPaper[], htmlDecks: Record<string, string> = {}): LibraryItem[] {
+export function libraryItems(papers: ResultPaper[], htmlDecks: Record<string, string> = {}, all: ResultPaper[] = papers): LibraryItem[] {
   return papers.flatMap((paper) => {
     const slides = slidesOfBlocks(paper, htmlDecks[paper.id]);
     const refs = paper.blocks.map((block) => (block.kind === 'text' ? refsOf(block.source) : []));
     return paper.blocks.flatMap((block, index): LibraryItem[] => {
       if (block.kind !== 'figure' && block.kind !== 'table') return [];
+      // A copy shows under the block it came from, unless that is gone.
+      if (block.origin && homeOf(block.origin, all)) return [];
       const labels = labelsOf(block);
       const citedBy = paper.blocks.filter((other, at) => other.id !== block.id && refs[at].some((name) => labels.includes(name))).map((other) => other.id);
       return [
@@ -106,6 +112,7 @@ export function libraryItems(papers: ResultPaper[], htmlDecks: Record<string, st
           labels,
           citedBy,
           slides: slides[block.id] ?? [],
+          copies: copiesOf(paper.id, block.id, all).map((copy) => ({ ...copy, state: syncState(copy.block, all) ?? 'synced' })),
         },
       ];
     });

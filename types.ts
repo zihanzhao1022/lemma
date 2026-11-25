@@ -212,7 +212,29 @@ export interface ResultBlock extends Hideable {
    */
   alternate?: { kind: FloatKind; source: string; output?: ResultBlockOutput };
   output?: ResultBlockOutput;
+  /**
+   * A figure or table copied from another paper of the owner's (the Management page): which block it came from
+   * and the source the two last agreed on, to tell whose side changed since. Private only.
+   */
+  origin?: BlockOrigin;
 }
+
+/** Where a copied block came from (app/management/carry.ts). */
+export interface BlockOrigin {
+  /** The paper and block it came from: its home, whose version the library shows. */
+  paper: string;
+  block: string;
+  /** The source as this copy last took it from its home or gave it there, in this copy's file names. */
+  base: string;
+  /** Attachment arguments renamed in this copy because the name was taken here: the home's → this copy's. */
+  files?: Record<string, string>;
+}
+
+/**
+ * How a copied block compares with the block it came from: the same ('synced'); its home changed ('behind', pull);
+ * the copy changed ('ahead', push); both changed differently ('diverged', merge); its home is gone ('orphan').
+ */
+export type SyncState = 'synced' | 'behind' | 'ahead' | 'diverged' | 'orphan';
 
 /** Someone who wrote a comment: GitHub user name and account ID. */
 export interface CommentAuthor {

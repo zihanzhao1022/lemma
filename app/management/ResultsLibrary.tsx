@@ -1,86 +1,51 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Image as ImageIcon, MonitorPlay, Quote, Search, Table2, X } from 'lucide-react';
+import { Copy as CopyIcon, FileText, GitCompareArrows, Image as ImageIcon, MonitorPlay, Plus, Quote, Search, Table2, X } from 'lucide-react';
 import BlockView from '../../components/results/BlockView';
 import { ResultsAccess, ResultsAccessContext } from '../../components/results/access';
+import type { ResultsSave } from '../../editor/results/BlockEditor';
+import { resultsCommitMessage } from '../../editor/results/ops';
 import { slidesPath } from '../../editor/results/slidesFile';
 import { useT } from '../../lib/phrases/app';
 import { FloatKind, ResultPaper } from '../../types';
 import { LabelWords, nodeLabels } from '../logic/labels';
-import { blockBytes, drawPdf } from '../slides/SlideView';
 import { LibraryItem, filterItems, libraryItems } from './results';
+import Thumb from './Thumb';
+import { useSyncWords } from './SyncDialog';
+import { insertCopy } from './transfer';
+
+const InsertIntoDialog = lazy(() => import('./CarryDialogs').then((module) => ({ default: module.InsertIntoDialog })));
+const SyncDialog = lazy(() => import('./SyncDialog'));
 
 interface Props {
   login: string;
   /** The account's own papers that are not archived, in the order the list shows them. */
   papers: ResultPaper[];
+  /** All of them, archived ones too: where copies and the blocks they came from are looked for. */
+  all: ResultPaper[];
   access: ResultsAccess;
+  save: ResultsSave;
+  /** Compiles a paper's changed blocks. */
+  compile: (paperId: string) => void;
 }
-
-/** Thumbnails by PDF path; a recompiled block gets a new path. */
-const thumbs = new Map<string, Promise<string>>();
-const THUMB_WIDTH = 640;
-
-/** A block's compiled PDF as a small picture, drawn once it scrolls near the screen. */
-const Thumb: React.FC<{ item: LibraryItem; access: ResultsAccess }> = ({ item, access }) => {
-  const t = useT();
-  const box = useRef<HTMLDivElement>(null);
-  const [near, setNear] = useState(false);
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const output = item.block.output;
-
-  useEffect(() => {
-    const element = box.current;
-    if (!element || near) return undefined;
-    const watch = new IntersectionObserver((entries) => entries.some((entry) => entry.isIntersecting) && setNear(true), { rootMargin: '400px' });
-    watch.observe(element);
-    return () => watch.disconnect();
-  }, [near]);
-
-  useEffect(() => {
-    if (!near || !output) return undefined;
-    let cancelled = false;
-    let found = thumbs.get(output.pdf);
-    if (!found) {
-      found = blockBytes(output.pdf, access.readFile)
-        .then((data) => drawPdf(data, THUMB_WIDTH))
-        .then((canvas) => canvas.toDataURL('image/png'));
-      thumbs.set(output.pdf, found);
-      found.catch(() => thumbs.delete(output.pdf));
-    }
-    found.then(
-      (made) => !cancelled && setUrl(made),
-      () => !cancelled && setFailed(true),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [near, output, access]);
-
-  return (
-    <div ref={box} className="flex h-44 items-center justify-center overflow-hidden rounded-lg bg-white p-3 ring-1 ring-black/[0.06]">
-      {!output ? (
-        <span className="text-xs text-gray-400">{t('还没有编译')}</span>
-      ) : failed ? (
-        <span className="text-xs text-red-500">{t('读取 PDF 失败，请刷新页面重试')}</span>
-      ) : url ? (
-        <img src={url} alt={item.caption} className="max-h-full max-w-full object-contain" />
-      ) : null}
-    </div>
-  );
-};
 
 /** Where an item is used, in a line: cited in the text, on slides. */
 const Uses: React.FC<{ item: LibraryItem }> = ({ item }) => {
   const t = useT();
-  if (item.citedBy.length === 0 && item.slides.length === 0) return <span className="text-gray-400">{t('正文和幻灯片里都还没有用到')}</span>;
+  if (item.citedBy.length === 0 && item.slides.length === 0 && item.copies.length === 0) return <span className="text-gray-400">{t('正文和幻灯片里都还没有用到')}</span>;
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {item.citedBy.length > 0 && (
         <span className="inline-flex items-center gap-1">
           <Quote size={12} />
           {t('正文引用 {n} 处', { n: item.citedBy.length })}
+        </span>
+      )}
+      {item.copies.length > 0 && (
+        <span className="inline-flex items-center gap-1">
+          <CopyIcon size={12} />
+          {t('{n} 篇论文里有副本', { n: new Set(item.copies.map((copy) => copy.paper.id)).size })}
+          {item.copies.some((copy) => copy.state !== 'synced') && <span className="h-1.5 w-1.5 rounded-full bg-violet-500" title={t('有副本和库里的版本不一致')} />}
         </span>
       )}
       {item.slides.length > 0 && (
@@ -97,7 +62,7 @@ const Uses: React.FC<{ item: LibraryItem }> = ({ item }) => {
  * The Management page: every figure and table of the account's own papers, grouped by the paper each belongs to,
  * with where each is used.
  */
-const ResultsLibrary: React.FC<Props> = ({ login, papers, access }) => {
+const ResultsLibrary: React.FC<Props> = ({ login, papers, all, access, save, compile }) => {
   const t = useT();
   const navigate = useNavigate();
   const [kind, setKind] = useState<FloatKind | undefined>(undefined);
@@ -125,7 +90,14 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, access }) => {
     }
   }, [papers, access]);
 
-  const items = useMemo(() => libraryItems(papers, Object.fromEntries(Object.entries(htmlDecks).map(([id, deck]) => [id, deck.text]))), [papers, htmlDecks]);
+  const items = useMemo(
+    () => libraryItems(papers, Object.fromEntries(Object.entries(htmlDecks).map(([id, deck]) => [id, deck.text])), all),
+    [papers, htmlDecks, all],
+  );
+  const syncWords = useSyncWords();
+  // Inserting the item shown into another paper; comparing one of its copies with it.
+  const [inserting, setInserting] = useState(false);
+  const [syncing, setSyncing] = useState<{ paperId: string; blockId: string } | null>(null);
   const shown = useMemo(() => filterItems(items, { kind, paper: paperId || undefined, search }), [items, kind, paperId, search]);
   const groups = useMemo(() => {
     const byPaper = new Map<string, { paper: ResultPaper; items: LibraryItem[] }>();
@@ -163,10 +135,10 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, access }) => {
 
   useEffect(() => {
     if (!detail) return undefined;
-    const close = (event: KeyboardEvent) => event.key === 'Escape' && setChosen(null);
+    const close = (event: KeyboardEvent) => event.key === 'Escape' && !inserting && !syncing && setChosen(null);
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [detail]);
+  }, [detail, inserting, syncing]);
 
   const chip = (active: boolean) =>
     `inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm transition-colors duration-150 ${active ? 'bg-white text-gray-900 shadow-sm ring-1 ring-black/[0.06]' : 'text-gray-600 hover:bg-black/[0.04]'}`;
@@ -233,7 +205,7 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, access }) => {
                     onClick={() => setChosen(item.key)}
                     className="galley-press block w-full rounded-xl bg-[#f5f5f7] p-2 text-left transition-shadow duration-150 hover:shadow-[0_0_0_2px_rgba(167,139,250,0.55)]"
                   >
-                    <Thumb item={item} access={access} />
+                    <Thumb block={item.block} alt={item.caption} readFile={access.readFile} />
                     <div className="px-1.5 pb-1 pt-2.5">
                       <div className="flex items-center gap-2 text-sm">
                         <span className="font-medium text-gray-900">{name(item)}</span>
@@ -304,9 +276,38 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, access }) => {
               <dd className="text-gray-800">
                 {detail.slides.length > 0 ? t('第 {pages} 页', { pages: detail.slides.join(', ') }) : <span className="text-gray-400">{t('没有')}</span>}
               </dd>
+              <dt className="text-gray-500">{t('副本')}</dt>
+              <dd className="text-gray-800">
+                {detail.copies.length === 0 ? (
+                  <span className="text-gray-400">{t('还没有放进别的论文')}</span>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {detail.copies.map((copy) => (
+                      <li key={`${copy.paper.id}/${copy.block.id}`} className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate">{copy.paper.title}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSyncing({ paperId: copy.paper.id, blockId: copy.block.id })}
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-xs ${copy.state === 'synced' ? 'text-gray-500 hover:bg-gray-100' : 'bg-violet-50 text-violet-800 hover:bg-violet-100'}`}
+                        >
+                          <GitCompareArrows size={12} />
+                          {syncWords[copy.state]}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/p/${login}/${copy.paper.slug}?block=${encodeURIComponent(copy.block.id)}`)}
+                          className="shrink-0 rounded-md px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
+                        >
+                          {t('打开')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </dd>
             </dl>
 
-            <div className="mt-6">
+            <div className="mt-6 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => open(detail)}
@@ -315,10 +316,53 @@ const ResultsLibrary: React.FC<Props> = ({ login, papers, access }) => {
                 <FileText size={14} />
                 {t('在论文里打开')}
               </button>
+              <button
+                type="button"
+                onClick={() => setInserting(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <Plus size={14} />
+                {t('插入到另一篇论文')}
+              </button>
             </div>
           </div>
         </div>
       )}
+      {detail && inserting && (
+        <Suspense fallback={null}>
+          <InsertIntoDialog
+            home={{ paper: detail.paper, block: detail.block }}
+            name={name(detail)}
+            papers={papers}
+            readFile={access.readFile}
+            onInsert={(target) => async (plan, home, choices) => {
+              const made = await insertCopy(plan, home, choices, access.readFile, t('从《{title}》带来的定义', { title: plan.from.title }));
+              await save(made.op, made.writes, [], resultsCommitMessage('insert a result from the library into', target.title), `content: update result "${target.title}"`);
+              compile(target.id);
+            }}
+            onClose={() => setInserting(false)}
+          />
+        </Suspense>
+      )}
+      {syncing &&
+        (() => {
+          const copyPaper = all.find((paper) => paper.id === syncing.paperId);
+          const copyBlock = copyPaper?.blocks.find((block) => block.id === syncing.blockId);
+          if (!copyPaper || !copyBlock?.origin) return null;
+          return (
+            <Suspense fallback={null}>
+              <SyncDialog
+                copy={{ paper: copyPaper, block: copyBlock }}
+                name={t('《{title}》里的副本', { title: copyPaper.title })}
+                papers={all}
+                readFile={access.readFile}
+                save={save}
+                compile={compile}
+                onClose={() => setSyncing(null)}
+              />
+            </Suspense>
+          );
+        })()}
     </div>
   );
 };

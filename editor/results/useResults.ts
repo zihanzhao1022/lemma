@@ -771,7 +771,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
   const compileStale = useCallback(
     (paperId: string) => {
       if (!backend || loadState.state !== 'private' || compiling.current.has(paperId)) return;
-      const paper = latest.current.find((item) => item.id === paperId);
+      // With the edits still waiting to go up: a change saved a moment ago (a push from another paper) compiles now.
+      const paper = pending.current.reduce(applyResultsOp, latest.current).find((item) => item.id === paperId);
       const stale = paper ? staleBlocks(paper) : [];
       // The article readers see is compiled again too when what it prints changed (a hidden block, an older paper).
       const article = paper ? paper.article?.inputHash !== articleHash(paper) : false;
@@ -784,6 +785,8 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
         const rebuilt = await rebuildWith(paper, await loadAttachments(paper, backend.readFile), { keepGoing: true });
         if (Object.keys(rebuilt.outputs).length > 0 || rebuilt.references !== undefined || rebuilt.article !== undefined) {
           const message = resultsCommitMessage('compile', paper.title);
+          // The edits compiled go up first, so the outputs find the sources they were compiled from.
+          drain();
           settle(await enqueue(() => backend.save(withOutputs(paperId, [], rebuilt), rebuilt.writes, rebuilt.deletes, message, `content: update result "${paper.title}"`)));
         }
         const failed = rebuilt.failed;
@@ -801,7 +804,7 @@ export function useResultsEditor({ session, setContent, contentRef, queue, onDep
         .catch((error: unknown) => callbacks.current.onToast({ message: () => describeSaveError(error) }))
         .finally(() => compiling.current.delete(paperId));
     },
-    [backend, loadState.state, enqueue, settle],
+    [backend, loadState.state, enqueue, settle, drain],
   );
 
   /**

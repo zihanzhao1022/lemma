@@ -1,4 +1,4 @@
-import { ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck } from '../../types';
+import { BlockOrigin, ResultArticle, ResultBlock, ResultBlockOutput, ResultPaper, ResultReferences, SlideDeck } from '../../types';
 import { ContentOp, applyListOp } from '../ops';
 import { slidesPath } from './slidesFile';
 
@@ -34,6 +34,8 @@ export type ResultsOp =
   | { kind: 'deleteBlock'; paperId: string; blockId: string }
   | { kind: 'reorderBlocks'; paperId: string; ids: string[] }
   | { kind: 'setBlockHidden'; paperId: string; blockId: string; hidden: boolean }
+  /** Where a block copied from another paper came from, and the source the two last agreed on; null: no longer linked. */
+  | { kind: 'setOrigin'; paperId: string; blockId: string; origin: BlockOrigin | null }
   /** Compiled outputs, each kept only if the block's source is still the one it was compiled from. */
   | { kind: 'setOutputs'; paperId: string; outputs: Record<string, ResultBlockOutput>; sources: Record<string, string> }
   /** The paper's typeset bibliography, or null to drop it (no references.bib, or nothing cited). */
@@ -146,6 +148,15 @@ export function applyResultsOp(papers: ResultPaper[], op: ResultsOp): ResultPape
       return updatePaper(papers, op.paperId, (paper) => ({
         ...paper,
         blocks: applyListOp(paper.blocks, { kind: 'setHidden', collection: 'results', id: op.blockId, hidden: op.hidden }),
+      }));
+    case 'setOrigin':
+      return updatePaper(papers, op.paperId, (paper) => ({
+        ...paper,
+        blocks: paper.blocks.map((block) => {
+          if (block.id !== op.blockId) return block;
+          const { origin: _origin, ...rest } = block;
+          return op.origin ? { ...rest, origin: op.origin } : rest;
+        }),
       }));
     case 'setOutputs':
       return updatePaper(papers, op.paperId, (paper) => ({

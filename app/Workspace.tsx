@@ -18,7 +18,7 @@ import { describeSaveError } from '../editor/backend';
 import { LOCALES, getLang } from '../lib/i18n';
 import { findPaper } from '../lib/results';
 import { useT } from '../lib/phrases/app';
-import { EditRequest, ResultPaper, SlideDeck } from '../types';
+import { EditRequest, ResultBlock, ResultPaper, SlideDeck } from '../types';
 import { collaboratorSession, ownerSession } from './accounts';
 import { PaperList, useAccount } from './AccountContext';
 import { Reach } from './Dashboard';
@@ -26,6 +26,8 @@ import ImportDialog from './ImportDialog';
 import Presentation from './Presentation';
 import ShareDialog from './ShareDialog';
 import { withLatestLogic } from './logic/latest';
+import { syncState } from './management/carry';
+import { CarryChoices, CarryPlan, insertCopy } from './management/transfer';
 import { deckOf } from './slides/latest';
 
 const BlockEditor = lazy(() => import('../editor/results/BlockEditor'));
@@ -36,6 +38,8 @@ const WritingMode = lazy(() => import('./writing/WritingMode'));
 const SlidesMode = lazy(() => import('./slides/SlidesMode'));
 const LogicMode = lazy(() => import('./logic/LogicMode'));
 const Present = lazy(() => import('./slides/Present'));
+const ResultPicker = lazy(() => import('./management/CarryDialogs').then((module) => ({ default: module.ResultPicker })));
+const SyncDialog = lazy(() => import('./management/SyncDialog'));
 
 const noop = () => {};
 
@@ -196,6 +200,32 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
     [busy, deleteFromPaper],
   );
 
+  // The results library (Management): the owner's figures and tables of other papers, inserted as copies here.
+  const [picking, setPicking] = useState<{ paperId: string; afterBlockId?: string } | null>(null);
+  const [syncing, setSyncing] = useState<{ paperId: string; blockId: string } | null>(null);
+  const importResult = useCallback(
+    (paperId: string, afterBlockId?: string) => {
+      if (!busy(paperId)) setPicking({ paperId, afterBlockId });
+    },
+    [busy],
+  );
+  const syncBlock = useCallback(
+    (paperId: string, blockId: string) => {
+      if (!busy(paperId)) setSyncing({ paperId, blockId });
+    },
+    [busy],
+  );
+  const syncStateOf = useCallback((block: ResultBlock) => syncState(block, content.results), [content.results]);
+  const insertResult = useCallback(
+    async (plan: CarryPlan, home: ResultBlock, choices: CarryChoices, afterBlockId?: string) => {
+      const at = afterBlockId ? plan.to.blocks.findIndex((block) => block.id === afterBlockId) + 1 : undefined;
+      const made = await insertCopy(plan, home, choices, access.readFile, t('从《{title}》带来的定义', { title: plan.from.title }), at || undefined);
+      await counted(made.op, made.writes, [], resultsCommitMessage('insert a result from the library into', plan.to.title), `content: update result "${plan.to.title}"`);
+      compileStale(plan.to.id);
+    },
+    [access.readFile, counted, compileStale, t],
+  );
+
   const value = useMemo<EditModeValue>(
     () => ({
       editing: owner && editing,
@@ -206,11 +236,11 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
       login: noop,
       reorder: noop,
       reorderBlocks,
-      ...(owner ? { switchBlock, uploadFiles, hideBlock, deleteBlock } : {}),
+      ...(owner ? { switchBlock, uploadFiles, hideBlock, deleteBlock, importResult, syncBlock, syncStateOf } : {}),
       prepare,
       saveResults: counted,
     }),
-    [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, hideBlock, deleteBlock, prepare, counted],
+    [owner, editing, access.state, open, reorderBlocks, switchBlock, uploadFiles, hideBlock, deleteBlock, importResult, syncBlock, syncStateOf, prepare, counted],
   );
 
   // The writing view fills the window under the paper's bar; the page itself stops scrolling meanwhile. The bar
@@ -351,7 +381,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
             {owner && opened.write && (
               <Suspense fallback={null}>
                 {/* One per paper: switching papers must never carry one paper's text or slides into another. */}
-                <WritingMode key={paper.id} paper={paper} readFile={access.readFile} onSave={counted} top={top} visible={mode === 'write'} />
+                <WritingMode key={paper.id} paper={paper} readFile={access.readFile} onSave={counted} top={top} visible={mode === 'write'} library={content.results} />
               </Suspense>
             )}
             {owner && opened.slides && (
@@ -426,6 +456,35 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                 onClose={() => setImporting(null)}
               />
             )}
+            {picking && owner && (
+              <Suspense fallback={null}>
+                <ResultPicker
+                  papers={content.results}
+                  target={content.results.find((item) => item.id === picking.paperId) ?? paper}
+                  readFile={access.readFile}
+                  onInsert={(plan, home, choices) => insertResult(plan, home, choices, picking.afterBlockId)}
+                  onClose={() => setPicking(null)}
+                />
+              </Suspense>
+            )}
+            {syncing && owner && (() => {
+              const copyPaper = content.results.find((item) => item.id === syncing.paperId);
+              const copyBlock = copyPaper?.blocks.find((block) => block.id === syncing.blockId);
+              if (!copyPaper || !copyBlock?.origin) return null;
+              return (
+                <Suspense fallback={null}>
+                  <SyncDialog
+                    copy={{ paper: copyPaper, block: copyBlock }}
+                    name={copyBlock.kind === 'figure' ? t('这张图') : t('这个表格')}
+                    papers={content.results}
+                    readFile={access.readFile}
+                    save={counted}
+                    compile={compileStale}
+                    onClose={() => setSyncing(null)}
+                  />
+                </Suspense>
+              );
+            })()}
             {sharingOpen && owner && (
               <ShareDialog paper={paper} owner={account.account} saveContentOp={saveContentOp} saveResults={counted} onClose={() => setSharingOpen(false)} />
             )}

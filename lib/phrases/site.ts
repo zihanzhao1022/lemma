@@ -374,4 +374,14 @@ export const { t, useT, table } = phrases({
     en: 'A web page set like the template: typing shows at once, but lines and pages break differently from the PDF',
   },
   '点击打开菜单，拖动来移动这一块': { ja: 'クリックでメニュー、ドラッグでこのブロックを移動', en: 'Click for the menu, drag to move this block' },
+
+  // The results library (Management): copies of figures and tables
+  和库里一致: { ja: 'ライブラリと同じ', en: 'Same as the library' },
+  库里有更新: { ja: 'ライブラリに更新あり', en: 'The library has changes' },
+  '本文有改动，还没推送到库': { ja: 'この論文で変更あり（未プッシュ）', en: 'Changed here, not pushed yet' },
+  两边都改了: { ja: '両方で変更あり', en: 'Changed on both sides' },
+  原来的图表已经删除: { ja: '元の図表は削除済み', en: 'The original is gone' },
+  从成果库: { ja: '成果ライブラリから', en: 'From the library' },
+  插入你其他论文里的图或表格: { ja: 'ほかの論文の図や表を挿入', en: 'Insert a figure or table from another of your papers' },
+  '和成果库里的版本比较、拉取或推送': { ja: 'ライブラリの版と比べて、プル・プッシュする', en: 'Compare with the library, pull or push' },
 });

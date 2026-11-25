@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeftRight, Check, Copy, Eye, EyeOff, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Check, Copy, Eye, EyeOff, GitCompareArrows, LayoutGrid, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
 import { exportTex } from '../../editor/results/texNames';
 import { N_ } from '../../lib/i18n';
 import { useT } from '../../lib/phrases/site';
-import { ResultBlock } from '../../types';
+import { ResultBlock, SyncState } from '../../types';
 import { AddButton, PILL, useEditMode } from '../EditMode';
 import { avatarUrl, usePresence } from '../presence';
 
@@ -13,12 +13,45 @@ export const EDIT_LABEL = { text: N_('编辑文字'), figure: N_('编辑图'), t
 
 export const InsertButtons: React.FC<{ paperId: string; afterBlockId?: string }> = ({ paperId, afterBlockId }) => {
   const t = useT();
+  const { editing, importResult } = useEditMode();
   return (
     <>
       <AddButton request={{ kind: 'block', paperId, blockKind: 'text', afterBlockId }} text={t('文字')} />
       <AddButton request={{ kind: 'block', paperId, blockKind: 'figure', afterBlockId }} text={t('图')} />
       <AddButton request={{ kind: 'block', paperId, blockKind: 'table', afterBlockId }} text={t('表格')} />
+      {editing && importResult && (
+        <button type="button" onClick={() => importResult(paperId, afterBlockId)} className={PILL} title={t('插入你其他论文里的图或表格')}>
+          <LayoutGrid size={14} />
+          {t('从成果库')}
+        </button>
+      )}
     </>
+  );
+};
+
+// Translated where shown.
+const SYNC_LABEL: Record<SyncState, string> = {
+  synced: N_('和库里一致'),
+  behind: N_('库里有更新'),
+  ahead: N_('本文有改动，还没推送到库'),
+  diverged: N_('两边都改了'),
+  orphan: N_('原来的图表已经删除'),
+};
+
+/** A copied figure or table's state against the library, and the way to bring the two together. */
+export const SyncTool: React.FC<{ paperId: string; block: ResultBlock }> = ({ paperId, block }) => {
+  const t = useT();
+  const { syncStateOf, syncBlock } = useEditMode();
+  const state = block.origin && syncStateOf ? syncStateOf(block) : null;
+  if (!state || !syncBlock) return null;
+  return (
+    <ToolButton
+      icon={<GitCompareArrows size={14} className={state === 'synced' ? undefined : 'text-violet-600'} />}
+      label={t(SYNC_LABEL[state])}
+      title={t('和成果库里的版本比较、拉取或推送')}
+      open={state !== 'synced'}
+      onClick={() => syncBlock(paperId, block.id)}
+    />
   );
 };
 
@@ -222,6 +255,7 @@ export const BlockTools: React.FC<{ paperId: string; block: ResultBlock; publish
   const t = useT();
   return (
     <>
+      <SyncTool paperId={paperId} block={block} />
       {onComment && <ToolButton icon={<MessageSquarePlus size={14} />} label={t('批注')} title={t('批注这一块')} onClick={onComment} />}
       {block.source && <CopyButton text={() => exportTex(block.source ?? '')} label={t('复制 LaTeX')} title={t('复制 LaTeX 代码（开头注明需要的宏包）')} />}
       <ConvertButton paperId={paperId} block={block} />

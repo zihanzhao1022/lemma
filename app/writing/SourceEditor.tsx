@@ -39,6 +39,11 @@ export interface SourceEditorHandle {
   reveal: (file: string, line: number, start?: number, end?: number) => void;
   /** Starts a new block at the cursor's line (main.tex only); false when it cannot. */
   splitBlock: () => boolean;
+  /**
+   * Puts a whole block (its marker line and code) after the block the cursor is in: before the first block when the
+   * cursor is in the preamble, before \end{document} after the last. False when main.tex is not open.
+   */
+  insertBlock: (text: string) => boolean;
   /** The cursor's line in the open file. */
   cursorLine: () => number;
   /** A file's text as the editor has it now, or null. */
@@ -382,6 +387,27 @@ const SourceEditor = React.forwardRef<SourceEditorHandle, Props>(function Source
       }
       if (!inBlock) return false;
       editor.dispatch({ changes: { from: line.from, insert: `${markerLine(newBlockId(), 'text')}\n` }, filter: false });
+      return true;
+    },
+    insertBlock: (text) => {
+      const editor = view.current;
+      if (!editor) return false;
+      const { doc } = editor.state;
+      const cursor = doc.lineAt(editor.state.selection.main.head).number;
+      let at = -1;
+      let end = -1;
+      for (let n = 1; n <= doc.lines; n += 1) {
+        const line = doc.line(n);
+        if (/^\s*\\end\s*\{document\}/.test(line.text)) {
+          end = line.from;
+          break;
+        }
+        if (n > cursor && at < 0 && readMarker(line.text)) at = line.from;
+      }
+      const place = at >= 0 ? at : end;
+      if (place < 0) return false;
+      const insert = `${text.replace(/\s+$/, '')}\n\n`;
+      editor.dispatch({ changes: { from: place, insert }, selection: { anchor: place + insert.length - 2 }, filter: false, scrollIntoView: true });
       return true;
     },
     cursorLine: () => {
