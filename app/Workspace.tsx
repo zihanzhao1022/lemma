@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Eye, FileCode2, LayoutList, MonitorPlay, Network, Pencil, Presentation as PresentIcon, Share2 } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ContentContext } from '../components/ContentContext';
 import { EditModeContext, EditModeValue } from '../components/EditMode';
 import { PickedFile } from '../components/results/droppedFiles';
@@ -71,9 +71,11 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
   // The paper block by block, or its slides from one of them.
   const [presenting, setPresenting] = useState<Presenting>(null);
   const [sharingOpen, setSharingOpen] = useState(false);
-  // The page's blocks, the whole paper as one LaTeX document with its PDF, its slides, or its logic as a tree.
-  // Its owner starts writing; whoever it is shared with reads its blocks (the other views are the owner's).
-  const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic'>(owner ? 'write' : 'blocks');
+  // The web page of its blocks, the whole paper as one LaTeX document with its PDF, its slides, or its logic as a
+  // tree. Its owner starts writing; whoever it is shared with reads the web page (the other views are the owner's),
+  // and so does a link to one of its blocks (?block=…, from the research space or the Management page).
+  const [search] = useSearchParams();
+  const [mode, setMode] = useState<'blocks' | 'write' | 'slides' | 'logic'>(owner && !search.get('block') ? 'write' : 'blocks');
   // The writing, slide and logic views stay mounted once opened, so switching back and forth keeps their state.
   const [opened, setOpened] = useState<{ write?: boolean; slides?: boolean; logic?: boolean }>({});
   const bar = useRef<HTMLDivElement>(null);
@@ -301,7 +303,7 @@ const Workspace: React.FC<{ list: PaperList; owner: boolean; paperId?: string }>
                   {(
                     [
                       ['write', <FileCode2 key="icon" size={14} />, t('写作')],
-                      ['blocks', <LayoutList key="icon" size={14} />, t('分块')],
+                      ['blocks', <LayoutList key="icon" size={14} />, t('网页')],
                       ['slides', <MonitorPlay key="icon" size={14} />, t('幻灯片')],
                       ['logic', <Network key="icon" size={14} />, t('逻辑')],
                     ] as const

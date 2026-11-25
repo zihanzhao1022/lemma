@@ -245,7 +245,7 @@ export const { t, useT, table } = phrases({
 
   // The writing view
   显示方式: { ja: '表示方法', en: 'View' },
-  分块: { ja: 'ブロック', en: 'Blocks' },
+  网页: { ja: 'ウェブページ', en: 'Web page' },
   写作: { ja: '執筆', en: 'Write' },
   '块 {n} · {kind}': { ja: 'ブロック {n} · {kind}', en: 'Block {n} · {kind}' },
   已隐藏: { ja: '非表示', en: 'Hidden' },
@@ -631,4 +631,20 @@ export const { t, useT, table } = phrases({
     ja: 'この論文にはまだブロックがありません。上の「新規ブロック」か、キャンバスのダブルクリックで最初のブロックを追加してください。',
     en: 'This paper has no blocks yet: add the first one with New block above, or by double-clicking the canvas.',
   },
+  // The Management page: the figures and tables of all one's papers
+  成果管理: { ja: '成果管理', en: 'Management' },
+  '搜索图注、label 或论文': { ja: 'キャプション・label・論文で検索', en: 'Search captions, labels or papers' },
+  '你的论文里还没有图和表格。': { ja: 'あなたの論文にはまだ図も表もありません。', en: 'Your papers have no figures or tables yet.' },
+  没有找到这样的图或表格: { ja: '該当する図や表はありません', en: 'No such figure or table' },
+  全部成果: { ja: 'すべて', en: 'All' },
+  没有图注: { ja: 'キャプションなし', en: 'No caption' },
+  图注: { ja: 'キャプション', en: 'Caption' },
+  '没有 label': { ja: 'label なし', en: 'No label' },
+  正文引用: { ja: '本文での参照', en: 'Cited in the text' },
+  '正文引用 {n} 处': { ja: '本文で {n} か所参照', en: 'Cited {n}× in the text' },
+  '幻灯片第 {pages} 页': { ja: 'スライド {pages} 枚目', en: 'Slide {pages}' },
+  '第 {pages} 页': { ja: '{pages} 枚目', en: 'Slide {pages}' },
+  正文和幻灯片里都还没有用到: { ja: '本文でもスライドでもまだ使われていません', en: 'Not used in the text or slides yet' },
+  '来自《{title}》': { ja: '「{title}」より', en: 'From “{title}”' },
+  没有: { ja: 'なし', en: 'None' },
 });

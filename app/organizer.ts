@@ -143,7 +143,8 @@ export const setArchived = (organizer: Organizer, keys: string[], archived: bool
 export const touch = (organizer: Organizer, key: string, at = Date.now()): Organizer => place(organizer, [key], (placement) => ({ ...placement, touched: at }));
 
 /** What the list shows: everything, one's own, shared, archived, a folder (with what is inside it) or a tag. */
-export type View = { kind: 'all' | 'mine' | 'shared' | 'archived' } | { kind: 'folder'; id: string } | { kind: 'tag'; id: string };
+/** 'results' is the Management page: the figures and tables of the account's own papers, not a list of papers. */
+export type View = { kind: 'all' | 'mine' | 'shared' | 'archived' | 'results' } | { kind: 'folder'; id: string } | { kind: 'tag'; id: string };
 
 export interface Listed {
   key: string;

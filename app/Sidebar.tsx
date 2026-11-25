@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Archive, ChevronDown, ChevronRight, FileArchive, FileText, Folder, FolderPlus, Inbox, MoreHorizontal, Plus, Users } from 'lucide-react';
+import { Archive, ChevronDown, ChevronRight, FileArchive, FileText, Folder, FolderPlus, Inbox, LayoutGrid, MoreHorizontal, Plus, Users } from 'lucide-react';
 import { useT } from '../lib/phrases/app';
 import { TAG_LOOK } from './look';
 import Menu, { MenuItem, MenuLabel } from './Menu';
@@ -12,7 +12,7 @@ interface Props {
   view: View;
   onView: (view: View) => void;
   /** How many papers each kind of view holds, and each folder and tag (archived papers left out). */
-  counts: { all: number; mine: number; shared: number; archived: number; folder: (id: string) => number; tag: (id: string) => number };
+  counts: { all: number; mine: number; shared: number; archived: number; results: number; folder: (id: string) => number; tag: (id: string) => number };
   /** Whether papers can be shared with the account (the "shared with me" list). */
   sharing: boolean;
   onNew: () => void;
@@ -221,6 +221,7 @@ const Sidebar: React.FC<Props> = ({ organizer, organize, view, onView, counts, s
     { view: { kind: 'mine' }, icon: <FileText size={15} className="text-gray-400" />, label: t('我的论文'), count: counts.mine },
     ...(sharing ? [{ view: { kind: 'shared' } as View, icon: <Users size={15} className="text-gray-400" />, label: t('共享给我的'), count: counts.shared }] : []),
     { view: { kind: 'archived' }, icon: <Archive size={15} className="text-gray-400" />, label: t('已归档'), count: counts.archived },
+    { view: { kind: 'results' }, icon: <LayoutGrid size={15} className="text-gray-400" />, label: t('成果管理'), count: counts.results },
   ];
 
   const colorNames: Record<TagColor, string> = {

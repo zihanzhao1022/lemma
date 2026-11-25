@@ -57,6 +57,7 @@ import {
   withoutPapers,
 } from './organizer';
 import Sidebar, { NameInput } from './Sidebar';
+import ResultsLibrary from './management/ResultsLibrary';
 import ResearchSpaceView from './space/ResearchSpaceView';
 
 /** Who can see one of the account's papers. */
@@ -374,9 +375,15 @@ const Dashboard: React.FC = () => {
     return [...own, ...others].map((row) => ({ ...row, touched: organizer.papers[row.key]?.touched }));
   }, [mine.content.results, shared.content.results, account, ownerOf, organizer]);
 
+  // The Management page's papers: the account's own, archived ones left out.
+  const libraryPapers = useMemo(
+    () => mine.content.results.filter((paper) => !organizer.papers[paperKey(account.login, paper.id)]?.archived),
+    [mine.content.results, organizer, account.login],
+  );
   const counts = useMemo(() => {
     const live = rows.filter((row) => !organizer.papers[row.key]?.archived);
     return {
+      results: libraryPapers.reduce((sum, paper) => sum + paper.blocks.filter((block) => block.kind === 'figure' || block.kind === 'table').length, 0),
       all: live.length,
       mine: live.filter((row) => row.mine).length,
       shared: live.filter((row) => !row.mine).length,
@@ -384,7 +391,7 @@ const Dashboard: React.FC = () => {
       folder: (id: string) => inView(organizer, rows, { kind: 'folder', id }).length,
       tag: (id: string) => inView(organizer, rows, { kind: 'tag', id }).length,
     };
-  }, [rows, organizer]);
+  }, [rows, organizer, libraryPapers]);
 
   // Searches, tags and the archive cut across folders, so they list papers flat, each with the folder it is in.
   const flat = search.trim() !== '' || view.kind === 'tag' || view.kind === 'archived';
@@ -724,113 +731,119 @@ const Dashboard: React.FC = () => {
       <section className="min-w-0">
         {/* How the papers and ideas hang together, over all of them. */}
         {view.kind === 'all' && <ResearchSpaceView login={account.login} papers={mine.content.results} access={mine.access} organizer={organizer} space={mine.space} onSave={mine.saveSpace} />}
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <h1 className="galley-display text-[2rem] text-gray-900">{heading}</h1>
-          <div className="flex w-full items-center gap-2 sm:w-auto">
-            {foldersHere && (
-              <button
-                type="button"
-                onClick={() => setEditing({ kind: 'new-folder', parent: base })}
-                aria-label={t('新建文件夹')}
-                title={t('新建文件夹')}
-                className="galley-press flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-gray-500 hover:bg-black/[0.05] hover:text-gray-800"
-              >
-                <FolderPlus size={17} />
-              </button>
-            )}
-            <label className="relative block w-full sm:w-72">
-              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t('搜索标题或投稿去向')}
-                aria-label={t('搜索标题或投稿去向')}
-                className="w-full rounded-xl border border-transparent bg-black/[0.04] py-2 pl-9 pr-3 text-sm outline-none transition-colors duration-150 focus:border-violet-300 focus:bg-white"
-              />
-            </label>
-          </div>
-        </div>
+        {view.kind === 'results' &&
+          (loading ? <p className="px-3 py-10 text-sm text-gray-400">{t('正在读取你的仓库…')}</p> : <ResultsLibrary login={account.login} papers={libraryPapers} access={mine.access} />)}
+        {view.kind !== 'results' && (
+          <>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <h1 className="galley-display text-[2rem] text-gray-900">{heading}</h1>
+              <div className="flex w-full items-center gap-2 sm:w-auto">
+                {foldersHere && (
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ kind: 'new-folder', parent: base })}
+                    aria-label={t('新建文件夹')}
+                    title={t('新建文件夹')}
+                    className="galley-press flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-gray-500 hover:bg-black/[0.05] hover:text-gray-800"
+                  >
+                    <FolderPlus size={17} />
+                  </button>
+                )}
+                <label className="relative block w-full sm:w-72">
+                  <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder={t('搜索标题或投稿去向')}
+                    aria-label={t('搜索标题或投稿去向')}
+                    className="w-full rounded-xl border border-transparent bg-black/[0.04] py-2 pl-9 pr-3 text-sm outline-none transition-colors duration-150 focus:border-violet-300 focus:bg-white"
+                  />
+                </label>
+              </div>
+            </div>
 
-        <div className={`mt-5 flex min-h-[2.5rem] flex-wrap items-center gap-1 rounded-xl px-3 transition-colors duration-150 ${keys.length > 0 ? 'bg-violet-50' : ''}`}>
-          {keys.length > 0 ? (
-            <>
-              <span className="mr-3 text-sm font-medium text-violet-900">{t('已选 {n} 篇', { n: keys.length })}</span>
-              <Menu label={t('标签')} align="left" className={bar} trigger={<><TagIcon size={14} />{t('标签')}</>}>
-                {(close) => <TagChoices keys={keys} close={close} />}
-              </Menu>
-              <Menu label={t('移到文件夹')} align="left" className={bar} trigger={<><FolderInput size={14} />{t('移到文件夹')}</>}>
-                {(close) => <FolderChoices keys={keys} close={close} />}
-              </Menu>
-              <button
-                type="button"
-                onClick={() => {
-                  organize((current) => setArchived(current, keys, !archive));
-                  setSelected(new Set());
-                }}
-                className={bar}
-              >
-                {archive ? <ArchiveRestore size={14} /> : <Archive size={14} />}
-                {archive ? t('取消归档') : t('归档')}
-              </button>
-              {archive && chosenRows.every((row) => row.mine) && (
-                <button
-                  type="button"
-                  onClick={() => void deletePapers(chosenRows.map((row) => ({ key: row.key, id: row.paper.id, title: row.title })))}
-                  className={`${bar} text-red-700`}
-                >
-                  <Trash2 size={14} />
-                  {t('永久删除')}
-                </button>
+            <div className={`mt-5 flex min-h-[2.5rem] flex-wrap items-center gap-1 rounded-xl px-3 transition-colors duration-150 ${keys.length > 0 ? 'bg-violet-50' : ''}`}>
+              {keys.length > 0 ? (
+                <>
+                  <span className="mr-3 text-sm font-medium text-violet-900">{t('已选 {n} 篇', { n: keys.length })}</span>
+                  <Menu label={t('标签')} align="left" className={bar} trigger={<><TagIcon size={14} />{t('标签')}</>}>
+                    {(close) => <TagChoices keys={keys} close={close} />}
+                  </Menu>
+                  <Menu label={t('移到文件夹')} align="left" className={bar} trigger={<><FolderInput size={14} />{t('移到文件夹')}</>}>
+                    {(close) => <FolderChoices keys={keys} close={close} />}
+                  </Menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      organize((current) => setArchived(current, keys, !archive));
+                      setSelected(new Set());
+                    }}
+                    className={bar}
+                  >
+                    {archive ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+                    {archive ? t('取消归档') : t('归档')}
+                  </button>
+                  {archive && chosenRows.every((row) => row.mine) && (
+                    <button
+                      type="button"
+                      onClick={() => void deletePapers(chosenRows.map((row) => ({ key: row.key, id: row.paper.id, title: row.title })))}
+                      className={`${bar} text-red-700`}
+                    >
+                      <Trash2 size={14} />
+                      {t('永久删除')}
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setSelected(new Set())} className={`${bar} ml-auto text-gray-500`}>
+                    {t('取消选择')}
+                  </button>
+                </>
+              ) : (
+                // Dragging papers onto folders needs a mouse; on phones the hint would only mislead.
+                <span className="hidden text-sm text-gray-400 md:inline">{t('勾选几篇可以一起打标签、移动或归档；把论文拖到文件夹上就能放进去。')}</span>
               )}
-              <button type="button" onClick={() => setSelected(new Set())} className={`${bar} ml-auto text-gray-500`}>
-                {t('取消选择')}
-              </button>
-            </>
-          ) : (
-            // Dragging papers onto folders needs a mouse; on phones the hint would only mislead.
-            <span className="hidden text-sm text-gray-400 md:inline">{t('勾选几篇可以一起打标签、移动或归档；把论文拖到文件夹上就能放进去。')}</span>
-          )}
-        </div>
+            </div>
 
-        <div className={`${COLUMNS} mt-2 border-b border-black/[0.06] px-3 pb-2 text-xs text-gray-500`}>
-          <input
-            type="checkbox"
-            checked={allChosen}
-            disabled={shown.length === 0}
-            onChange={() => setSelected(allChosen ? new Set() : new Set(shown.map((row) => row.key)))}
-            aria-label={t('全选')}
-            className="h-4 w-4 accent-violet-700"
-          />
-          {sortBy('title', t('标题'))}
-          <span className="hidden sm:block">{t('拥有者')}</span>
-          <span className="hidden sm:block">{sortBy('touched', t('最近修改'))}</span>
-          <span />
-        </div>
+            <div className={`${COLUMNS} mt-2 border-b border-black/[0.06] px-3 pb-2 text-xs text-gray-500`}>
+              <input
+                type="checkbox"
+                checked={allChosen}
+                disabled={shown.length === 0}
+                onChange={() => setSelected(allChosen ? new Set() : new Set(shown.map((row) => row.key)))}
+                aria-label={t('全选')}
+                className="h-4 w-4 accent-violet-700"
+              />
+              {sortBy('title', t('标题'))}
+              <span className="hidden sm:block">{t('拥有者')}</span>
+              <span className="hidden sm:block">{sortBy('touched', t('最近修改'))}</span>
+              <span />
+            </div>
 
-        {loading ? (
-          <p className="px-3 py-10 text-sm text-gray-400">{t('正在读取你的仓库…')}</p>
-        ) : lines.length === 0 && editing?.kind !== 'new-folder' ? (
-          <div className="px-3 py-14">
-            <p className="text-gray-800">
-              {search ? t('没有找到这样的论文') : archive ? t('没有归档的论文') : view.kind === 'shared' ? t('别人把论文共享给你后，会出现在这里。') : t('这里还没有论文')}
-            </p>
-            {!search && !archive && view.kind !== 'shared' && (
-              <p className="mt-1 text-sm text-gray-500">{features.sharing ? t('新建一篇，把第一张图或表格放进去，再把链接发给合作者。') : t('新建一篇，把第一张图或表格放进去。')}</p>
+            {loading ? (
+              <p className="px-3 py-10 text-sm text-gray-400">{t('正在读取你的仓库…')}</p>
+            ) : lines.length === 0 && editing?.kind !== 'new-folder' ? (
+              <div className="px-3 py-14">
+                <p className="text-gray-800">
+                  {search ? t('没有找到这样的论文') : archive ? t('没有归档的论文') : view.kind === 'shared' ? t('别人把论文共享给你后，会出现在这里。') : t('这里还没有论文')}
+                </p>
+                {!search && !archive && view.kind !== 'shared' && (
+                  <p className="mt-1 text-sm text-gray-500">{features.sharing ? t('新建一篇，把第一张图或表格放进去，再把链接发给合作者。') : t('新建一篇，把第一张图或表格放进去。')}</p>
+                )}
+              </div>
+            ) : (
+              <ul
+                onDragOver={flat ? undefined : (event) => dragOver(event, base)}
+                onDrop={flat ? undefined : (event) => drop(event, base)}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTarget(undefined);
+                }}
+                className={`rounded-b-xl pb-16 transition-shadow duration-150 ${target === base ? 'shadow-[inset_0_0_0_2px_rgba(167,139,250,0.55)]' : ''}`}
+              >
+                {editing?.kind === 'new-folder' && editing.parent === base && newFolderLine(base, 0)}
+                {lines.map((line) => (line.kind === 'folder' ? folderLine(line) : paperLine(line)))}
+              </ul>
             )}
-          </div>
-        ) : (
-          <ul
-            onDragOver={flat ? undefined : (event) => dragOver(event, base)}
-            onDrop={flat ? undefined : (event) => drop(event, base)}
-            onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTarget(undefined);
-            }}
-            className={`rounded-b-xl pb-16 transition-shadow duration-150 ${target === base ? 'shadow-[inset_0_0_0_2px_rgba(167,139,250,0.55)]' : ''}`}
-          >
-            {editing?.kind === 'new-folder' && editing.parent === base && newFolderLine(base, 0)}
-            {lines.map((line) => (line.kind === 'folder' ? folderLine(line) : paperLine(line)))}
-          </ul>
+          </>
         )}
       </section>
       {creating && <NewPaperDialog folder={base} onClose={() => setCreating(false)} />}
